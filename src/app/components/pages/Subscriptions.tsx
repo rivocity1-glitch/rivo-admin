@@ -1,304 +1,245 @@
-import React, { useState } from "react";
-import {
-  Crown,
-  Zap,
-  Star,
-  Check,
-  MoreHorizontal,
-  Search,
-  TrendingUp,
-  TrendingDown,
-  Calendar,
+import React, { useState, useEffect } from "react";
+import { 
+  Check, 
+  Store, 
+  ShieldCheck, 
+  RefreshCcw, 
+  Sparkles,
+  Lock,
+  Clock
 } from "lucide-react";
-import { Badge } from "../ui/Badge";
-import { Button } from "../ui/Button";
-import { PageHeader } from "../ui/PageHeader";
-import { Pagination } from "../ui/Pagination";
-import { Modal } from "../ui/Modal";
-import { Dropdown } from "../ui/Dropdown";
-import { Select } from "../ui/Select";
 import { cn } from "../../../lib/utils";
+import { supabase } from "../../../lib/supabase";
 
-type SubscriptionPlan = "Starter" | "Growth" | "Premium";
-type SubStatus = "active" | "expired" | "cancelled";
-
-interface VendorSubscription {
-  id: string;
-  vendor: string;
-  plan: SubscriptionPlan;
-  status: SubStatus;
-  startDate: string;
-  endDate: string;
-  amount: number;
-  orders: number;
+interface PlanFeature {
+  text: string;
+  included: boolean;
 }
 
-const vendorSubs: VendorSubscription[] = [
-  { id: "SUB-0081", vendor: "Quick Mart", plan: "Premium", status: "active", startDate: "01 Jan 2025", endDate: "31 Dec 2025", amount: 4999, orders: 2310 },
-  { id: "SUB-0082", vendor: "Green Basket", plan: "Growth", status: "active", startDate: "01 Mar 2025", endDate: "28 Feb 2026", amount: 2499, orders: 1842 },
-  { id: "SUB-0083", vendor: "Dairy Direct", plan: "Growth", status: "active", startDate: "15 Jan 2025", endDate: "14 Jan 2026", amount: 2499, orders: 1120 },
-  { id: "SUB-0084", vendor: "Daily Grains", plan: "Starter", status: "active", startDate: "01 Apr 2025", endDate: "31 Mar 2026", amount: 999, orders: 964 },
-  { id: "SUB-0085", vendor: "Fresh Farms", plan: "Starter", status: "cancelled", startDate: "01 Feb 2025", endDate: "01 May 2025", amount: 999, orders: 420 },
-  { id: "SUB-0086", vendor: "Spice World", plan: "Starter", status: "active", startDate: "10 Jun 2025", endDate: "09 Jun 2026", amount: 999, orders: 0 },
-];
-
-const plans = [
-  {
-    name: "Starter" as SubscriptionPlan,
-    price: "₹999",
-    period: "/month",
-    icon: <Zap className="w-5 h-5" />,
-    iconBg: "bg-slate-100 text-slate-600",
-    color: "border-[#E2E8F0]",
-    features: [
-      "Up to 200 orders/month",
-      "Basic analytics",
-      "Standard support",
-      "1 rider slot",
-    ],
-    count: vendorSubs.filter((v) => v.plan === "Starter" && v.status === "active").length,
-  },
-  {
-    name: "Growth" as SubscriptionPlan,
-    price: "₹2,499",
-    period: "/month",
-    icon: <Star className="w-5 h-5" />,
-    iconBg: "bg-blue-50 text-blue-600",
-    color: "border-blue-200 ring-1 ring-blue-100",
-    features: [
-      "Up to 1,000 orders/month",
-      "Advanced analytics",
-      "Priority support",
-      "3 rider slots",
-      "Promo banner",
-    ],
-    count: vendorSubs.filter((v) => v.plan === "Growth" && v.status === "active").length,
-  },
-  {
-    name: "Premium" as SubscriptionPlan,
-    price: "₹4,999",
-    period: "/month",
-    icon: <Crown className="w-5 h-5" />,
-    iconBg: "bg-purple-50 text-purple-600",
-    color: "border-purple-200 ring-1 ring-purple-100",
-    features: [
-      "Unlimited orders",
-      "Full analytics suite",
-      "Dedicated support",
-      "Unlimited rider slots",
-      "Featured listing",
-      "Custom commission rate",
-    ],
-    count: vendorSubs.filter((v) => v.plan === "Premium" && v.status === "active").length,
-  },
-];
-
-const planBadge: Record<SubscriptionPlan, { variant: any; label: string }> = {
-  Starter: { variant: "neutral", label: "Starter" },
-  Growth: { variant: "info", label: "Growth" },
-  Premium: { variant: "purple", label: "Premium" },
-};
+interface SubscriptionPlan {
+  id: string;
+  name: string;
+  priceLabel: string;
+  subtext: string;
+  badge?: string;
+  isComingSoon?: boolean;
+  features: PlanFeature[];
+}
 
 export function Subscriptions() {
-  const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [currentPage, setCurrentPage] = useState(1);
-  const [subList, setSubList] = useState<VendorSubscription[]>(vendorSubs);
-  const [manageModal, setManageModal] = useState<{ sub: VendorSubscription; action: string } | null>(null);
-  const itemsPerPage = 10;
-
-  const filtered = subList.filter((s) => {
-    const matchSearch = s.vendor.toLowerCase().includes(search.toLowerCase());
-    const matchStatus = statusFilter === "all" || s.status === statusFilter;
-    return matchSearch && matchStatus;
+  const [vendorMetrics, setVendorMetrics] = useState({
+    freeTierCount: 0,
+    premiumTierCount: 0,
+    trialTierCount: 0,
+    totalVendors: 0
   });
+  const [isLoading, setIsLoading] = useState(true);
 
-  const paginated = filtered.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+  // 🟢 Fetch live subscription split counts from your Supabase production node
+  async function fetchSubscriptionDistribution() {
+    try {
+      setIsLoading(true);
+      const { data, error } = await supabase
+        .from("vendors")
+        .select("plan_type");
+
+      if (error) throw error;
+
+      const safeVendors = data || [];
+      
+      // Calculate normalized string distributions from database records
+      const freeCount = safeVendors.filter(v => (v.plan_type || "").toLowerCase() === "free").length;
+      const premiumCount = safeVendors.filter(v => (v.plan_type || "").toLowerCase() === "premium").length;
+      const trialCount = safeVendors.filter(v => (v.plan_type || "").toLowerCase() === "trial").length;
+
+      setVendorMetrics({
+        freeTierCount: freeCount,
+        premiumTierCount: premiumCount,
+        trialTierCount: trialCount,
+        totalVendors: safeVendors.length
+      });
+    } catch (err) {
+      console.error("Failed loading real-time subscription distribution:", err);
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    fetchSubscriptionDistribution();
+  }, []);
+
+  // 🟢 Production plans definition aligned precisely with your pricing tiers
+  const currentPlans: SubscriptionPlan[] = [
+    {
+      id: "free_tier",
+      name: "Free Plan",
+      priceLabel: "Free",
+      subtext: "5% commission per order",
+      features: [
+        { text: "No Fixed Monthly Fee", included: true },
+        { text: "Unlimited Customer Orders", included: true },
+        { text: "Basic Analytics Workspace", included: true },
+        { text: "Standard Support Helpdesk", included: true },
+        { text: "Core Payout Settlements Ledger", included: true }
+      ]
+    },
+    {
+      id: "premium_tier",
+      name: "Premium Plan",
+      priceLabel: "₹499",
+      subtext: "0% commission layout model",
+      badge: "Most Popular",
+      features: [
+        { text: "Fixed Monthly Fee", included: true },
+        { text: "0% Commission on Orders", included: true },
+        { text: "Unlimited Customer Orders", included: true },
+        { text: "Basic Analytics Workspace", included: true },
+        { text: "Standard Support Helpdesk", included: true }
+      ]
+    },
+    {
+      id: "enterprise_tier",
+      name: "Enterprise Fleet",
+      priceLabel: "₹4,999",
+      subtext: "Advanced system tools",
+      isComingSoon: true,
+      features: [
+        { text: "Dedicated Dispatch Infrastructure", included: true },
+        { text: "Custom Optimization Routing", included: true },
+        { text: "Unlimited Customer Orders", included: true },
+        { text: "Basic Analytics Workspace", included: true },
+        { text: "Standard Support Helpdesk", included: true }
+      ]
+    }
+  ];
 
   return (
-    <div>
-      <PageHeader title="Subscriptions" description="Manage vendor subscription plans" />
+    <div className="space-y-6">
+      {/* Page Header Component Block */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-[#0F172A]">Platform Subscription Plans</h1>
+          <p className="text-sm text-[#64748B]">Manage Rivo's core commission rules and subscription price points.</p>
+        </div>
+        <button 
+          onClick={fetchSubscriptionDistribution}
+          disabled={isLoading}
+          className="h-9 px-3 gap-1.5 inline-flex items-center justify-center text-xs font-medium border border-[#E2E8F0] rounded-lg bg-white text-[#64748B] hover:bg-[#F8FAFC] disabled:opacity-50 transition-colors"
+        >
+          <RefreshCcw className={cn("w-3.5 h-3.5", isLoading && "animate-spin")} />
+          Refresh Stats
+        </button>
+      </div>
 
-      {/* Plan cards */}
-      <div className="grid grid-cols-3 gap-4 mb-8">
-        {plans.map((plan) => (
-          <div key={plan.name} className={cn("bg-white border rounded-xl p-5", plan.color)}>
-            <div className="flex items-start justify-between mb-4">
-              <div>
-                <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center mb-3", plan.iconBg)}>
-                  {plan.icon}
+      {/* 🔴 DYNAMIC SUBSCRIPTION BREAKDOWN CARDS MATRIX */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        {/* Free Plan Cards */}
+        <div className="bg-white border border-[#E2E8F0] rounded-xl p-4 flex flex-col justify-between">
+          <div>
+            <p className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider">Free Members (5%)</p>
+            <h3 className="text-2xl font-bold text-[#0F172A] mt-1">{isLoading ? "..." : vendorMetrics.freeTierCount}</h3>
+          </div>
+          <p className="text-xs text-[#94A3B8] mt-3">Live commission contracts</p>
+        </div>
+
+        {/* Premium Plan Cards */}
+        <div className="bg-white border border-[#E2E8F0] rounded-xl p-4 flex flex-col justify-between border-emerald-100 bg-emerald-50/5">
+          <div>
+            <p className="text-[11px] font-semibold text-[#16A34A] uppercase tracking-wider">₹499 Members (0%)</p>
+            <h3 className="text-2xl font-bold text-[#16A34A] mt-1">{isLoading ? "..." : vendorMetrics.premiumTierCount}</h3>
+          </div>
+          <p className="text-xs text-[#16A34A] font-medium mt-3">Active fixed billing models</p>
+        </div>
+
+        {/* Trial Plan Cards */}
+        <div className="bg-white border border-[#E2E8F0] rounded-xl p-4 flex flex-col justify-between border-amber-100 bg-amber-50/5">
+          <div>
+            <p className="text-[11px] font-semibold text-amber-600 uppercase tracking-wider">Active Trial Members</p>
+            <h3 className="text-2xl font-bold text-amber-700 mt-1">{isLoading ? "..." : vendorMetrics.trialTierCount}</h3>
+          </div>
+          <p className="text-xs text-amber-600 font-medium mt-3">Temporary test periods</p>
+        </div>
+
+        {/* Summary Card */}
+        <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl p-4 flex flex-col justify-between">
+          <div>
+            <p className="text-[11px] font-semibold text-[#475569] uppercase tracking-wider">Total Active Merchants</p>
+            <h3 className="text-2xl font-bold text-[#0F172A] mt-1">{isLoading ? "..." : vendorMetrics.totalVendors}</h3>
+          </div>
+          <p className="text-xs text-[#64748B] font-medium mt-3">Unified directory footprint</p>
+        </div>
+      </div>
+
+      {/* Subscription Pricing Matrix Cards Grid Layout */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-2">
+        {currentPlans.map((plan) => (
+          <div 
+            key={plan.id}
+            className={cn(
+              "bg-white border rounded-2xl p-6 relative flex flex-col justify-between transition-all",
+              plan.badge ? "border-[#22C55E] shadow-sm ring-1 ring-[#22C55E]/10" : "border-[#E2E8F0]",
+              plan.isComingSoon && "opacity-75 bg-[#FBFCFD]"
+            )}
+          >
+            {/* Top Section */}
+            <div>
+              {plan.badge && (
+                <span className="absolute -top-3 right-4 bg-[#22C55E] text-white text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full shadow-sm flex items-center gap-1">
+                  <Sparkles className="w-3 h-3" /> {plan.badge}
+                </span>
+              )}
+
+              <div className="mb-4">
+                <h3 className="text-lg font-bold text-[#0F172A]">{plan.name}</h3>
+                <div className="flex items-baseline gap-1 mt-2">
+                  <span className="text-4xl font-extrabold text-[#0F172A] tracking-tight">{plan.priceLabel}</span>
+                  {!plan.isComingSoon && plan.priceLabel !== "Free" && (
+                    <span className="text-xs font-semibold text-[#64748B]">/ month</span>
+                  )}
                 </div>
-                <h3 className="text-sm font-semibold text-[#0F172A]">{plan.name}</h3>
-                <div className="flex items-baseline gap-0.5 mt-0.5">
-                  <span className="text-xl font-bold text-[#0F172A]">{plan.price}</span>
-                  <span className="text-xs text-[#64748B]">{plan.period}</span>
-                </div>
+                <p className="text-xs font-semibold text-[#16A34A] mt-1 bg-[#F0FDF4] inline-block px-2 py-0.5 rounded-md border border-[#DCFCE7]">
+                  {plan.subtext}
+                </p>
               </div>
-              <div className="text-right">
-                <p className="text-2xl font-semibold text-[#0F172A]">{plan.count}</p>
-                <p className="text-xs text-[#64748B]">active vendors</p>
-              </div>
+
+              <hr className="border-[#F1F5F9] my-4" />
+
+              {/* Feature Checkmarks Array Container */}
+              <ul className="space-y-3 mb-6">
+                {plan.features.map((feature, i) => (
+                  <li key={i} className="flex items-start gap-2.5 text-xs">
+                    <div className={cn(
+                      "w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5",
+                      feature.included ? "bg-[#EFF6FF] text-[#2563EB]" : "bg-slate-100 text-slate-400"
+                    )}>
+                      <Check className="w-3 h-3 stroke-[3]" />
+                    </div>
+                    <span className={cn("font-medium", feature.included ? "text-[#334155]" : "text-[#94A3B8] line-through")}>
+                      {feature.text}
+                    </span>
+                  </li>
+                ))}
+              </ul>
             </div>
-            <ul className="space-y-1.5">
-              {plan.features.map((f) => (
-                <li key={f} className="flex items-center gap-2 text-xs text-[#64748B]">
-                  <Check className="w-3.5 h-3.5 text-[#22C55E] flex-shrink-0" />
-                  {f}
-                </li>
-              ))}
-            </ul>
+
+            {/* Action Bottom Section Slot Layout */}
+            <div>
+              {plan.isComingSoon ? (
+                <div className="w-full h-9 bg-slate-100 rounded-lg text-xs font-bold text-slate-400 border border-slate-200 inline-flex items-center justify-center gap-1.5 cursor-not-allowed">
+                  <Lock className="w-3.5 h-3.5" /> Coming Soon
+                </div>
+              ) : (
+                <div className={cn(
+                  "w-full h-9 rounded-lg text-xs font-bold border inline-flex items-center justify-center gap-1.5 bg-slate-50 border-slate-200 text-slate-600 select-none"
+                )}>
+                  <ShieldCheck className="w-3.5 h-3.5 text-[#22C55E]" /> Operational Rule Profile
+                </div>
+              )}
+            </div>
           </div>
         ))}
       </div>
-
-      {/* Vendor subscriptions table */}
-      <div className="flex items-center gap-3 mb-4">
-        <div className="relative flex-1 max-w-xs">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#94A3B8]" />
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search vendor..."
-            className="w-full h-9 pl-9 pr-3 bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg text-sm placeholder:text-[#94A3B8] text-[#0F172A] focus:outline-none focus:border-[#22C55E] focus:ring-2 focus:ring-[#22C55E]/10 focus:bg-white transition-all"
-          />
-        </div>
-        <div className="flex items-center gap-1 border border-[#E2E8F0] rounded-lg p-1 bg-white">
-          {["all", "active", "cancelled", "expired"].map((s) => (
-            <button
-              key={s}
-              onClick={() => { setStatusFilter(s); setCurrentPage(1); }}
-              className={cn(
-                "h-7 px-3 rounded-md text-xs font-medium capitalize transition-all",
-                statusFilter === s
-                  ? "bg-[#22C55E] text-white"
-                  : "text-[#64748B] hover:text-[#0F172A] hover:bg-[#F8FAFC]"
-              )}
-            >
-              {s.charAt(0).toUpperCase() + s.slice(1)}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="bg-white border border-[#E2E8F0] rounded-xl overflow-hidden">
-        <table className="w-full">
-          <thead>
-            <tr className="border-b border-[#E2E8F0] bg-[#F8FAFC]">
-              <th className="text-left px-4 py-3 text-xs font-medium text-[#64748B] uppercase tracking-wide">Vendor</th>
-              <th className="text-left px-4 py-3 text-xs font-medium text-[#64748B] uppercase tracking-wide">Plan</th>
-              <th className="text-left px-4 py-3 text-xs font-medium text-[#64748B] uppercase tracking-wide">Status</th>
-              <th className="text-left px-4 py-3 text-xs font-medium text-[#64748B] uppercase tracking-wide">Valid Until</th>
-              <th className="text-right px-4 py-3 text-xs font-medium text-[#64748B] uppercase tracking-wide">Amount</th>
-              <th className="text-right px-4 py-3 text-xs font-medium text-[#64748B] uppercase tracking-wide">Orders</th>
-              <th className="px-4 py-3" />
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-[#F1F5F9]">
-            {paginated.map((sub) => {
-              const pb = planBadge[sub.plan];
-              return (
-                <tr key={sub.id} className="hover:bg-[#FAFAFA] transition-colors">
-                  <td className="px-4 py-3.5">
-                    <p className="text-sm font-medium text-[#0F172A]">{sub.vendor}</p>
-                    <p className="text-xs text-[#64748B]">{sub.id}</p>
-                  </td>
-                  <td className="px-4 py-3.5">
-                    <Badge variant={pb.variant} label={pb.label} />
-                  </td>
-                  <td className="px-4 py-3.5">
-                    <Badge
-                      variant={sub.status === "active" ? "success" : sub.status === "cancelled" ? "error" : "warning"}
-                      label={sub.status.charAt(0).toUpperCase() + sub.status.slice(1)}
-                      dot
-                    />
-                  </td>
-                  <td className="px-4 py-3.5">
-                    <div className="flex items-center gap-1.5 text-sm text-[#64748B]">
-                      <Calendar className="w-3.5 h-3.5" />{sub.endDate}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3.5 text-right text-sm font-medium text-[#0F172A]">₹{sub.amount.toLocaleString()}</td>
-                  <td className="px-4 py-3.5 text-right text-sm text-[#0F172A]">{sub.orders.toLocaleString()}</td>
-                  <td className="px-4 py-3.5">
-                    <Dropdown
-                      align="right"
-                      trigger={
-                        <button className="h-7 w-7 flex items-center justify-center rounded-md text-[#64748B] hover:bg-[#F1F5F9] transition-colors">
-                          <MoreHorizontal className="w-4 h-4" />
-                        </button>
-                      }
-                      items={[
-                        { label: "Upgrade Plan", icon: <TrendingUp className="w-3.5 h-3.5" />, onClick: () => setManageModal({ sub, action: "upgrade" }) },
-                        { label: "Downgrade Plan", icon: <TrendingDown className="w-3.5 h-3.5" />, onClick: () => setManageModal({ sub, action: "downgrade" }) },
-                        { label: "Extend Duration", icon: <Calendar className="w-3.5 h-3.5" />, onClick: () => setManageModal({ sub, action: "extend" }) },
-                        {
-                          label: "Deactivate",
-                          onClick: () => setSubList((prev) => prev.map((s) => s.id === sub.id ? { ...s, status: "cancelled" } : s)),
-                          variant: "danger",
-                          divider: true,
-                        },
-                      ]}
-                    />
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-        <Pagination
-          currentPage={currentPage}
-          totalPages={Math.ceil(filtered.length / itemsPerPage)}
-          totalItems={filtered.length}
-          itemsPerPage={itemsPerPage}
-          onPageChange={setCurrentPage}
-        />
-      </div>
-
-      {/* Manage Modal */}
-      {manageModal && (
-        <Modal
-          open={!!manageModal}
-          onClose={() => setManageModal(null)}
-          title={`${manageModal.action.charAt(0).toUpperCase() + manageModal.action.slice(1)} — ${manageModal.sub.vendor}`}
-          description={`Current plan: ${manageModal.sub.plan}`}
-          size="sm"
-          footer={
-            <>
-              <Button variant="secondary" onClick={() => setManageModal(null)}>Cancel</Button>
-              <Button variant="primary" onClick={() => setManageModal(null)}>
-                {manageModal.action === "extend" ? "Extend" : "Change Plan"}
-              </Button>
-            </>
-          }
-        >
-          {manageModal.action === "extend" ? (
-            <Select
-              label="Extend by"
-              value=""
-              onChange={() => {}}
-              options={[
-                { value: "1m", label: "1 Month" },
-                { value: "3m", label: "3 Months" },
-                { value: "6m", label: "6 Months" },
-                { value: "12m", label: "12 Months" },
-              ]}
-              placeholder="Select duration"
-            />
-          ) : (
-            <Select
-              label="New Plan"
-              value={manageModal.sub.plan}
-              onChange={() => {}}
-              options={[
-                { value: "Starter", label: "Starter — ₹999/mo" },
-                { value: "Growth", label: "Growth — ₹2,499/mo" },
-                { value: "Premium", label: "Premium — ₹4,999/mo" },
-              ]}
-            />
-          )}
-        </Modal>
-      )}
     </div>
   );
 }
