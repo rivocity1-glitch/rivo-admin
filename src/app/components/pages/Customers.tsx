@@ -63,29 +63,37 @@ export function Customers() {
   async function fetchCustomers() {
     try {
       setIsLoading(true);
-      const { data, error } = await supabase
+      const { data: customersData, error: customersError } = await supabase
         .from("customers")
         .select("*")
         .order("created_at", { ascending: false });
 
-      if (error) throw error;
+      if (customersError) throw customersError;
 
-      const mapped: Customer[] = (data || []).map((row) => ({
+      const { data: addressesData, error: addressesError } = await supabase
+        .from("customer_addresses")
+        .select("customer_id, address_line1")
+        .eq("is_default", true);
+
+      if (addressesError) console.error("Failed fetching default customer addresses:", addressesError);
+
+      const addressMap: Record<string, string> = {};
+      (addressesData || []).forEach(addr => {
+        if (addr.customer_id) {
+          addressMap[addr.customer_id] = addr.address_line1 || "";
+        }
+      });
+
+      const mapped: Customer[] = (customersData || []).map((row) => ({
         id: row.id,
-        name: row.name || "Unnamed User",
+        name: row.customer_name || "Unnamed User",
         email: row.email || "—",
         phone: row.phone || "—",
-        orders: row.total_orders || 0,
-        spent: row.total_spent || 0,
-        status: (row.status as CustomerStatus) || "active",
-        delivery_address: row.delivery_address || "No address provided",
-        lastOrder: row.last_order_at 
-          ? new Date(row.last_order_at).toLocaleDateString("en-GB", {
-              day: "numeric",
-              month: "short",
-              year: "numeric",
-            })
-          : "No orders placed",
+        orders: 0, 
+        spent: 0,  
+        status: "active", 
+        delivery_address: addressMap[row.id] || "No address provided",
+        lastOrder: "No orders placed",
         joinedAt: row.created_at
           ? new Date(row.created_at).toLocaleDateString("en-GB", {
               day: "numeric",
@@ -103,7 +111,7 @@ export function Customers() {
       }
     } catch (err) {
       console.error("Failed parsing live customers database:", err);
-    } finally {  // 🟢 Fixed here!
+    } finally {
       setIsLoading(false);
     }
   }
@@ -129,17 +137,35 @@ export function Customers() {
       setIsSubmitting(true);
       
       const payload = {
-        name: formName,
+        customer_name: formName,
         email: formEmail.trim().toLowerCase(),
         phone: formPhone.trim(),
-        delivery_address: formAddress.trim(),
-        status: "active",
-        total_orders: 0,
-        total_spent: 0.0,
       };
 
-      const { error } = await supabase.from("customers").insert([payload]);
-      if (error) throw error;
+      const { data: newCustomer, error: customerError } = await supabase
+        .from("customers")
+        .insert([payload])
+        .select()
+        .single();
+
+      if (customerError) throw customerError;
+
+      if (newCustomer) {
+        const addressPayload = {
+          customer_id: newCustomer.id,
+          address_line1: formAddress.trim(),
+          city: "N/A",
+          state: "N/A",
+          pin_code: "N/A",
+          is_default: true,
+        };
+
+        const { error: addressError } = await supabase
+          .from("customer_addresses")
+          .insert([addressPayload]);
+
+        if (addressError) throw addressError;
+      }
 
       resetForm();
       setAddOpen(false);
@@ -166,8 +192,6 @@ export function Customers() {
     }
 
     try {
-      const { error } = await supabase.from("customers").update({ status: nextStatus }).eq("id", id);
-      if (error) throw error;
       await fetchCustomers();
     } catch (err) {
       console.error("Failed syncing block configuration mutations:", err);
@@ -179,8 +203,18 @@ export function Customers() {
     if (!confirmation) return;
 
     try {
-      const { error } = await supabase.from("customers").delete().eq("id", id);
-      if (error) throw error;
+      const { error: addressDeleteError } = await supabase
+        .from("customer_addresses")
+        .delete()
+        .eq("customer_id", id);
+      if (addressDeleteError) console.error("Error purging associated address records:", addressDeleteError);
+
+      const { error: customerDeleteError } = await supabase
+        .from("customers")
+        .delete()
+        .eq("id", id);
+      if (customerDeleteError) throw customerDeleteError;
+
       setViewCustomer(null);
       await fetchCustomers();
     } catch (err) {

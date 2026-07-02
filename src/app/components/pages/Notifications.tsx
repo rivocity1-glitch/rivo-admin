@@ -81,32 +81,26 @@ export function Notifications() {
   async function fetchNotificationHistory() {
     try {
       setIsLoading(true);
+      // Fetches exclusively row matrices where type = 'broadcast' from correct table
       const { data, error } = await supabase
-        .from("system_notifications")
+        .from("notifications")
         .select("*")
+        .eq("type", "broadcast")
         .order("created_at", { ascending: false });
 
       if (error) throw error;
 
       const mapped: NotificationHistory[] = (data || []).map((row) => {
-        const target: Audience = (row.target_group as Audience) || "all";
+        const target: Audience = "all";
         
-        let fallbackReach = row.reached_count;
-        if (!fallbackReach) {
-          if (target === "customers") fallbackReach = audienceSizes.customers || 1;
-          else if (target === "vendors") fallbackReach = audienceSizes.vendors || 1;
-          else if (target === "riders") fallbackReach = audienceSizes.riders || 1;
-          else fallbackReach = audienceSizes.all || 1;
-        }
-
         return {
           id: row.id.slice(0, 8).toUpperCase(),
           rawId: row.id,
           title: row.title || "Untitled Notification",
           body: row.message || "—",
           audience: target,
-          reached: fallbackReach || 1,
-          opened: row.opened_count || 0,
+          reached: audienceSizes.all || 1,
+          opened: 0,
           sentAt: row.created_at
             ? new Date(row.created_at).toLocaleDateString("en-GB", {
                 day: "numeric",
@@ -143,18 +137,16 @@ export function Notifications() {
 
     try {
       setSending(true);
-      const currentTargetSize = audienceSizes[audience];
 
       const payload = {
         title: title.trim(),
         message: body.trim(),
-        target_group: audience,
-        delivery_channel: "in_app",
-        reached_count: currentTargetSize,
-        opened_count: 0
+        type: "broadcast",
+        is_read: false,
+        created_at: new Date().toISOString()
       };
 
-      const { error } = await supabase.from("system_notifications").insert([payload]);
+      const { error } = await supabase.from("notifications").insert([payload]);
       if (error) throw error;
 
       setSent(true);
@@ -174,20 +166,18 @@ export function Notifications() {
     }
   }
 
-  // 🟢 PERMANENTLY DELETE A NOTIFICATION FROM THE LOG LEDGER
   async function handleDeleteNotification(rawId: string, logTitle: string) {
     const confirmation = window.confirm(`Permanently remove broadcast log entry "${logTitle}" from history?`);
     if (!confirmation) return;
 
     try {
       const { error } = await supabase
-        .from("system_notifications")
+        .from("notifications")
         .delete()
         .eq("id", rawId);
 
       if (error) throw error;
       
-      // Refresh current records list layout directly
       await fetchNotificationHistory();
     } catch (err) {
       console.error("Failed deleting notification log row node:", err);
@@ -350,7 +340,6 @@ export function Notifications() {
                             </div>
                           </div>
                           
-                          {/* 🟢 DELETE NOTIFICATION BUTTON CONTAINER */}
                           <button
                             onClick={() => handleDeleteNotification(notif.rawId, notif.title)}
                             className="p-1 text-slate-300 hover:text-red-500 rounded transition-colors"

@@ -34,16 +34,20 @@ export function Login() {
         throw new Error("Authentication failed. No user profile returned.");
       }
 
-      // 2. Query the admins table to fetch user metadata and authorization permissions
+      // 2. Query the admin_users table to fetch user metadata and authorization permissions
       const { data: adminData, error: dbError } = await supabase
-        .from("admins")
+        .from("admin_users")
         .select("*")
-        .eq("email", authData.user.email)
+        .eq("auth_user_id", authData.user.id)
         .single();
 
       if (dbError || !adminData) {
         throw new Error("Admin access configuration record not found.");
       }
+
+      // Added debugging console logs
+      console.log("Authenticated User:", authData.user.id);
+      console.log("Admin Record:", adminData);
 
       // 3. Verify user has the required privileges
       if (adminData.role !== "super_admin") {

@@ -3,15 +3,10 @@ import {
   Search,
   Plus,
   MoreHorizontal,
-  Filter,
   CheckCircle,
   XCircle,
-  PauseCircle,
   Edit,
-  ShoppingCart,
   Crown,
-  Star,
-  MapPin,
   Trash2,
 } from "lucide-react";
 import { Badge } from "../ui/Badge";
@@ -27,24 +22,31 @@ import { supabase } from "../../../lib/supabase";
 
 type VendorStatus = "approved" | "pending" | "suspended";
 
-interface Vendor {
+interface Category {
   id: string;
   name: string;
-  category: string;
-  location: string;
-  status: VendorStatus;
-  orders: number;
-  rating: number;
-  commission_rate: number;
-  plan_type: string;
-  joinedAt: string;
+}
+
+interface Vendor {
+  id: string;
+  shop_name: string;
+  owner_name: string;
   email: string;
   phone: string;
-  trial_start_date: string;
-  trial_end_date: string;
-  subscription_start_date: string;
-  subscription_end_date: string;
-  renewal_date: string;
+  shop_code: string;
+  status: VendorStatus;
+  store_status: string; // Dynamic field mapped from vendor_profiles join
+  joinedAt: string;
+  created_at: string;
+  category_id: string;
+  category_name: string;
+  
+  // Subscriptions Table Mapped Fields
+  plan_name: "FREE" | "499" | "TRIAL";
+  commission_percent: number;
+  start_date: string;
+  end_date: string;
+  sub_status: string;
 }
 
 const statusBadgeMap: Record<VendorStatus, { variant: "success" | "warning" | "error"; label: string }> = {
@@ -53,23 +55,37 @@ const statusBadgeMap: Record<VendorStatus, { variant: "success" | "warning" | "e
   suspended: { variant: "error", label: "Suspended" }
 };
 
-const MVP_CATEGORIES = [
-  { value: "grocery", label: "Grocery" },
-  { value: "medical", label: "Medical" },
-  { value: "pet_shop", label: "Pet Shop" },
-  { value: "fruits_veg", label: "Fruits & Vegetables" },
-  { value: "dairy", label: "Dairy" },
-  { value: "general_store", label: "General Store" },
-  { value: "household", label: "Household Essentials" },
-  { value: "electronics", label: "Electronics" },
-  { value: "other", label: "Other" },
-];
-
-const subscriptionBadgeMap: Record<string, "neutral" | "info" | "purple"> = {
-  trial: "neutral",
-  free: "info",
-  premium: "purple",
+const operationalBadgeMap: Record<string, { variant: "success" | "warning" | "error" | "neutral"; label: string }> = {
+  open: { variant: "success", label: "Open" },
+  closed: { variant: "error", label: "Closed" },
+  busy: { variant: "warning", label: "Busy" }
 };
+
+export const PLAN_CONFIG = {
+  TRIAL: {
+    label: "Trial Plan",
+    commission: 0,
+    durationDays: 60,
+    variant: "purple" as const
+  },
+  FREE: {
+    label: "Free Plan",
+    commission: 5,
+    durationDays: null,
+    variant: "info" as const
+  },
+  "499": {
+    label: "Base Plan",
+    commission: 0,
+    durationDays: 30,
+    variant: "neutral" as const
+  }
+};
+
+function getPlanDisplayLabel(planName: string): string {
+  const key = (planName || "").toUpperCase() as keyof typeof PLAN_CONFIG;
+  return PLAN_CONFIG[key] ? PLAN_CONFIG[key].label : planName || "—";
+}
 
 function formatDisplayDate(dateString: string | null | undefined): string {
   if (!dateString) return "—";
@@ -83,147 +99,119 @@ function formatDisplayDate(dateString: string | null | undefined): string {
   });
 }
 
-// 1. helper function: calculateDaysRemaining(endDate)
-function calculateDaysRemaining(endDateString: string | null | undefined): { text: string; colorClass: string } {
-  if (!endDateString) return { text: "-", colorClass: "text-[#64748B]" };
-  const endDate = new Date(endDateString);
-  if (isNaN(endDate.getTime())) return { text: "-", colorClass: "text-[#64748B]" };
-
-  const now = new Date();
-  now.setHours(0, 0, 0, 0);
-  endDate.setHours(0, 0, 0, 0);
-
-  const diffTime = endDate.getTime() - now.getTime();
-  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-
-  if (diffDays < 0) {
-    return { text: "Expired", colorClass: "text-[#EF4444] font-medium" };
-  } else if (diffDays <= 7) {
-    return { text: `${diffDays} days left`, colorClass: "text-[#EF4444] font-medium" };
-  } else if (diffDays <= 15) {
-    return { text: `${diffDays} days left`, colorClass: "text-[#F97316] font-medium" };
-  } else {
-    return { text: `${diffDays} days left`, colorClass: "text-[#22C55E] font-medium" };
-  }
-}
-
-// 6. helper parser wrapper for table and list layouts
-function renderExpiryInfo(vendor: Vendor): { text: string; colorClass: string } {
-  const plan = vendor.plan_type.toLowerCase();
-  if (plan === "free") {
-    return { text: "No Expiry", colorClass: "text-[#64748B]" };
-  }
-  if (plan === "trial") {
-    return calculateDaysRemaining(vendor.trial_end_date);
-  }
-  if (plan === "premium") {
-    return calculateDaysRemaining(vendor.subscription_end_date);
-  }
-  return { text: "—", colorClass: "text-[#64748B]" };
-}
-
-function getPlanIndicator(vendor: Vendor): { label: string; variant: "neutral" | "info" | "purple" | "warning" | "error" | "success" } {
-  const now = new Date();
-  const plan = vendor.plan_type.toLowerCase();
-
-  if (plan === "trial") {
-    if (!vendor.trial_end_date) return { label: "Active Trial", variant: "neutral" };
-    const end = new Date(vendor.trial_end_date);
-    return now > end 
-      ? { label: "Trial Expired", variant: "error" } 
-      : { label: "Active Trial", variant: "neutral" };
-  }
-
-  if (plan === "free") {
-    return { label: "Free Plan", variant: "info" };
-  }
-
-  if (plan === "premium") {
-    if (!vendor.subscription_end_date) return { label: "Active Subscription", variant: "purple" };
-    const end = new Date(vendor.subscription_end_date);
-    
-    if (now > end) {
-      return { label: "Subscription Expired", variant: "error" };
-    }
-    
-    const sevenDaysOut = new Date();
-    sevenDaysOut.setDate(now.getDate() + 7);
-    if (sevenDaysOut >= end) {
-      return { label: "Expiring Soon", variant: "warning" };
-    }
-    
-    return { label: "Active Premium", variant: "purple" };
-  }
-
-  return { label: vendor.plan_type.toUpperCase(), variant: "neutral" };
-}
-
 export function Vendors() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [currentPage, setCurrentPage] = useState(1);
   const [vendorList, setVendorList] = useState<Vendor[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   
-  // Modal toggles and form states
   const [addOpen, setAddOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [subOpen, setSubOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   
-  const [formName, setFormName] = useState("");
-  const [formCategory, setFormCategory] = useState("");
+  // Vendor Form States
+  const [formShopName, setFormShopName] = useState("");
+  const [formOwnerName, setFormOwnerName] = useState("");
   const [formEmail, setFormEmail] = useState("");
   const [formPhone, setFormPhone] = useState("");
-  const [formLocation, setFormLocation] = useState("");
-  const [formPlan, setFormPlan] = useState("trial");
+  const [formShopCode, setFormShopCode] = useState("");
   const [formStatus, setFormStatus] = useState<VendorStatus>("pending");
-  const [formCommission, setFormCommission] = useState<number>(0);
-  const [formTrialStartDate, setFormTrialStartDate] = useState("");
-  const [formTrialEndDate, setFormTrialEndDate] = useState("");
-  const [formSubStartDate, setFormSubStartDate] = useState("");
-  const [formSubEndDate, setFormSubEndDate] = useState("");
-  const [formRenewalDate, setFormRenewalDate] = useState("");
+  const [formCategoryId, setFormCategoryId] = useState("");
+  
+  // Subscription Form States
+  const [formPlan, setFormPlan] = useState<keyof typeof PLAN_CONFIG>("FREE");
+  const [formCommission, setFormCommission] = useState<number>(5);
+  const [formStartDate, setFormStartDate] = useState("");
+  const [formEndDate, setFormEndDate] = useState("");
+  const [formSubStatus, setFormSubStatus] = useState("active");
 
   const [selectedVendorForSub, setSelectedVendorForSub] = useState<Vendor | null>(null);
   const [viewVendor, setViewVendor] = useState<Vendor | null>(null);
   const itemsPerPage = 10;
 
+  async function fetchCategories() {
+    try {
+      const { data, error } = await supabase
+        .from("product_categories")
+        .select("id, name")
+        .eq("status", "active")
+        .order("display_order");
+      if (!error && data) {
+        setCategories(data);
+      }
+    } catch (error) {
+      console.error("Error loading categories:", error);
+    }
+  }
+
   async function fetchVendors() {
     try {
       setIsLoading(true);
+      
       const { data, error } = await supabase
         .from("vendors")
         .select(`
-          id, name, email, phone, address, category, status, plan_type, commission_rate, created_at, 
-          trial_start_date, trial_end_date, subscription_start_date, subscription_end_date, renewal_date
+          id,
+          shop_name,
+          owner_name,
+          email,
+          phone,
+          shop_code,
+          status,
+          created_at,
+          category_id,
+          product_categories (
+            name
+          ),
+          subscriptions (
+            id,
+            plan_name,
+            commission_percent,
+            start_date,
+            end_date,
+            status,
+            created_at
+          ),
+          vendor_profiles (
+            store_status
+          )
         `)
-        .order("created_at", { ascending: false });
+        .order("created_at", { ascending: false })
+        .order("created_at", { foreignTable: "subscriptions", ascending: false });
 
       if (error) throw error;
 
-      const mappedVendors: Vendor[] = (data || []).map((row) => {
-        const matchingCat = MVP_CATEGORIES.find(c => c.value === row.category);
-        const categoryDisplay = matchingCat ? matchingCat.label : (row.category || "Uncategorized");
+      const mappedVendors: Vendor[] = (data || []).map((row: any) => {
+        console.log("ROW DATA:", row);
+        console.log("SUBSCRIPTIONS DATA:", row.subscriptions);
 
+        const sub = row.subscriptions; 
+        
+        // Handle possible single or collection arrays safely from Supabase relation shapes
+        const profileObj = Array.isArray(row.vendor_profiles) ? row.vendor_profiles[0] : row.vendor_profiles;
+        
         return {
           id: row.id,
-          name: row.name || "Unnamed Vendor",
-          category: categoryDisplay,
-          location: row.address || "No Location Listed",
-          status: (row.status?.toLowerCase() as VendorStatus) || "pending",
-          orders: 0,
-          rating: 0,
-          commission_rate: row.commission_rate ?? 0,
-          plan_type: row.plan_type || "trial",
-          trial_start_date: row.trial_start_date || "",
-          trial_end_date: row.trial_end_date || "",
-          subscription_start_date: row.subscription_start_date || "",
-          subscription_end_date: row.subscription_end_date || "",
-          renewal_date: row.renewal_date || "",
-          joinedAt: formatDisplayDate(row.created_at),
+          shop_name: row.shop_name || "Unnamed Shop",
+          owner_name: row.owner_name || "Anonymous Owner",
           email: row.email || "—",
           phone: row.phone || "—",
+          shop_code: row.shop_code || "—",
+          status: (row.status?.toLowerCase() as VendorStatus) || "pending",
+          store_status: profileObj?.store_status || "closed",
+          joinedAt: formatDisplayDate(row.created_at),
+          created_at: row.created_at || "",
+          category_id: row.category_id || "",
+          category_name: row.product_categories?.name || "—",
+          
+          plan_name: (sub?.plan_name || "FREE") as keyof typeof PLAN_CONFIG,
+          commission_percent: sub ? (sub.commission_percent ?? 5) : 5,
+          start_date: sub?.start_date || "",
+          end_date: sub?.end_date || "",
+          sub_status: sub?.status || "active"
         };
       });
 
@@ -241,107 +229,124 @@ export function Vendors() {
   }
 
   useEffect(() => {
+    fetchCategories();
     fetchVendors();
   }, []);
 
   function resetForm() {
-    setFormName("");
-    setFormCategory("");
+    setFormShopName("");
+    setFormOwnerName("");
     setFormEmail("");
     setFormPhone("");
-    setFormLocation("");
-    setFormPlan("trial");
+    setFormShopCode("");
     setFormStatus("pending");
-    setFormCommission(0);
-    setFormTrialStartDate("");
-    setFormTrialEndDate("");
-    setFormSubStartDate("");
-    setFormSubEndDate("");
-    setFormRenewalDate("");
+    setFormCategoryId("");
+    setFormPlan("FREE");
+    setFormCommission(PLAN_CONFIG.FREE.commission);
+    setFormStartDate("");
+    setFormEndDate("");
+    setFormSubStatus("active");
   }
 
   function handleOpenEdit(vendor: Vendor) {
-    const matchedCat = MVP_CATEGORIES.find(c => c.label === vendor.category);
-    
-    setFormName(vendor.name);
-    setFormCategory(matchedCat ? matchedCat.value : "other");
+    setFormShopName(vendor.shop_name);
+    setFormOwnerName(vendor.owner_name);
     setFormEmail(vendor.email === "—" ? "" : vendor.email);
     setFormPhone(vendor.phone === "—" ? "" : vendor.phone);
-    setFormLocation(vendor.location === "No Location Listed" ? "" : vendor.location);
-    setFormPlan(vendor.plan_type);
+    setFormShopCode(vendor.shop_code === "—" ? "" : vendor.shop_code);
     setFormStatus(vendor.status as VendorStatus);
-    setFormCommission(vendor.commission_rate);
-    setFormTrialStartDate(vendor.trial_start_date ? new Date(vendor.trial_start_date).toISOString().split('T')[0] : "");
-    setFormTrialEndDate(vendor.trial_end_date ? new Date(vendor.trial_end_date).toISOString().split('T')[0] : "");
-    setFormSubStartDate(vendor.subscription_start_date ? new Date(vendor.subscription_start_date).toISOString().split('T')[0] : "");
-    setFormSubEndDate(vendor.subscription_end_date ? new Date(vendor.subscription_end_date).toISOString().split('T')[0] : "");
-    setFormRenewalDate(vendor.renewal_date ? new Date(vendor.renewal_date).toISOString().split('T')[0] : "");
+    setFormCategoryId(vendor.category_id);
     setEditOpen(true);
   }
 
   function handleOpenSubscription(vendor: Vendor) {
     setSelectedVendorForSub(vendor);
-    setFormPlan(vendor.plan_type);
-    setFormCommission(vendor.commission_rate);
-    setFormTrialStartDate(vendor.trial_start_date ? new Date(vendor.trial_start_date).toISOString().split('T')[0] : "");
-    setFormTrialEndDate(vendor.trial_end_date ? new Date(vendor.trial_end_date).toISOString().split('T')[0] : "");
-    setFormSubStartDate(vendor.subscription_start_date ? new Date(vendor.subscription_start_date).toISOString().split('T')[0] : "");
-    setFormSubEndDate(vendor.subscription_end_date ? new Date(vendor.subscription_end_date).toISOString().split('T')[0] : "");
-    setFormRenewalDate(vendor.renewal_date ? new Date(vendor.renewal_date).toISOString().split('T')[0] : "");
+    
+    const currentPlanKey = (vendor.plan_name || "FREE").toUpperCase() as keyof typeof PLAN_CONFIG;
+    setFormPlan(currentPlanKey);
+    setFormCommission(vendor.commission_percent);
+    setFormStartDate(vendor.start_date ? new Date(vendor.start_date).toISOString().split('T')[0] : "");
+    setFormEndDate(vendor.end_date ? new Date(vendor.end_date).toISOString().split('T')[0] : "");
+    setFormSubStatus(vendor.sub_status || "active");
+    
     setSubOpen(true);
   }
 
+  function applySubscriptionPlanRules(plan: keyof typeof PLAN_CONFIG, customStartDate?: string) {
+    setFormPlan(plan);
+    const config = PLAN_CONFIG[plan];
+    setFormCommission(config.commission);
+
+    if (config.durationDays === null) {
+      setFormStartDate("");
+      setFormEndDate("");
+    } else {
+      const current = customStartDate ? new Date(customStartDate) : new Date();
+      setFormStartDate(current.toISOString().split("T")[0]);
+      
+      const future = new Date(current);
+      future.setDate(future.getDate() + config.durationDays);
+      setFormEndDate(future.toISOString().split("T")[0]);
+    }
+  }
+
   async function handleAddVendor() {
-    if (!formName || !formCategory || !formPhone) {
-      alert("Business Name, Phone Number, and a Primary Category are required.");
+    if (!formShopName || !formOwnerName || !formPhone) {
+      alert("Shop Name, Owner Name, and Phone Number are required.");
       return;
     }
 
     try {
       setIsSubmitting(true);
       
-      let commissionRate = 0;
-      let trialStart = null;
-      let trialEnd = null;
-
-      if (formPlan === "free") {
-        commissionRate = 5;
-      } else if (formPlan === "premium") {
-        commissionRate = 0;
-      } else if (formPlan === "trial") {
-        commissionRate = 0;
-        const start = new Date();
-        const end = new Date();
-        end.setDate(start.getDate() + 60);
-        trialStart = start.toISOString();
-        trialEnd = end.toISOString();
-      }
-
-      const newVendorPayload: any = {
-        name: formName,
-        category: formCategory,
+      const newVendorPayload = {
+        shop_name: formShopName,
+        owner_name: formOwnerName,
         email: formEmail,
         phone: formPhone,
-        address: formLocation,
-        plan_type: formPlan,
-        commission_rate: commissionRate,
+        shop_code: formShopCode || `SHP-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
         status: formStatus,
-        trial_start_date: trialStart,
-        trial_end_date: trialEnd,
-        subscription_start_date: null,
-        subscription_end_date: null,
-        renewal_date: null
+        category_id: formCategoryId || null,
       };
 
-      const { error } = await supabase.from("vendors").insert([newVendorPayload]);
-      if (error) throw error;
+      const { data: insertedVendor, error: vendorError } = await supabase
+        .from("vendors")
+        .insert([newVendorPayload])
+        .select()
+        .single();
+
+      if (vendorError) throw vendorError;
+
+      let finalStart = null;
+      let finalEnd = null;
+      const targetConfig = PLAN_CONFIG[formPlan];
+
+      if (targetConfig.durationDays !== null) {
+        const baseDate = formStartDate ? new Date(formStartDate) : new Date();
+        finalStart = baseDate.toISOString();
+        const endDateObj = new Date(baseDate);
+        endDateObj.setDate(endDateObj.getDate() + targetConfig.durationDays);
+        finalEnd = endDateObj.toISOString();
+      }
+
+      const subPayload = {
+        vendor_id: insertedVendor.id,
+        plan_name: formPlan,
+        commission_percent: targetConfig.commission,
+        start_date: finalStart,
+        end_date: finalEnd,
+        status: formSubStatus
+      };
+
+      const { error: subError } = await supabase.from("subscriptions").insert([subPayload]);
+      if (subError) throw subError;
 
       resetForm();
       setAddOpen(false);
       await fetchVendors();
     } catch (error) {
-      console.error("Failed to append vendor node:", error);
-      alert("An error occurred while creating the vendor.");
+      console.error("Failed to add vendor node:", error);
+      alert("An error occurred while creating the vendor profile.");
     } finally {
       setIsSubmitting(false);
     }
@@ -349,138 +354,38 @@ export function Vendors() {
 
   async function handleEditVendor() {
     if (!viewVendor) return;
-    if (!formName || !formCategory || !formPhone) {
-      alert("Business Name, Phone Number, and a Primary Category are required.");
+    if (!formShopName || !formOwnerName || !formPhone) {
+      alert("Shop Name, Owner Name, and Phone Number are required.");
       return;
     }
 
     try {
       setIsSubmitting(true);
 
-      const updatePayload: any = {
-        name: formName,
-        category: formCategory,
+      const updatePayload = {
+        shop_name: formShopName,
+        owner_name: formOwnerName,
         email: formEmail,
         phone: formPhone,
-        address: formLocation,
-        plan_type: formPlan,
-        commission_rate: Number(formCommission),
+        shop_code: formShopCode,
         status: formStatus,
-        trial_start_date: formTrialStartDate ? new Date(formTrialStartDate).toISOString() : null,
-        trial_end_date: formTrialEndDate ? new Date(formTrialEndDate).toISOString() : null,
-        subscription_start_date: formSubStartDate ? new Date(formSubStartDate).toISOString() : null,
-        subscription_end_date: formSubEndDate ? new Date(formSubEndDate).toISOString() : null,
-        renewal_date: formRenewalDate ? new Date(formRenewalDate).toISOString() : null
+        category_id: formCategoryId || null,
       };
 
-      console.log("UPDATE PAYLOAD", updatePayload);
-
-      const { error } = await supabase
+      const { error: vendorError } = await supabase
         .from("vendors")
         .update(updatePayload)
         .eq("id", viewVendor.id);
 
-      if (error) throw error;
+      if (vendorError) throw vendorError;
 
       setEditOpen(false);
       await fetchVendors();
     } catch (error) {
-      console.error("Failed to update vendor dataset context:", error);
-      alert("An error occurred while saving updating modifications.");
+      console.error("Failed to update vendor context:", error);
+      alert("An error occurred while saving profile modifications.");
     } finally {
       setIsSubmitting(false);
-    }
-  }
-
-  async function handleDeleteVendor(id: string, name: string) {
-    const confirmation = window.confirm(`Are you absolutely sure you want to permanently delete "${name}"? This action cannot be undone.`);
-    if (!confirmation) return;
-
-    try {
-      setIsSubmitting(true);
-      
-      const { error } = await supabase
-        .from("vendors")
-        .delete()
-        .eq("id", id);
-
-      if (error) throw error;
-
-      setEditOpen(false);
-      setViewVendor(null);
-      await fetchVendors();
-    } catch (error) {
-      console.error("Failed to delete vendor record entry:", error);
-      alert("An error occurred while attempting to delete this vendor.");
-    } finally {
-      setIsSubmitting(false);
-    }
-  }
-
-  async function mutatePlanDirectly(vendor: Vendor, targetPlan: "free" | "premium") {
-    try {
-      let updatePayload: any = { plan_type: targetPlan };
-      const current = new Date();
-
-      if (targetPlan === "free") {
-        updatePayload.commission_rate = 5;
-        updatePayload.subscription_start_date = null;
-        updatePayload.subscription_end_date = null;
-        updatePayload.renewal_date = null;
-      } else if (targetPlan === "premium") {
-        const future = new Date();
-        future.setDate(current.getDate() + 30);
-        
-        updatePayload.commission_rate = 0;
-        updatePayload.subscription_start_date = current.toISOString();
-        updatePayload.subscription_end_date = future.toISOString();
-        updatePayload.renewal_date = future.toISOString();
-      }
-
-      console.log("UPDATE PAYLOAD", updatePayload);
-
-      const { error } = await supabase
-        .from("vendors")
-        .update(updatePayload)
-        .eq("id", vendor.id);
-
-      if (error) throw error;
-      await fetchVendors();
-    } catch (error) {
-      console.error("Direct plan mutation processing fault:", error);
-      alert("Could not update plan configuration layout automatically.");
-    }
-  }
-
-  async function renewPremiumSubscriptionDirectly(vendor: Vendor) {
-    if (vendor.plan_type.toLowerCase() !== "premium") return;
-    
-    try {
-      const anchorBase = vendor.subscription_end_date ? new Date(vendor.subscription_end_date) : new Date();
-      const currentAnchor = anchorBase < new Date() ? new Date() : anchorBase;
-      
-      const nextExpiryWindow = new Date(currentAnchor);
-      nextExpiryWindow.setDate(currentAnchor.getDate() + 30);
-
-      const updatePayload = {
-        subscription_start_date: currentAnchor.toISOString(),
-        subscription_end_date: nextExpiryWindow.toISOString(),
-        renewal_date: nextExpiryWindow.toISOString(),
-        commission_rate: 0
-      };
-
-      console.log("UPDATE PAYLOAD", updatePayload);
-
-      const { error } = await supabase
-        .from("vendors")
-        .update(updatePayload)
-        .eq("id", vendor.id);
-
-      if (error) throw error;
-      await fetchVendors();
-    } catch (error) {
-      console.error("Subscription renewal generation error:", error);
-      alert("An error occurred trying to parse subscription increments.");
     }
   }
 
@@ -490,63 +395,172 @@ export function Vendors() {
     try {
       setIsSubmitting(true);
 
-      const updatePayload: any = {
-        plan_type: formPlan,
-        commission_rate: Number(formCommission),
-        trial_start_date: formPlan === "trial" && formTrialStartDate ? new Date(formTrialStartDate).toISOString() : null,
-        trial_end_date: formPlan === "trial" && formTrialEndDate ? new Date(formTrialEndDate).toISOString() : null,
-        subscription_start_date: formPlan === "premium" && formSubStartDate ? new Date(formSubStartDate).toISOString() : null,
-        subscription_end_date: formPlan === "premium" && formSubEndDate ? new Date(formSubEndDate).toISOString() : null,
-        renewal_date: formPlan === "premium" && formRenewalDate ? new Date(formRenewalDate).toISOString() : null,
+      const currentConfig = PLAN_CONFIG[formPlan];
+      let isoStart = null;
+      let isoEnd = null;
+
+      if (currentConfig.durationDays !== null) {
+        const dStart = formStartDate ? new Date(formStartDate) : new Date();
+        isoStart = dStart.toISOString();
+        const dEnd = new Date(dStart);
+        dEnd.setDate(dEnd.getDate() + currentConfig.durationDays);
+        isoEnd = dEnd.toISOString();
+      }
+
+      const subPayload = {
+        vendor_id: selectedVendorForSub.id,
+        plan_name: formPlan,
+        commission_percent: currentConfig.commission,
+        start_date: isoStart,
+        end_date: isoEnd,
+        status: formSubStatus
       };
 
-      console.log("UPDATE PAYLOAD", updatePayload);
+      const { data: existingSubs } = await supabase
+        .from("subscriptions")
+        .select("id")
+        .eq("vendor_id", selectedVendorForSub.id);
 
-      const { error } = await supabase
-        .from("vendors")
-        .update(updatePayload)
-        .eq("id", selectedVendorForSub.id);
+      if (existingSubs && existingSubs.length > 0) {
+        const { error: updateError } = await supabase
+          .from("subscriptions")
+          .update(subPayload)
+          .eq("id", existingSubs[0].id);
 
-      if (error) throw error;
+        if (updateError) throw updateError;
+
+        if (existingSubs.length > 1) {
+          const duplicateIds = existingSubs.slice(1).map(s => s.id);
+          await supabase.from("subscriptions").delete().in("id", duplicateIds);
+        }
+      } else {
+        const { error: insertError } = await supabase
+          .from("subscriptions")
+          .insert([subPayload]);
+
+        if (insertError) throw insertError;
+      }
 
       setSubOpen(false);
       setSelectedVendorForSub(null);
       await fetchVendors();
+    } catch (error: any) {
+      console.error("CRITICAL SUBSCRIPTION TRANSACTION FAULT:", error);
+      alert(`Save Failed: ${error?.message || error}`);
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function renewPremiumSubscriptionDirectly(vendor: Vendor) {
+    if (vendor.plan_name === "FREE") return;
+    
+    try {
+      const anchorBase = vendor.end_date ? new Date(vendor.end_date) : new Date();
+      const currentAnchor = anchorBase < new Date() ? new Date() : anchorBase;
+      
+      const targetConfig = PLAN_CONFIG[vendor.plan_name];
+      const nextExpiryWindow = new Date(currentAnchor);
+      
+      if (targetConfig.durationDays !== null) {
+        nextExpiryWindow.setDate(currentAnchor.getDate() + targetConfig.durationDays);
+      }
+
+      const { data: existingSubs } = await supabase
+        .from("subscriptions")
+        .select("id")
+        .eq("vendor_id", vendor.id);
+
+      if (!existingSubs || existingSubs.length === 0) return;
+
+      const updatePayload = {
+        start_date: currentAnchor.toISOString(),
+        end_date: nextExpiryWindow.toISOString(),
+        status: "active",
+        commission_percent: targetConfig.commission
+      };
+
+      const { error } = await supabase
+        .from("subscriptions")
+        .update(updatePayload)
+        .eq("id", existingSubs[0].id);
+
+      if (error) throw error;
+      await fetchVendors();
     } catch (error) {
-      console.error("Failed to sync subscription details:", error);
-      alert("An error occurred while updating the subscription parameters.");
+      console.error("Subscription renewal failure context:", error);
+    }
+  }
+
+  async function handleDeleteVendor(id: string, name: string) {
+    const confirmation = window.confirm(`Are you absolutely sure you want to permanently delete "${name}"?`);
+    if (!confirmation) return;
+
+    try {
+      setIsSubmitting(true);
+      const { error } = await supabase.from("vendors").delete().eq("id", id);
+      if (error) throw error;
+
+      setEditOpen(false);
+      setViewVendor(null);
+      await fetchVendors();
+    } catch (error) {
+      console.error("Failed to delete record:", error);
     } finally {
       setIsSubmitting(false);
     }
   }
 
   async function mutateStatusDirectly(id: string, newStatus: VendorStatus) {
-    const updatePayload = { status: newStatus };
-
-    setVendorList((prev) => prev.map((v) => (v.id === id ? { ...v, status: newStatus } : v)));
-    if (viewVendor && viewVendor.id === id) {
-      setViewVendor((prev) => prev ? { ...prev, status: newStatus } : null);
-    }
-
     try {
-      console.log("UPDATE PAYLOAD", updatePayload);
-
-      const { error } = await supabase
+      const { error: vendorError } = await supabase
         .from("vendors")
-        .update(updatePayload)
+        .update({ status: newStatus })
         .eq("id", id);
-      if (error) throw error;
+        
+      if (vendorError) throw vendorError;
+
+      if (newStatus === "approved") {
+        const { data: existingSub, error: checkSubError } = await supabase
+          .from("subscriptions")
+          .select("id")
+          .eq("vendor_id", id);
+
+        if (checkSubError) throw checkSubError;
+
+        if (!existingSub || existingSub.length === 0) {
+          const now = new Date();
+          const future = new Date();
+          future.setDate(now.getDate() + PLAN_CONFIG.TRIAL.durationDays);
+
+          const autoSubPayload = {
+            vendor_id: id,
+            plan_name: "TRIAL",
+            commission_percent: PLAN_CONFIG.TRIAL.commission,
+            start_date: now.toISOString(),
+            end_date: future.toISOString(),
+            status: "active"
+          };
+
+          const { error: autoSubInsertError } = await supabase
+            .from("subscriptions")
+            .insert([autoSubPayload]);
+
+          if (autoSubInsertError) throw autoSubInsertError;
+        }
+      }
+
       await fetchVendors();
     } catch (error) {
-      console.error("Failed status transaction change sync:", error);
+      console.error("Failed status transaction change update:", error);
     }
   }
 
   const filtered = vendorList.filter((v) => {
     const matchSearch =
-      v.name.toLowerCase().includes(search.toLowerCase()) ||
-      v.location.toLowerCase().includes(search.toLowerCase()) ||
-      v.category.toLowerCase().includes(search.toLowerCase());
+      v.shop_name.toLowerCase().includes(search.toLowerCase()) ||
+      v.owner_name.toLowerCase().includes(search.toLowerCase()) ||
+      v.shop_code.toLowerCase().includes(search.toLowerCase());
     const matchStatus = statusFilter === "all" || v.status === statusFilter;
     return matchSearch && matchStatus;
   });
@@ -557,20 +571,19 @@ export function Vendors() {
     <div>
       <PageHeader
         title="Vendors"
-        description={`${vendorList.filter((v) => v.status === "approved").length} active vendors`}
+        description={`${vendorList.filter((v) => v.status === "approved").length} approved merchants listed`}
         actions={
           <Button
             variant="primary"
             size="sm"
-            leftIcon={<Plus className="w-3.5 h-3.5" />}
-            onClick={() => { resetForm(); setAddOpen(true); }}
+            onClick={() => { resetForm(); applySubscriptionPlanRules("FREE"); setAddOpen(true); }}
           >
             Add Vendor
           </Button>
         }
       />
 
-      {/* Filters */}
+      {/* Filters Toolbar */}
       <div className="flex items-center gap-3 mb-4">
         <div className="relative flex-1 max-w-xs">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#94A3B8]" />
@@ -578,8 +591,8 @@ export function Vendors() {
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search vendors..."
-            className="w-full h-9 pl-9 pr-3 bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg text-sm placeholder:text-[#94A3B8] text-[#0F172A] focus:outline-none focus:border-[#22C55E] focus:ring-2 focus:ring-[#22C55E]/10 focus:bg-white transition-all"
+            placeholder="Search shops, owners, codes..."
+            className="w-full h-9 pl-9 pr-3 bg-white border border-[#E2E8F0] rounded-lg text-sm placeholder:text-[#94A3B8] text-[#0F172A] focus:outline-none focus:border-[#22C55E] transition-all"
           />
         </div>
         <div className="flex items-center gap-1 border border-[#E2E8F0] rounded-lg p-1 bg-white">
@@ -589,162 +602,81 @@ export function Vendors() {
               onClick={() => { setStatusFilter(s); setCurrentPage(1); }}
               className={cn(
                 "h-7 px-3 rounded-md text-xs font-medium capitalize transition-all",
-                statusFilter === s
-                  ? "bg-[#22C55E] text-white"
-                  : "text-[#64748B] hover:text-[#0F172A] hover:bg-[#F8FAFC]"
+                statusFilter === s ? "bg-[#22C55E] text-white" : "text-[#64748B] hover:text-[#0F172A]"
               )}
             >
               {s === "all" ? "All" : s.charAt(0).toUpperCase() + s.slice(1)}
             </button>
           ))}
         </div>
-        <button className="h-9 w-9 flex items-center justify-center border border-[#E2E8F0] rounded-lg text-[#64748B] hover:bg-[#F8FAFC] transition-colors">
-          <Filter className="w-3.5 h-3.5" />
-        </button>
       </div>
 
-      {/* Table */}
+      {/* Dataset Table View */}
       <div className="bg-white border border-[#E2E8F0] rounded-xl relative z-10">
         <table className="w-full border-collapse">
           <thead>
             <tr className="border-b border-[#E2E8F0] bg-[#F8FAFC]">
-              <th className="text-left px-4 py-3 text-xs font-medium text-[#64748B] uppercase tracking-wide rounded-tl-xl">Vendor</th>
+              <th className="text-left px-4 py-3 text-xs font-medium text-[#64748B] uppercase tracking-wide">Shop Name</th>
+              <th className="text-left px-4 py-3 text-xs font-medium text-[#64748B] uppercase tracking-wide">Owner</th>
               <th className="text-left px-4 py-3 text-xs font-medium text-[#64748B] uppercase tracking-wide">Category</th>
-              <th className="text-left px-4 py-3 text-xs font-medium text-[#64748B] uppercase tracking-wide">Status</th>
-              <th className="text-right px-4 py-3 text-xs font-medium text-[#64748B] uppercase tracking-wide">Orders</th>
-              <th className="text-left px-4 py-3 text-xs font-medium text-[#64748B] uppercase tracking-wide">Plan Context</th>
-              {/* 6. Modified Header View Marker text context label */}
-              <th className="text-left px-4 py-3 text-xs font-medium text-[#64748B] uppercase tracking-wide">Renewal / Expiry Column</th>
-              <th className="text-left px-4 py-3 text-xs font-medium text-[#64748B] uppercase tracking-wide">Joined</th>
-              <th className="px-4 py-3 rounded-tr-xl" />
+              <th className="text-left px-4 py-3 text-xs font-medium text-[#64748B] uppercase tracking-wide">Shop Code</th>
+              <th className="text-left px-4 py-3 text-xs font-medium text-[#64748B] uppercase tracking-wide">Approval Status</th>
+              <th className="text-left px-4 py-3 text-xs font-medium text-[#64748B] uppercase tracking-wide">Operational Status</th>
+              <th className="text-left px-4 py-3 text-xs font-medium text-[#64748B] uppercase tracking-wide">Subscription Plan</th>
+              <th className="text-left px-4 py-3 text-xs font-medium text-[#64748B] uppercase tracking-wide">Subscription End Date</th>
+              <th className="text-left px-4 py-3 text-xs font-medium text-[#64748B] uppercase tracking-wide">Joined Date</th>
+              <th className="px-4 py-3" />
             </tr>
           </thead>
           <tbody className="divide-y divide-[#F1F5F9]">
             {isLoading ? (
-              <tr>
-                <td colSpan={8} className="text-center py-16 text-sm text-[#94A3B8]">
-                  Loading vendors...
-                </td>
-              </tr>
+              <tr><td colSpan={10} className="text-center py-16 text-sm text-[#94A3B8]">Loading operational records...</td></tr>
             ) : paginated.length === 0 ? (
-              <tr>
-                <td colSpan={8} className="text-center py-16 text-sm text-[#94A3B8]">
-                  No vendors found
-                </td>
-              </tr>
+              <tr><td colSpan={10} className="text-center py-16 text-sm text-[#94A3B8]">No system vendor profiles matched.</td></tr>
             ) : (
-              paginated.map((vendor, index) => {
-                const badge = statusBadgeMap[vendor.status] || { variant: "neutral", label: vendor.status };
-                const planIndicator = getPlanIndicator(vendor);
-                const isLastRow = index === paginated.length - 1;
-                // 5 & 6. Gather remaining days color context payload mappings
-                const remainingDaysInfo = renderExpiryInfo(vendor);
+              paginated.map((vendor) => {
+                const approvalBadge = statusBadgeMap[vendor.status] || { variant: "neutral", label: vendor.status };
+                const operationalBadge = operationalBadgeMap[vendor.store_status] || { variant: "neutral", label: vendor.store_status };
+                const configMatch = PLAN_CONFIG[vendor.plan_name] || PLAN_CONFIG.FREE;
                 
                 return (
                   <tr key={vendor.id} className="hover:bg-[#FAFAFA] transition-colors">
-                    <td className={cn("px-4 py-3.5", isLastRow && "rounded-bl-xl")}>
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 bg-[#F0FDF4] border border-[#DCFCE7] rounded-lg flex items-center justify-center flex-shrink-0">
-                          <span className="text-sm font-semibold text-[#16A34A]">{vendor.name[0]}</span>
-                        </div>
-                        <div>
-                          <button
-                            onClick={() => setViewVendor(vendor)}
-                            className="text-sm font-medium text-[#0F172A] hover:text-[#22C55E] transition-colors"
-                          >
-                            {vendor.name}
-                          </button>
-                          <div className="flex items-center gap-1 mt-0.5">
-                            <MapPin className="w-3 h-3 text-[#94A3B8]" />
-                            <span className="text-xs text-[#64748B]">{vendor.location}</span>
-                          </div>
-                        </div>
-                      </div>
+                    <td className="px-4 py-3.5 font-medium text-[#0F172A]">
+                      <button onClick={() => setViewVendor(vendor)} className="hover:text-[#22C55E] text-left">
+                        {vendor.shop_name}
+                      </button>
+                    </td>
+                    <td className="px-4 py-3.5 text-sm text-[#334155]">{vendor.owner_name}</td>
+                    <td className="px-4 py-3.5 text-sm text-[#334155]">{vendor.category_name}</td>
+                    <td className="px-4 py-3.5 font-mono text-xs font-semibold text-[#475569]">{vendor.shop_code}</td>
+                    <td className="px-4 py-3.5">
+                      <Badge variant={approvalBadge.variant} label={approvalBadge.label} dot />
                     </td>
                     <td className="px-4 py-3.5">
-                      <span className="text-sm text-[#64748B] truncate max-w-[140px] block" title={vendor.category}>
-                        {vendor.category}
-                      </span>
+                      <Badge variant={operationalBadge.variant} label={operationalBadge.label} dot />
                     </td>
                     <td className="px-4 py-3.5">
-                      <Badge variant={badge.variant} label={badge.label} dot />
+                      <Badge variant={configMatch.variant} label={getPlanDisplayLabel(vendor.plan_name)} />
                     </td>
-                    <td className="px-4 py-3.5 text-right">
-                      <span className="text-sm font-medium text-[#0F172A]">{vendor.orders.toLocaleString()}</span>
+                    <td className="px-4 py-3.5 text-sm text-[#475569]">
+                      {vendor.end_date ? formatDisplayDate(vendor.end_date) : "—"}
                     </td>
-                    <td className="px-4 py-3.5">
-                      <Badge variant={planIndicator.variant} label={planIndicator.label} />
-                    </td>
-                    {/* 6. Dynamic Table Column Data Target Insertion */}
-                    <td className="px-4 py-3.5">
-                      <span className={cn("text-sm", remainingDaysInfo.colorClass)}>
-                        {remainingDaysInfo.text}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3.5">
-                      <span className="text-sm text-[#64748B]">{vendor.joinedAt}</span>
-                    </td>
-                    <td className={cn("px-4 py-3.5 relative", isLastRow && "rounded-br-xl")}>
+                    <td className="px-4 py-3.5 text-sm text-[#64748B]">{vendor.joinedAt}</td>
+                    <td className="px-4 py-3.5 relative">
                       <Dropdown
                         align="right"
                         trigger={
-                          <button className="h-7 w-7 flex items-center justify-center rounded-md text-[#64748B] hover:bg-[#F1F5F9] hover:text-[#0F172A] transition-colors">
+                          <button className="h-7 w-7 flex items-center justify-center rounded-md text-[#64748B] hover:bg-[#F1F5F9]">
                             <MoreHorizontal className="w-4 h-4" />
                           </button>
                         }
                         items={[
-                          {
-                            label: "View Details",
-                            icon: <Edit className="w-3.5 h-3.5" />,
-                            onClick: () => setViewVendor(vendor),
-                          },
-                          ...(vendor.status !== "approved" ? [{
-                            label: "Approve Vendor",
-                            icon: <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />,
-                            onClick: () => mutateStatusDirectly(vendor.id, "approved"),
-                          }] : []),
-                          
-                          ...(vendor.status === "approved" ? [{
-                            label: "Suspend Vendor",
-                            icon: <XCircle className="w-3.5 h-3.5 text-rose-500" />,
-                            onClick: () => mutateStatusDirectly(vendor.id, "suspended"),
-                            variant: "danger" as const
-                          }] : []),
-
-                          {
-                            label: "Upgrade to Premium",
-                            icon: <Crown className="w-3.5 h-3.5 text-amber-500" />,
-                            onClick: () => mutatePlanDirectly(vendor, "premium"),
-                            disabled: vendor.plan_type.toLowerCase() === "premium"
-                          },
-                          {
-                            label: "Move to Free",
-                            icon: <CheckCircle className="w-3.5 h-3.5 text-sky-500" />,
-                            onClick: () => mutatePlanDirectly(vendor, "free"),
-                            disabled: vendor.plan_type.toLowerCase() === "free"
-                          },
-                          {
-                            label: "Renew Subscription",
-                            icon: <Plus className="w-3.5 h-3.5 text-emerald-500" />,
-                            onClick: () => renewPremiumSubscriptionDirectly(vendor),
-                            disabled: vendor.plan_type.toLowerCase() !== "premium"
-                          },
-                          {
-                            label: "View Orders",
-                            icon: <ShoppingCart className="w-3.5 h-3.5" />,
-                            onClick: () => {},
-                          },
-                          {
-                            label: "Manage Subscription",
-                            icon: <Crown className="w-3.5 h-3.5 text-purple-500" />,
-                            onClick: () => handleOpenSubscription(vendor),
-                          },
-                          {
-                            label: "Delete Permanent",
-                            icon: <Trash2 className="w-3.5 h-3.5" />,
-                            onClick: () => handleDeleteVendor(vendor.id, vendor.name),
-                            variant: "danger" as const
-                          }
+                          { label: "View Details", icon: <Edit className="w-3.5 h-3.5" />, onClick: () => setViewVendor(vendor) },
+                          ...(vendor.status !== "approved" ? [{ label: "Approve Vendor", icon: <Edit className="w-3.5 h-3.5 text-emerald-500" />, onClick: () => mutateStatusDirectly(vendor.id, "approved") }] : []),
+                          ...(vendor.status === "approved" ? [{ label: "Suspend Vendor", icon: <XCircle className="w-3.5 h-3.5 text-rose-500" />, onClick: () => mutateStatusDirectly(vendor.id, "suspended"), variant: "danger" as const }] : []),
+                          { label: "Renew Subscription", icon: <Plus className="w-3.5 h-3.5 text-emerald-500" />, onClick: () => renewPremiumSubscriptionDirectly(vendor), disabled: vendor.plan_name === "FREE" },
+                          { label: "Manage Plan", icon: <Crown className="w-3.5 h-3.5 text-purple-500" />, onClick: () => handleOpenSubscription(vendor) },
+                          { label: "Delete Vendor", icon: <Trash2 className="w-3.5 h-3.5" />, onClick: () => handleDeleteVendor(vendor.id, vendor.shop_name), variant: "danger" as const }
                         ]}
                       />
                     </td>
@@ -754,13 +686,7 @@ export function Vendors() {
             )}
           </tbody>
         </table>
-        <Pagination
-          currentPage={currentPage}
-          totalPages={Math.ceil(filtered.length / itemsPerPage)}
-          totalItems={filtered.length}
-          itemsPerPage={itemsPerPage}
-          onPageChange={setCurrentPage}
-        />
+        <Pagination currentPage={currentPage} totalPages={Math.ceil(filtered.length / itemsPerPage)} totalItems={filtered.length} itemsPerPage={itemsPerPage} onPageChange={setCurrentPage} />
       </div>
 
       {/* Add Vendor Modal */}
@@ -768,388 +694,212 @@ export function Vendors() {
         open={addOpen}
         onClose={() => setAddOpen(false)}
         title="Add Vendor"
-        description="Onboard a new vendor to the Rivo platform."
+        description="Onboard a new vendor mapping record reference configuration manually."
         size="md"
         footer={
           <>
             <Button variant="secondary" onClick={() => setAddOpen(false)} disabled={isSubmitting}>Cancel</Button>
-            <Button variant="primary" onClick={handleAddVendor} disabled={isSubmitting}>
-              {isSubmitting ? "Adding..." : "Add Vendor"}
-            </Button>
+            <Button variant="primary" onClick={handleAddVendor} disabled={isSubmitting}>Add Vendor</Button>
           </>
         }
       >
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
-            <Input 
-              label="Business Name *" 
-              placeholder="e.g. Green Basket" 
-              value={formName}
-              onChange={(e) => setFormName(e.target.value)}
-            />
-            <div>
-              <Select
-                label="Primary Category *"
-                value={formCategory}
-                onChange={(val: string) => setFormCategory(val)}
-                options={MVP_CATEGORIES}
-                placeholder="Select category"
-              />
-            </div>
+            <Input label="Shop Name *" placeholder="Green Basket Market" value={formShopName} onChange={(e) => setFormShopName(e.target.value)} />
+            <Input label="Owner Full Name *" placeholder="John Doe" value={formOwnerName} onChange={(e) => setFormOwnerName(e.target.value)} />
           </div>
-          <Input 
-            label="Contact Email" 
-            placeholder="ops@vendor.com" 
-            value={formEmail}
-            onChange={(e) => setFormEmail(e.target.value)}
-          />
-          <Input 
-            label="Phone Number *" 
-            placeholder="+91 98765 43210" 
-            value={formPhone}
-            onChange={(e) => setFormPhone(e.target.value)}
-          />
-          <Input 
-            label="Location / Area" 
-            placeholder="Koramangala, Bengaluru" 
-            value={formLocation}
-            onChange={(e) => setFormLocation(e.target.value)}
-          />
+          <div className="grid grid-cols-2 gap-4">
+            <Input label="Contact Email" placeholder="ops@vendor.com" value={formEmail} onChange={(e) => setFormEmail(e.target.value)} />
+            <Input label="Phone Number *" placeholder="+91 98765 43210" value={formPhone} onChange={(e) => setFormPhone(e.target.value)} />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <Input label="Custom Shop Code (Optional)" placeholder="e.g. BKT01" value={formShopCode} onChange={(e) => setFormShopCode(e.target.value)} />
+            <Select
+              label="Store Category"
+              value={formCategoryId}
+              onChange={(val: string) => setFormCategoryId(val)}
+              options={[
+                { value: "", label: "Select a Category" },
+                ...categories.map(cat => ({ value: cat.id, label: cat.name }))
+              ]}
+            />
+          </div>
+          
           <div className="grid grid-cols-2 gap-4">
             <Select
-              label="Subscription Plan"
+              label="Subscription Plan Type"
               value={formPlan}
-              onChange={(val: string) => setFormPlan(val)}
+              onChange={(val: string) => applySubscriptionPlanRules(val as keyof typeof PLAN_CONFIG)}
               options={[
-                { value: "trial", label: "Trial (2 Months)" },
-                { value: "free", label: "Free (5% Commission)" },
-                { value: "premium", label: "Premium (0% Commission)" },
+                { value: "FREE", label: PLAN_CONFIG.FREE.label },
+                { value: "499", label: PLAN_CONFIG["499"].label },
+                { value: "TRIAL", label: PLAN_CONFIG.TRIAL.label },
               ]}
-              placeholder="Select plan"
             />
             <Select
-              label="Initial Review Status"
+              label="Initial Status"
               value={formStatus}
               onChange={(val: string) => setFormStatus(val as VendorStatus)}
               options={[
                 { value: "pending", label: "Pending Review" },
                 { value: "approved", label: "Pre-Approved" },
               ]}
-              placeholder="Select initial status"
             />
           </div>
         </div>
       </Modal>
 
-      {/* View Vendor Details Modal */}
+      {/* View Details Inspection Modal Window Layout */}
       {viewVendor && (
         <Modal
           open={!!viewVendor && !editOpen}
           onClose={() => setViewVendor(null)}
-          title={viewVendor.name}
-          description={`Vendor ID: ${viewVendor.id}`}
+          title={viewVendor.shop_name}
+          description={`Vendor Resource Identifier Token: ${viewVendor.id}`}
           size="md"
           footer={
-            <div className="flex items-center justify-between w-full">
-              <Button 
-                variant="destructive" 
-                leftIcon={<Trash2 className="w-3.5 h-3.5" />} 
-                onClick={() => handleDeleteVendor(viewVendor.id, viewVendor.name)}
-                disabled={isSubmitting}
-              >
-                Delete Vendor
-              </Button>
-              <div className="flex items-center gap-2">
-                <Button variant="secondary" onClick={() => setViewVendor(null)}>Close</Button>
-                <Button 
-                  variant="primary" 
-                  leftIcon={<Edit className="w-3.5 h-3.5" />} 
-                  onClick={() => handleOpenEdit(viewVendor)}
-                >
-                  Edit Vendor
-                </Button>
-              </div>
+            <div className="flex items-center justify-end gap-2 w-full">
+              <Button variant="secondary" onClick={() => setViewVendor(null)}>Close</Button>
+              <Button variant="primary" onClick={() => handleOpenEdit(viewVendor)}>Edit Vendor</Button>
             </div>
           }
         >
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-3">
-              {/* 2, 3 & 4. Dynamically provision display parameters conditionally matching vendor metrics */}
-              {[
-                { label: "Business Name", value: viewVendor.name },
-                { label: "Primary Category", value: viewVendor.category },
-                { label: "Phone", value: viewVendor.phone },
-                { label: "Email", value: viewVendor.email },
-                { label: "Address / Location", value: viewVendor.location },
-                { label: "Created Date", value: viewVendor.joinedAt },
-                { label: "Active Plan", value: viewVendor.plan_type.toUpperCase() },
-                { label: "Commission Rate", value: `${viewVendor.commission_rate}%` },
-                
-                // 2. TRIAL-Specific fields conditional rendering check blocks
-                ...(viewVendor.plan_type.toLowerCase() === "trial" ? [
-                  { label: "Trial Start Date", value: formatDisplayDate(viewVendor.trial_start_date) },
-                  { label: "Trial End Date", value: formatDisplayDate(viewVendor.trial_end_date) },
-                  { 
-                    label: "Trial Remaining", 
-                    value: calculateDaysRemaining(viewVendor.trial_end_date).text,
-                    isCustomColor: true,
-                    colorClass: calculateDaysRemaining(viewVendor.trial_end_date).colorClass 
-                  }
-                ] : []),
-
-                // 3. PREMIUM-Specific fields conditional rendering check blocks
-                ...(viewVendor.plan_type.toLowerCase() === "premium" ? [
-                  { label: "Subscription Start Date", value: formatDisplayDate(viewVendor.subscription_start_date) },
-                  { label: "Subscription End Date", value: formatDisplayDate(viewVendor.subscription_end_date) },
-                  { 
-                    label: "Subscription Remaining", 
-                    value: calculateDaysRemaining(viewVendor.subscription_end_date).text,
-                    isCustomColor: true,
-                    colorClass: calculateDaysRemaining(viewVendor.subscription_end_date).colorClass
-                  }
-                ] : []),
-
-                // 4. FREE-Specific conditional display string injection
-                ...(viewVendor.plan_type.toLowerCase() === "free" ? [
-                  { label: "Plan Expiry Status", value: "No Expiry", isCustomColor: true, colorClass: "text-[#64748B]" }
-                ] : []),
-
-                { label: "Renewal Calendar Target", value: formatDisplayDate(viewVendor.renewal_date) },
-              ].map((item: any) => (
-                <div key={item.label} className="bg-[#F8FAFC] rounded-lg p-3 border border-[#F1F5F9]">
-                  <p className="text-xs text-[#64748B] mb-1 font-medium">{item.label}</p>
-                  <p className={cn("text-sm font-semibold", item.isCustomColor ? item.colorClass : "text-[#0F172A]")}>
-                    {item.value}
-                  </p>
-                </div>
-              ))}
-            </div>
-            <div className="grid grid-cols-3 gap-3">
-              <div className="bg-[#F0FDF4] border border-[#DCFCE7] rounded-lg p-3 text-center">
-                <p className="text-lg font-semibold text-[#16A34A]">{viewVendor.orders.toLocaleString()}</p>
-                <p className="text-xs text-[#64748B]">Total Orders</p>
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            {[
+              { label: "Shop Name", value: viewVendor.shop_name },
+              { label: "Owner Name", value: viewVendor.owner_name },
+              { label: "Store Category", value: viewVendor.category_name },
+              { label: "Phone Connection", value: viewVendor.phone },
+              { label: "Email Address", value: viewVendor.email },
+              { label: "Shop Code ID Mapping", value: viewVendor.shop_code },
+              { label: "Initialization Timestamp", value: viewVendor.joinedAt },
+              { label: "Active Subscription Plan", value: getPlanDisplayLabel(viewVendor.plan_name) },
+              { label: "Commission Factor Value", value: `${viewVendor.commission_percent}%` },
+              { label: "Subscription Interval Start", value: formatDisplayDate(viewVendor.start_date) },
+              { label: "Subscription Interval End", value: formatDisplayDate(viewVendor.end_date) },
+              { label: "Sub Track State Record", value: viewVendor.sub_status.toUpperCase() },
+              { label: "Account State Approval Status", value: viewVendor.status.toUpperCase() },
+              { label: "Operational Status", value: viewVendor.store_status.toUpperCase() },
+            ].map((item) => (
+              <div key={item.label} className="bg-[#F8FAFC] p-3 border rounded-lg">
+                <p className="text-xs text-[#64748B] font-medium mb-0.5">{item.label}</p>
+                <p className="font-semibold text-[#0F172A]">{item.value}</p>
               </div>
-              <div className="bg-[#FEF9C3] border border-[#FEF08A] rounded-lg p-3 text-center">
-                <p className="text-lg font-semibold text-amber-700">{viewVendor.rating || "—"}</p>
-                <p className="text-xs text-[#64748B]">Avg. Rating</p>
-              </div>
-              <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg p-3 text-center flex flex-col justify-center items-center">
-                <Badge 
-                  variant={(statusBadgeMap[viewVendor.status] || statusBadgeMap.pending).variant} 
-                  label={(statusBadgeMap[viewVendor.status] || statusBadgeMap.pending).label} 
-                />
-                <p className="text-xs text-[#64748B] mt-1">Status</p>
-              </div>
-            </div>
+            ))}
           </div>
         </Modal>
       )}
 
-      {/* Edit Vendor Modal */}
+      {/* Edit Vendor Form Modification Overlay */}
       {viewVendor && editOpen && (
         <Modal
           open={editOpen}
           onClose={() => setEditOpen(false)}
-          title={`Edit ${viewVendor.name}`}
-          description="Update configuration records and operational overrides."
+          title={`Edit Profile — ${viewVendor.shop_name}`}
           size="md"
           footer={
-            <div className="flex items-center justify-between w-full">
-              <Button 
-                variant="destructive" 
-                leftIcon={<Trash2 className="w-3.5 h-3.5" />} 
-                onClick={() => handleDeleteVendor(viewVendor.id, viewVendor.name)}
-                disabled={isSubmitting}
-              >
-                Delete Permanent
-              </Button>
-              <div className="flex items-center gap-2">
-                <Button variant="secondary" onClick={() => setEditOpen(false)} disabled={isSubmitting}>Cancel</Button>
-                <Button variant="primary" onClick={handleEditVendor} disabled={isSubmitting}>
-                  {isSubmitting ? "Saving..." : "Save Changes"}
-                </Button>
+            <div className="flex justify-between items-center w-full">
+              <Button variant="destructive" onClick={() => handleDeleteVendor(viewVendor.id, viewVendor.shop_name)} disabled={isSubmitting}>Delete Vendor</Button>
+              <div className="flex gap-2">
+                <Button variant="secondary" onClick={() => setEditOpen(false)}>Cancel</Button>
+                <Button variant="primary" onClick={handleEditVendor} disabled={isSubmitting}>Save Modifications</Button>
               </div>
             </div>
           }
         >
-          <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
+          <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
-              <Input 
-                label="Business Name *" 
-                value={formName}
-                onChange={(e) => setFormName(e.target.value)}
-              />
+              <Input label="Shop Name *" value={formShopName} onChange={(e) => setFormShopName(e.target.value)} />
+              <Input label="Owner Name *" value={formOwnerName} onChange={(e) => setFormOwnerName(e.target.value)} />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <Input label="Contact Email Address" value={formEmail} onChange={(e) => setFormEmail(e.target.value)} />
+              <Input label="Phone Connection Line *" value={formPhone} onChange={(e) => setFormPhone(e.target.value)} />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <Input label="Shop Registration Code String Value" value={formShopCode} onChange={(e) => setFormShopCode(e.target.value)} />
               <Select
-                label="Primary Category *"
-                value={formCategory}
-                onChange={(val: string) => setFormCategory(val)}
-                options={MVP_CATEGORIES}
+                label="Store Category"
+                value={formCategoryId}
+                onChange={(val: string) => setFormCategoryId(val)}
+                options={[
+                  { value: "", label: "Select a Category" },
+                  ...categories.map(cat => ({ value: cat.id, label: cat.name }))
+                ]}
               />
             </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <Input 
-                label="Contact Email" 
-                value={formEmail}
-                onChange={(e) => setFormEmail(e.target.value)}
-              />
-              <Input 
-                label="Phone Number *" 
-                value={formPhone}
-                onChange={(e) => setFormPhone(e.target.value)}
-              />
-            </div>
-
-            <Input 
-              label="Address / Location" 
-              value={formLocation}
-              onChange={(e) => setFormLocation(e.target.value)}
+            <Select
+              label="System Clearance Status Level Enforced"
+              value={formStatus}
+              onChange={(val: string) => setFormStatus(val as VendorStatus)}
+              options={[
+                { value: "pending", label: "Pending" },
+                { value: "approved", label: "Approved" },
+                { value: "suspended", label: "Suspended" },
+              ]}
             />
-
-            <div className="grid grid-cols-2 gap-4">
-              <Select
-                label="Subscription Plan"
-                value={formPlan}
-                onChange={(val: string) => {
-                  setFormPlan(val);
-                  if (val === "free") {
-                    setFormCommission(5);
-                    setFormSubStartDate(""); setFormSubEndDate(""); setFormRenewalDate("");
-                  }
-                  if (val === "premium") {
-                    setFormCommission(0);
-                    const now = new Date().toISOString().split('T')[0];
-                    const future = new Date(); future.setDate(future.getDate() + 30);
-                    setFormSubStartDate(now); setFormSubEndDate(future.toISOString().split('T')[0]);
-                    setFormRenewalDate(future.toISOString().split('T')[0]);
-                  }
-                  if (val === "trial") {
-                    setFormCommission(0);
-                    const now = new Date().toISOString().split('T')[0];
-                    const future = new Date(); future.setDate(future.getDate() + 60);
-                    setFormTrialStartDate(now); setFormTrialEndDate(future.toISOString().split('T')[0]);
-                  }
-                }}
-                options={[
-                  { value: "trial", label: "Trial" },
-                  { value: "free", label: "Free" },
-                  { value: "premium", label: "Premium" },
-                ]}
-              />
-              <Select
-                label="Vendor Status"
-                value={formStatus}
-                onChange={(val: string) => setFormStatus(val as VendorStatus)}
-                options={[
-                  { value: "pending", label: "Pending" },
-                  { value: "approved", label: "Approved" },
-                  { value: "suspended", label: "Suspended" },
-                ]}
-              />
-            </div>
-
-            <div className="border-t border-dashed border-[#E2E8F0] my-2 pt-4">
-              <p className="text-xs font-semibold text-[#64748B] uppercase tracking-wider mb-3">Lifecycle Configuration Tracking</p>
-              <div className="grid grid-cols-2 gap-4">
-                <Input 
-                  label="Commission Rate (%)" 
-                  type="number"
-                  value={formCommission.toString()}
-                  onChange={(e) => setFormCommission(parseFloat(e.target.value) || 0)}
-                />
-                <div />
-                
-                <Input label="Trial Start" type="date" value={formTrialStartDate} onChange={(e) => setFormTrialStartDate(e.target.value)} disabled={formPlan !== "trial"} />
-                <Input label="Trial End" type="date" value={formTrialEndDate} onChange={(e) => setFormTrialEndDate(e.target.value)} disabled={formPlan !== "trial"} />
-                
-                <Input label="Premium Subscription Start" type="date" value={formSubStartDate} onChange={(e) => setFormSubStartDate(e.target.value)} disabled={formPlan !== "premium"} />
-                <Input label="Premium Subscription End" type="date" value={formSubEndDate} onChange={(e) => setFormSubEndDate(e.target.value)} disabled={formPlan !== "premium"} />
-                <Input label="Renewal Trigger Target" type="date" value={formRenewalDate} onChange={(e) => setFormRenewalDate(e.target.value)} disabled={formPlan !== "premium"} />
-              </div>
-            </div>
           </div>
         </Modal>
       )}
 
-      {/* Dedicated Manage Subscription Modal */}
+      {/* Dedicated Subscriptions Management Modal */}
       {selectedVendorForSub && subOpen && (
         <Modal
           open={subOpen}
           onClose={() => { setSubOpen(false); setSelectedVendorForSub(null); }}
-          title={`Manage Subscription — ${selectedVendorForSub.name}`}
-          description="Modify plan limits, tier levels, and commission rates."
+          title={`Manage Subscription — ${selectedVendorForSub.shop_name}`}
           size="md"
           footer={
             <>
               <Button variant="secondary" onClick={() => { setSubOpen(false); setSelectedVendorForSub(null); }} disabled={isSubmitting}>Cancel</Button>
-              <Button variant="primary" onClick={handleUpdateSubscription} disabled={isSubmitting}>
-                {isSubmitting ? "Updating Plan..." : "Update Subscription"}
-              </Button>
+              <Button variant="primary" onClick={handleUpdateSubscription} disabled={isSubmitting}>Update Subscription</Button>
             </>
           }
         >
           <div className="space-y-4">
-            <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl p-4 flex items-center justify-between">
-              <div>
-                <p className="text-xs text-[#64748B] mb-0.5">Current Active Plan</p>
-                <p className="text-sm font-semibold text-[#0F172A] capitalize">{selectedVendorForSub.plan_type}</p>
-              </div>
-              <Badge 
-                variant={subscriptionBadgeMap[selectedVendorForSub.plan_type.toLowerCase()] || "neutral"} 
-                label={selectedVendorForSub.plan_type.toUpperCase()} 
+            <Select
+              label="Plan"
+              value={formPlan}
+              onChange={(val: string) => applySubscriptionPlanRules(val as keyof typeof PLAN_CONFIG, formStartDate || undefined)}
+              options={[
+                { value: "FREE", label: PLAN_CONFIG.FREE.label },
+                { value: "499", label: PLAN_CONFIG["499"].label },
+                { value: "TRIAL", label: PLAN_CONFIG.TRIAL.label },
+              ]}
+            />
+            
+            <Input 
+              label="Commission %" 
+              type="number" 
+              value={formCommission.toString()} 
+              disabled 
+            />
+            
+            <div className="grid grid-cols-2 gap-4">
+              <Input 
+                label="Start Date" 
+                type="date" 
+                value={formStartDate} 
+                onChange={(e) => applySubscriptionPlanRules(formPlan, e.target.value)}
+                disabled={formPlan === "FREE"} 
+              />
+              <Input 
+                label="End Date" 
+                type="date" 
+                value={formEndDate} 
+                disabled 
               />
             </div>
 
-            <div className="grid grid-cols-1 gap-4">
-              <Select
-                label="Target Subscription Plan"
-                value={formPlan}
-                onChange={(val: string) => {
-                  setFormPlan(val);
-                  if (val === "free") {
-                    setFormCommission(5);
-                    setFormSubStartDate(""); setFormSubEndDate(""); setFormRenewalDate("");
-                  }
-                  if (val === "premium") {
-                    setFormCommission(0);
-                    const now = new Date().toISOString().split('T')[0];
-                    const future = new Date(); future.setDate(future.getDate() + 30);
-                    setFormSubStartDate(now); setFormSubEndDate(future.toISOString().split('T')[0]);
-                    setFormRenewalDate(future.toISOString().split('T')[0]);
-                  }
-                  if (val === "trial") {
-                    setFormCommission(0);
-                    const now = new Date().toISOString().split('T')[0];
-                    const future = new Date(); future.setDate(future.getDate() + 60);
-                    setFormTrialStartDate(now); setFormTrialEndDate(future.toISOString().split('T')[0]);
-                  }
-                }}
-                options={[
-                  { value: "trial", label: "Trial (2 Months Window)" },
-                  { value: "free", label: "Free (5% System Commission)" },
-                  { value: "premium", label: "Premium (30-Day Active Cycle)" },
-                ]}
-              />
-            </div>
-
-            <div className="border-t border-dashed border-[#E2E8F0] mt-2 pt-4">
-              <div className="grid grid-cols-2 gap-4">
-                <Input 
-                  label="Commission Override (%)" 
-                  type="number"
-                  value={formCommission.toString()}
-                  onChange={(e) => setFormCommission(parseFloat(e.target.value) || 0)}
-                />
-                <div />
-                
-                <Input label="Trial Start" type="date" value={formTrialStartDate} onChange={(e) => setFormTrialStartDate(e.target.value)} disabled={formPlan !== "trial"} />
-                <Input label="Trial End" type="date" value={formTrialEndDate} onChange={(e) => setFormTrialEndDate(e.target.value)} disabled={formPlan !== "trial"} />
-                
-                <Input label="Premium Subscription Start" type="date" value={formSubStartDate} onChange={(e) => setFormSubStartDate(e.target.value)} disabled={formPlan !== "premium"} />
-                <Input label="Premium Subscription End" type="date" value={formSubEndDate} onChange={(e) => setFormSubEndDate(e.target.value)} disabled={formPlan !== "premium"} />
-                <Input label="Renewal Trigger Target" type="date" value={formRenewalDate} onChange={(e) => setFormRenewalDate(e.target.value)} disabled={formPlan !== "premium"} />
-              </div>
-            </div>
+            <Select
+              label="Status"
+              value={formSubStatus}
+              onChange={(val: string) => setFormSubStatus(val)}
+              options={[
+                { value: "active", label: "active" },
+                { value: "expired", label: "expired" },
+              ]}
+            />
           </div>
         </Modal>
       )}

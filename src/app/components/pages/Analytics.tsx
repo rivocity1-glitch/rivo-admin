@@ -4,188 +4,252 @@ import {
   ShoppingBag,
   Users,
   BarChart3,
-  RefreshCcw
+  RefreshCcw,
+  ShieldAlert,
+  Activity
 } from "lucide-react";
 import { PageHeader } from "../ui/PageHeader";
 import { cn } from "../../../lib/utils";
 import { supabase } from "../../../lib/supabase";
 
-interface StatusBarMetric {
-  label: string;
-  count: number;
-  percentage: number;
-  colorClass: string;
+// Estimated default platform commission rate (10%)
+const COMMISSION_RATE = 0.10;
+
+interface FinancialMetrics {
+  gmv: number;
+  commissionRevenue: number;
+  deliveryRevenue: number;
+  netPlatformRevenue: number;
+  avgOrderValue: number;
 }
 
-interface TopRankItem {
+interface OrderPerformance {
+  totalOrders: number;
+  deliveredOrders: number;
+  cancelledOrders: number;
+  successRate: number;
+}
+
+interface ChartTrendItem {
+  day: string;
+  value: number;
+  pct: number;
+}
+
+interface VendorRow {
   name: string;
-  valueLabel: string;
-  percentage: number;
+  orders: number;
+  revenue: number;
+  commission: number;
+}
+
+interface RiderRow {
+  rider_name: string;
+  orders_completed: number;
+  rating: number;
+}
+
+interface HealthStats {
+  pendingSubscriptions: number;
+  pendingSettlements: number;
+  pendingRefunds: number;
+  openTickets: number;
 }
 
 export function Analytics() {
   const [isLoading, setIsLoading] = useState(true);
   const [timePeriod, setTimePeriod] = useState("30");
+  const [activeDataset, setActiveDataset] = useState<"revenue" | "orders" | "commission" | "delivery">("revenue");
 
-  // Top Summarized Metrics Cards State
-  const [summaryStats, setSummaryStats] = useState({
-    totalRevenue: 0,
-    totalOrders: 0,
-    avgOrderValue: 0,
-    newCustomers: 0
+  // State Management
+  const [financials, setFinancials] = useState<FinancialMetrics>({
+    gmv: 0,
+    commissionRevenue: 0,
+    deliveryRevenue: 0,
+    netPlatformRevenue: 0,
+    avgOrderValue: 0
   });
 
-  // Descriptive Graph Charts Mappings States
-  const [revenueTrend, setRevenueTrend] = useState<{ day: string; amount: number; pct: number }[]>([]);
-  const [ordersTrend, setOrdersTrend] = useState<{ day: string; count: number; pct: number }[]>([]);
-  const [statusBreakdown, setStatusBreakdown] = useState<StatusBarMetric[]>([]);
-  const [customerGrowth, setCustomerGrowth] = useState({ newPct: 0, returningPct: 0, total: 0 });
-  const [topVendors, setTopVendors] = useState<TopRankItem[]>([]);
-  const [zonePerformance, setZonePerformance] = useState<TopRankItem[]>([]);
+  const [performance, setPerformance] = useState<OrderPerformance>({
+    totalOrders: 0,
+    deliveredOrders: 0,
+    cancelledOrders: 0,
+    successRate: 0
+  });
+
+  const [chartTrends, setChartTrends] = useState<ChartTrendItem[]>([]);
+  const [topVendors, setTopVendors] = useState<VendorRow[]>([]);
+  const [topRiders, setTopRiders] = useState<RiderRow[]>([]);
+  const [health, setHealth] = useState<HealthStats>({
+    pendingSubscriptions: 0,
+    pendingSettlements: 0,
+    pendingRefunds: 0,
+    openTickets: 0
+  });
 
   async function calculateLiveAnalytics() {
     try {
       setIsLoading(true);
 
-      // 1. Fetch tables row records streams
-      const [ordersQuery, customersQuery] = await Promise.all([
-        supabase.from("orders").select("status, amount, vendor_name, created_at, delivery_address"),
-        supabase.from("customers").select("id, created_at")
+      const now = new Date();
+      let startDate = new Date();
+      if (timePeriod !== "all") {
+        startDate.setDate(now.getDate() - parseInt(timePeriod));
+      }
+
+      // 1. Core Orders Query joined with Vendors
+      let ordersQuery = supabase
+        .from("orders")
+        .select(`
+          id, 
+          total_amount, 
+          delivery_fee, 
+          order_status, 
+          created_at, 
+          vendor_id,
+          vendors ( shop_name )
+        `);
+
+      if (timePeriod !== "all") {
+        ordersQuery = ordersQuery.gte("created_at", startDate.toISOString());
+      }
+      
+      const { data: ordersData, error: ordersError } = await ordersQuery;
+      if (ordersError) throw ordersError;
+      const orders = ordersData || [];
+
+      // 2. Platform Health Counters (Parallelized requests)
+      const [subReq, setReq, refReq, ticketReq] = await Promise.all([
+        supabase.from("subscription_payment_requests").select("id", { count: "exact" }).eq("status", "pending"),
+        supabase.from("vendor_settlements").select("id", { count: "exact" }).eq("status", "pending"),
+        supabase.from("refunds").select("id", { count: "exact" }).eq("status", "pending"),
+        supabase.from("support_tickets").select("id", { count: "exact" }).neq("status", "closed")
       ]);
 
-      if (ordersQuery.error) throw ordersQuery.error;
-      const orders = ordersQuery.data || [];
-      const customers = customersQuery.data || [];
-
-      // Filter active orders based on timescale filter context
-      const now = new Date();
-      const filteredOrders = orders.filter(o => {
-        if (timePeriod === "all") return true;
-        const orderDate = new Date(o.created_at);
-        const daysDiff = (now.getTime() - orderDate.getTime()) / (1000 * 3600 * 24);
-        return daysDiff <= parseInt(timePeriod);
+      setHealth({
+        pendingSubscriptions: subReq.count || 0,
+        pendingSettlements: setReq.count || 0,
+        pendingRefunds: refReq.count || 0,
+        openTickets: ticketReq.count || 0
       });
 
-      // 2. Compute Top 4 Header Summary Counters
-      const revenue = filteredOrders
-        .filter(o => o.status !== "cancelled" && o.status !== "refunded")
-        .reduce((acc, curr) => acc + (curr.amount || 0), 0);
+      // 3. Top Riders Query (Global Leaderboard Limit 5)
+      const { data: ridersData, error: ridersError } = await supabase
+        .from("riders")
+        .select("rider_name, orders_completed, rating")
+        .order("orders_completed", { ascending: false })
+        .limit(5);
       
-      const totalOrdersCount = filteredOrders.length;
-      const averageValue = totalOrdersCount > 0 ? Math.round(revenue / totalOrdersCount) : 0;
-      
-      const newCustsCount = customers.filter(c => {
-        if (timePeriod === "all") return true;
-        const cDate = new Date(c.created_at);
-        const daysDiff = (now.getTime() - cDate.getTime()) / (1000 * 3600 * 24);
-        return daysDiff <= parseInt(timePeriod);
-      }).length;
+      if (ridersError) throw ridersError;
+      setTopRiders(ridersData || []);
 
-      setSummaryStats({
-        totalRevenue: revenue,
-        totalOrders: totalOrdersCount,
-        avgOrderValue: averageValue,
-        newCustomers: newCustsCount
+      // 4. Financial Metric Calculations
+      const gmv = orders.reduce((acc, o) => acc + (o.total_amount || 0), 0);
+      const deliveryRevenue = orders.reduce((acc, o) => acc + (o.delivery_fee || 0), 0);
+      const commissionRevenue = orders
+        .filter(o => o.order_status === "delivered")
+        .reduce((acc, o) => acc + ((o.total_amount || 0) * COMMISSION_RATE), 0);
+      const netPlatformRevenue = commissionRevenue + deliveryRevenue;
+      const avgOrderValue = orders.length > 0 ? Math.round(gmv / orders.length) : 0;
+
+      setFinancials({
+        gmv,
+        commissionRevenue,
+        deliveryRevenue,
+        netPlatformRevenue,
+        avgOrderValue
       });
 
-      // 3. Compute Revenue Over Time & Orders Per Day Graphs Mapped Metrics
+      // 5. Fulfillment Performance Metrics
+      const totalOrders = orders.length;
+      const deliveredOrders = orders.filter(o => o.order_status === "delivered").length;
+      const cancelledOrders = orders.filter(o => o.order_status === "cancelled").length;
+      const successRate = totalOrders > 0 ? Math.round((deliveredOrders / totalOrders) * 100) : 0;
+
+      setPerformance({
+        totalOrders,
+        deliveredOrders,
+        cancelledOrders,
+        successRate
+      });
+
+      // 6. Chronological Trend Maps Construction (Last 7 Days Bar charts)
       const last7Days = Array.from({ length: 7 }).map((_, idx) => {
         const d = new Date();
         d.setDate(now.getDate() - idx);
         return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
       }).reverse();
 
-      const dailyRevMap: Record<string, number> = {};
-      const dailyOrdMap: Record<string, number> = {};
-      
-      filteredOrders.forEach(o => {
+      const dynamicTimelineMap: Record<string, Record<string, number>> = {};
+      last7Days.forEach(day => {
+        dynamicTimelineMap[day] = { revenue: 0, orders: 0, commission: 0, delivery: 0 };
+      });
+
+      orders.forEach(o => {
         const dayKey = new Date(o.created_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
-        dailyOrdMap[dayKey] = (dailyOrdMap[dayKey] || 0) + 1;
-        if (o.status !== "cancelled" && o.status !== "refunded") {
-          dailyRevMap[dayKey] = (dailyRevMap[dayKey] || 0) + (o.amount || 0);
+        if (dynamicTimelineMap[dayKey]) {
+          dynamicTimelineMap[dayKey].orders += 1;
+          dynamicTimelineMap[dayKey].revenue += (o.total_amount || 0);
+          dynamicTimelineMap[dayKey].delivery += (o.delivery_fee || 0);
+          if (o.order_status === "delivered") {
+            dynamicTimelineMap[dayKey].commission += ((o.total_amount || 0) * COMMISSION_RATE);
+          }
         }
       });
 
-      const maxRev = Math.max(...last7Days.map(d => dailyRevMap[d] || 0), 1);
-      const maxOrd = Math.max(...last7Days.map(d => dailyOrdMap[d] || 0), 1);
+      const valuesArray = last7Days.map(d => dynamicTimelineMap[d][activeDataset] || 0);
+      const maxVal = Math.max(...valuesArray, 1);
 
-      setRevenueTrend(last7Days.map(day => ({
-        day,
-        amount: dailyRevMap[day] || 0,
-        pct: Math.round(((dailyRevMap[day] || 0) / maxRev) * 100)
-      })));
+      setChartTrends(last7Days.map(day => {
+        const val = dynamicTimelineMap[day][activeDataset] || 0;
+        return {
+          day,
+          value: val,
+          pct: Math.round((val / maxVal) * 100)
+        };
+      }));
 
-      setOrdersTrend(last7Days.map(day => ({
-        day,
-        count: dailyOrdMap[day] || 0,
-        pct: Math.round(((dailyOrdMap[day] || 0) / maxOrd) * 100)
-      })));
-
-      // 4. Compute Order Status Breakdown
-      const statusCounts: Record<string, number> = {};
-      filteredOrders.forEach(o => { statusCounts[o.status] = (statusCounts[o.status] || 0) + 1; });
-      
-      const colors: Record<string, string> = { delivered: "bg-[#22C55E]", pending: "bg-amber-500", cancelled: "bg-rose-500" };
-      setStatusBreakdown(Object.keys(statusCounts).map(status => ({
-        label: status.replace("_", " ").toUpperCase(),
-        count: statusCounts[status],
-        percentage: totalOrdersCount > 0 ? Math.round((statusCounts[status] / totalOrdersCount) * 100) : 0,
-        colorClass: colors[status] || "bg-blue-500"
-      })));
-
-      // 5. Customer Growth (Fixed fallback ratios from 70/30 down to absolute 0)
-      const totalClients = customers.length;
-      setCustomerGrowth({
-        total: totalClients,
-        newPct: totalClients > 0 ? Math.round((newCustsCount / totalClients) * 100) : 0,
-        returningPct: totalClients > 0 ? (100 - Math.round((newCustsCount / totalClients) * 100)) : 0
-      });
-
-      // 6. Top Performing Vendors
-      const vendorSales: Record<string, number> = {};
-      filteredOrders.forEach(o => {
-        if (o.status !== "cancelled" && o.status !== "refunded") {
-          vendorSales[o.vendor_name] = (vendorSales[o.vendor_name] || 0) + (o.amount || 0);
+      // 7. Aggregate Top 5 Vendors Metrics
+      const vendorMap: Record<string, VendorRow> = {};
+      orders.forEach(o => {
+        // Handle Supabase joined object types cleanly
+        const singleVendor: any = o.vendors;
+        const shopName = singleVendor?.shop_name || "Unknown Shop";
+        
+        if (!vendorMap[o.vendor_id]) {
+          vendorMap[o.vendor_id] = { name: shopName, orders: 0, revenue: 0, commission: 0 };
+        }
+        vendorMap[o.vendor_id].orders += 1;
+        vendorMap[o.vendor_id].revenue += (o.total_amount || 0);
+        if (o.order_status === "delivered") {
+          vendorMap[o.vendor_id].commission += ((o.total_amount || 0) * COMMISSION_RATE);
         }
       });
-      const topVendorMax = Math.max(...Object.values(vendorSales), 1);
-      setTopVendors(Object.keys(vendorSales).map(name => ({
-        name,
-        valueLabel: `₹${vendorSales[name].toLocaleString()}`,
-        percentage: Math.round((vendorSales[name] / topVendorMax) * 100)
-      })).sort((a,b) => b.percentage - a.percentage).slice(0, 4));
 
-      // 7. Zone-wise Regional Performance
-      const zoneOrders: Record<string, number> = {};
-      filteredOrders.forEach(o => {
-        const address = o.delivery_address || "";
-        const zone = address.includes("Koramangala") ? "Koramangala Zone" : address.includes("Indiranagar") ? "Indiranagar Zone" : address.includes("Whitefield") ? "Whitefield Zone" : "Central Zone";
-        zoneOrders[zone] = (zoneOrders[zone] || 0) + 1;
-      });
-      const topZoneMax = Math.max(...Object.values(zoneOrders), 1);
-      setZonePerformance(Object.keys(zoneOrders).map(name => ({
-        name,
-        valueLabel: `${zoneOrders[name]} orders`,
-        percentage: Math.round((zoneOrders[name] / topZoneMax) * 100)
-      })).sort((a,b) => b.percentage - a.percentage));
+      setTopVendors(
+        Object.values(vendorMap)
+          .sort((a, b) => b.revenue - a.revenue)
+          .slice(0, 5)
+      );
 
     } catch (err) {
-      console.error("Aggregation error:", err);
+      console.error("Operational analytics query failure:", err);
     } finally {
       setIsLoading(false);
     }
   }
 
-  useEffect(() => { getLiveAnalytics(); }, [timePeriod]);
-  function getLiveAnalytics() { calculateLiveAnalytics(); }
+  useEffect(() => {
+    calculateLiveAnalytics();
+  }, [timePeriod, activeDataset]);
 
   return (
     <div className="space-y-6">
-      {/* Title Header Section */}
+      {/* View Header Section */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-[#0F172A]">Analytics</h1>
-          <p className="text-xs font-medium text-[#64748B] mt-0.5">Platform-wide production performance metrics</p>
+          <h1 className="text-2xl font-bold text-[#0F172A]">Platform Analytics</h1>
+          <p className="text-xs font-medium text-[#64748B] mt-0.5">Real-time analytical pipeline and financial ledgers</p>
         </div>
         <div className="flex items-center gap-2 relative z-20">
           <select 
@@ -197,184 +261,193 @@ export function Analytics() {
             <option value="30">Last 30 days</option>
             <option value="all">All Time</option>
           </select>
-          <button onClick={getLiveAnalytics} className="h-9 w-9 border border-[#E2E8F0] bg-white rounded-lg flex items-center justify-center text-[#64748B] hover:bg-[#F8FAFC]">
+          <button onClick={calculateLiveAnalytics} className="h-9 w-9 border border-[#E2E8F0] bg-white rounded-lg flex items-center justify-center text-[#64748B] hover:bg-[#F8FAFC]">
             <RefreshCcw className={cn("w-4 h-4", isLoading && "animate-spin")} />
           </button>
         </div>
       </div>
 
-      {/* Top 4 Counter Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 relative z-10">
-        <div className="bg-white border border-[#E2E8F0] rounded-xl p-4">
-          <div className="flex items-center justify-between"><p className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider">Total Revenue</p><span className="text-[#22C55E] text-xs font-bold">₹</span></div>
-          <h3 className="text-xl font-bold text-[#0F172A] mt-2">{isLoading ? "—" : `₹${summaryStats.totalRevenue.toLocaleString()}`}</h3>
+      {/* Financial KPI Rows */}
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4 relative z-10">
+        <div className="bg-white border border-[#E2E8F0] rounded-xl p-4 shadow-sm">
+          <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-wider">Gross Bookings (GMV)</p>
+          <h3 className="text-xl font-bold text-[#0F172A] mt-2">{isLoading ? "—" : `₹${financials.gmv.toLocaleString()}`}</h3>
         </div>
-        <div className="bg-white border border-[#E2E8F0] rounded-xl p-4">
-          <div className="flex items-center justify-between"><p className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider">Total Orders</p><ShoppingBag className="w-3.5 h-3.5 text-blue-500" /></div>
-          <h3 className="text-xl font-bold text-[#0F172A] mt-2">{isLoading ? "—" : summaryStats.totalOrders.toLocaleString()}</h3>
+        <div className="bg-white border border-[#E2E8F0] rounded-xl p-4 shadow-sm">
+          <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-wider">Commission Revenue</p>
+          <h3 className="text-xl font-bold text-blue-600 mt-2">{isLoading ? "—" : `₹${financials.commissionRevenue.toLocaleString()}`}</h3>
         </div>
-        <div className="bg-white border border-[#E2E8F0] rounded-xl p-4">
-          <div className="flex items-center justify-between"><p className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider">Avg Order Value</p><TrendingUp className="w-3.5 h-3.5 text-purple-500" /></div>
-          <h3 className="text-xl font-bold text-[#0F172A] mt-2">{isLoading ? "—" : `₹${summaryStats.avgOrderValue}`}</h3>
+        <div className="bg-white border border-[#E2E8F0] rounded-xl p-4 shadow-sm">
+          <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-wider">Delivery Fees</p>
+          <h3 className="text-xl font-bold text-[#0F172A] mt-2">{isLoading ? "—" : `₹${financials.deliveryRevenue.toLocaleString()}`}</h3>
         </div>
-        <div className="bg-white border border-[#E2E8F0] rounded-xl p-4">
-          <div className="flex items-center justify-between"><p className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider">New Customers</p><Users className="w-3.5 h-3.5 text-amber-500" /></div>
-          <h3 className="text-xl font-bold text-[#0F172A] mt-2">{isLoading ? "—" : summaryStats.newCustomers}</h3>
+        <div className="bg-white border border-[#E2E8F0] rounded-xl p-4 shadow-sm bg-emerald-50/30 border-emerald-100">
+          <p className="text-[10px] font-bold text-emerald-800 uppercase tracking-wider">Net Platform Earnings</p>
+          <h3 className="text-xl font-bold text-emerald-600 mt-2">{isLoading ? "—" : `₹${financials.netPlatformRevenue.toLocaleString()}`}</h3>
+        </div>
+        <div className="bg-white border border-[#E2E8F0] rounded-xl p-4 shadow-sm">
+          <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-wider">Avg Order Value</p>
+          <h3 className="text-xl font-bold text-[#0F172A] mt-2">{isLoading ? "—" : `₹${financials.avgOrderValue.toLocaleString()}`}</h3>
         </div>
       </div>
 
-      {/* Row 1: Revenue Graph & Status Split */}
+      {/* Fulfillment Quality Summary Block */}
+      <div className="bg-white border border-[#E2E8F0] rounded-xl p-5 shadow-sm">
+        <h3 className="text-xs font-bold text-[#0F172A] mb-4 uppercase tracking-wider">Order Fulfillment Metrics</h3>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+          <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
+            <span className="text-[11px] font-semibold text-slate-500 block mb-1">Total Bookings</span>
+            <p className="text-xl font-extrabold text-[#0F172A]">{isLoading ? "—" : performance.totalOrders}</p>
+          </div>
+          <div className="bg-emerald-50/50 p-3 rounded-xl border border-emerald-100">
+            <span className="text-[11px] font-semibold text-emerald-600 block mb-1">Delivered</span>
+            <p className="text-xl font-extrabold text-emerald-700">{isLoading ? "—" : performance.deliveredOrders}</p>
+          </div>
+          <div className="bg-rose-50/50 p-3 rounded-xl border border-rose-100">
+            <span className="text-[11px] font-semibold text-rose-600 block mb-1">Cancelled</span>
+            <p className="text-xl font-extrabold text-rose-700">{isLoading ? "—" : performance.cancelledOrders}</p>
+          </div>
+          <div className="bg-blue-50/50 p-3 rounded-xl border border-blue-100">
+            <span className="text-[11px] font-semibold text-blue-600 block mb-1">Success Rate</span>
+            <p className="text-xl font-extrabold text-blue-700">{isLoading ? "—" : `${performance.successRate}%`}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Time Trend Interactive Module */}
+      <div className="bg-white border border-[#E2E8F0] rounded-xl p-5 shadow-sm">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
+          <div>
+            <h3 className="text-xs font-bold text-[#0F172A] uppercase tracking-wider mb-1">Time Series Performance</h3>
+            <p className="text-[11px] font-medium text-[#64748B]">Daily granular breakdown updates across active interval metrics</p>
+          </div>
+          <select
+            value={activeDataset}
+            onChange={(e) => setActiveDataset(e.target.value as any)}
+            className="h-8 px-3 rounded-lg border border-[#E2E8F0] bg-white text-xs font-semibold text-[#334155] focus:outline-none max-w-xs self-start"
+          >
+            <option value="revenue">Gross Revenue Flow (GMV)</option>
+            <option value="orders">Total Order Volume Counts</option>
+            <option value="commission">Commission Yield Logs</option>
+            <option value="delivery">Collected Delivery Inflows</option>
+          </select>
+        </div>
+
+        <div className="h-44 flex items-end justify-between gap-2 pt-4">
+          {isLoading ? (
+            <div className="w-full text-center text-xs text-[#94A3B8] font-medium py-16">Syncing ledger metrics...</div>
+          ) : chartTrends.length === 0 || performance.totalOrders === 0 ? (
+            <div className="w-full text-center text-xs text-[#94A3B8] font-medium py-16">No data available for selected period</div>
+          ) : (
+            chartTrends.map((item, i) => (
+              <div key={i} className="flex-1 flex flex-col items-center gap-2 group relative">
+                <div className="absolute -top-7 bg-slate-800 text-white text-[10px] px-2 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity font-mono font-bold z-30 shadow-sm">
+                  {activeDataset === "orders" ? item.value : `₹${item.value.toLocaleString()}`}
+                </div>
+                <div className="w-full bg-slate-50 group-hover:bg-slate-100/80 rounded-md transition-colors relative flex items-end h-32">
+                  <div 
+                    className={cn(
+                      "w-full rounded-md transition-all duration-500", 
+                      activeDataset === "orders" ? "bg-emerald-500 group-hover:bg-emerald-600" : "bg-blue-500 group-hover:bg-blue-600"
+                    )} 
+                    style={{ height: `${item.pct}%` }} 
+                  />
+                </div>
+                <span className="text-[10px] font-bold text-[#64748B] whitespace-nowrap">{item.day}</span>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      {/* Operational Ranks & Platform Health Panels */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 relative z-10">
-        {/* Revenue Over Time */}
-        <div className="bg-white border border-[#E2E8F0] rounded-xl p-5 lg:col-span-2">
-          <h3 className="text-xs font-bold text-[#0F172A] mb-1">Revenue Over Time</h3>
-          <p className="text-[11px] font-medium text-[#64748B] mb-6">Daily revenue trends from closed transactions</p>
-          <div className="h-44 flex items-end justify-between gap-2 pt-4">
-            {isLoading ? (
-              <div className="w-full text-center text-xs text-[#94A3B8] font-medium py-16">Loading metrics...</div>
-            ) : revenueTrend.filter(item => item.amount > 0).length === 0 ? (
-              <div className="w-full text-center text-xs text-[#94A3B8] font-medium py-16">No data for selected period</div>
-            ) : (
-              revenueTrend.map((item, i) => (
-                <div key={i} className="flex-1 flex flex-col items-center gap-2 group relative">
-                  <div className="absolute -top-6 bg-slate-800 text-white text-[10px] px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity font-mono font-bold z-30">₹{item.amount}</div>
-                  <div className="w-full bg-[#EFF6FF] group-hover:bg-blue-100 rounded-md transition-colors relative flex items-end" style={{ height: "100%" }}>
-                    <div className="w-full bg-blue-500 group-hover:bg-blue-600 rounded-md transition-all" style={{ height: `${item.pct}%` }} />
-                  </div>
-                  <span className="text-[10px] font-bold text-[#64748B] whitespace-nowrap">{item.day}</span>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-
-        {/* Status Breakdown Bar */}
-        <div className="bg-white border border-[#E2E8F0] rounded-xl p-5">
-          <h3 className="text-xs font-bold text-[#0F172A] mb-1">Order Status Breakdown</h3>
-          <p className="text-[11px] font-medium text-[#64748B] mb-4">Distribution by real-time order status logs</p>
-          <div className="space-y-3.5 pt-2">
-            {isLoading ? (
-              <div className="text-center text-xs text-[#94A3B8] py-12">Processing...</div>
-            ) : statusBreakdown.length === 0 ? (
-              <div className="text-center text-xs text-[#94A3B8] py-12">No data recorded.</div>
-            ) : (
-              statusBreakdown.map((item, i) => (
-                <div key={i} className="space-y-1">
-                  <div className="flex justify-between text-xs font-semibold">
-                    <span className="text-[#475569]">{item.label}</span>
-                    <span className="text-[#0F172A]"> {item.count} ({item.percentage}%)</span>
-                  </div>
-                  <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-                    <div className={cn("h-full rounded-full transition-all", item.colorClass)} style={{ width: `${item.percentage}%` }} />
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Row 2: Orders Per Day & Customer Growth */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 relative z-10">
-        {/* Orders Per Day */}
-        <div className="bg-white border border-[#E2E8F0] rounded-xl p-5">
-          <h3 className="text-xs font-bold text-[#0F172A] mb-1">Orders Per Day</h3>
-          <p className="text-[11px] font-medium text-[#64748B] mb-6">Volume trend lines across platform endpoints</p>
-          <div className="h-40 flex items-end justify-between gap-3 pt-2">
-            {isLoading ? (
-              <div className="w-full text-center text-xs text-[#94A3B8] py-12">Syncing volume logs...</div>
-            ) : ordersTrend.filter(item => item.count > 0).length === 0 ? (
-              <div className="w-full text-center text-xs text-[#94A3B8] py-12">No order counts logged.</div>
-            ) : (
-              ordersTrend.map((item, i) => (
-                <div key={i} className="flex-1 flex flex-col items-center gap-2 group relative">
-                  <div className="absolute -top-6 bg-slate-800 text-white text-[10px] px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity font-bold z-30">{item.count} items</div>
-                  <div className="w-full bg-[#F0FDF4] group-hover:bg-emerald-100 rounded-md h-full flex items-end">
-                    <div className="w-full bg-[#22C55E] group-hover:bg-[#16A34A] rounded-md transition-all" style={{ height: `${item.pct}%` }} />
-                  </div>
-                  <span className="text-[10px] font-bold text-[#64748B]">{item.day}</span>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-
-        {/* Customer Growth Metric Box */}
-        <div className="bg-white border border-[#E2E8F0] rounded-xl p-5">
-          <h3 className="text-xs font-bold text-[#0F172A] mb-1">Customer Growth</h3>
-          <p className="text-[11px] font-medium text-[#64748B] mb-6">New vs returning client ratio profiles</p>
-          <div className="space-y-6 pt-4">
-            <div className="flex items-center justify-between text-center">
-              <div className="flex-1 border-r border-[#F1F5F9]">
-                <span className="text-2xl font-black text-[#0F172A]">{customerGrowth.total}</span>
-                <p className="text-[10px] font-bold uppercase tracking-wider text-[#94A3B8] mt-0.5">Total Accounts</p>
-              </div>
-              <div className="flex-1 border-r border-[#F1F5F9]">
-                <span className="text-xl font-bold text-blue-500">{customerGrowth.newPct}%</span>
-                <p className="text-[10px] font-bold uppercase tracking-wider text-[#94A3B8] mt-0.5">New Registers</p>
-              </div>
-              <div className="flex-1">
-                <span className="text-xl font-bold text-purple-500">{customerGrowth.returningPct}%</span>
-                <p className="text-[10px] font-bold uppercase tracking-wider text-[#94A3B8] mt-0.5">Returning Base</p>
-              </div>
-            </div>
-            <div className="h-3 bg-slate-100 rounded-full flex overflow-hidden">
-              <div className="bg-blue-500 transition-all" style={{ width: `${customerGrowth.newPct}%` }} />
-              <div className="bg-purple-500 transition-all" style={{ width: `${customerGrowth.returningPct}%` }} />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Row 3: Leaderboard Leader Profiles & Zone Mapping */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 relative z-10">
-        {/* Top Vendors */}
-        <div className="bg-white border border-[#E2E8F0] rounded-xl p-5">
-          <h3 className="text-xs font-bold text-[#0F172A] mb-1">Top Performing Vendors</h3>
-          <p className="text-[11px] font-medium text-[#64748B] mb-4">Ranked by revenue sales throughput volume</p>
+        
+        {/* Top Performing Vendors */}
+        <div className="bg-white border border-[#E2E8F0] rounded-xl p-5 shadow-sm">
+          <h3 className="text-xs font-bold text-[#0F172A] uppercase tracking-wider mb-1">Top Vendors</h3>
+          <p className="text-[11px] font-medium text-[#64748B] mb-4">Ranked by gross sales volume throughput</p>
           <div className="space-y-3 pt-1">
             {isLoading ? (
-              <div className="text-center text-xs text-[#94A3B8] py-8">Calculating ranks...</div>
+              <div className="text-center text-xs text-[#94A3B8] py-8">Calculating analytics...</div>
             ) : topVendors.length === 0 ? (
-              <div className="text-center text-xs text-[#94A3B8] py-8">No vendor sales transactions locked.</div>
+              <div className="text-center text-xs text-[#94A3B8] py-8 font-medium">No data available for selected period</div>
             ) : (
-              topVendors.map((item, i) => (
-                <div key={i} className="flex items-center justify-between text-xs font-semibold py-1">
-                  <div className="flex items-center gap-3">
-                    <span className="text-xs font-bold font-mono text-slate-400">0{i+1}</span>
-                    <span className="text-[#334155]">{item.name}</span>
+              topVendors.map((vendor, i) => (
+                <div key={i} className="flex justify-between items-center text-xs border-b border-slate-50 pb-2 last:border-0 last:pb-0">
+                  <div>
+                    <p className="font-bold text-[#334155]">{vendor.name}</p>
+                    <span className="text-[10px] text-slate-400 font-medium">{vendor.orders} Complete Orders</span>
                   </div>
-                  <span className="text-[#0F172A] font-mono font-bold">{item.valueLabel}</span>
+                  <div className="text-right">
+                    <p className="font-bold text-[#0F172A]">₹{vendor.revenue.toLocaleString()}</p>
+                    <span className="text-[9px] font-semibold text-emerald-600 bg-emerald-50 px-1 rounded">Com: ₹{Math.round(vendor.commission)}</span>
+                  </div>
                 </div>
               ))
             )}
           </div>
         </div>
 
-        {/* Region Zones Density */}
-        <div className="bg-white border border-[#E2E8F0] rounded-xl p-5">
-          <h3 className="text-xs font-bold text-[#0F172A] mb-1">Zone-wise Performance</h3>
-          <p className="text-[11px] font-medium text-[#64748B] mb-4">Order densities mapped by geo-delivery addresses</p>
+        {/* Top Operational Riders */}
+        <div className="bg-white border border-[#E2E8F0] rounded-xl p-5 shadow-sm">
+          <h3 className="text-xs font-bold text-[#0F172A] uppercase tracking-wider mb-1">Top Operational Riders</h3>
+          <p className="text-[11px] font-medium text-[#64748B] mb-4">Ranked by historical fulfillment numbers</p>
           <div className="space-y-3 pt-1">
             {isLoading ? (
-              <div className="text-center text-xs text-[#94A3B8] py-8">Sorting metrics...</div>
-            ) : zonePerformance.length === 0 ? (
-              <div className="text-center text-xs text-[#94A3B8] py-8">No order zone statistics compiled.</div>
+              <div className="text-center text-xs text-[#94A3B8] py-8">Syncing logistics ranking...</div>
+            ) : topRiders.length === 0 ? (
+              <div className="text-center text-xs text-[#94A3B8] py-8 font-medium">No data available for selected period</div>
             ) : (
-              zonePerformance.map((item, i) => (
-                <div key={i} className="space-y-1">
-                  <div className="flex justify-between text-xs font-semibold">
-                    <span className="text-[#475569]">{item.name}</span>
-                    <span className="text-[#0F172A]">{item.valueLabel}</span>
+              topRiders.map((rider, i) => (
+                <div key={i} className="flex justify-between items-center text-xs border-b border-slate-50 pb-2 last:border-0 last:pb-0">
+                  <div>
+                    <p className="font-bold text-[#334155]">{rider.rider_name || "Active Express Rider"}</p>
+                    <span className="text-[10px] text-slate-400 font-medium">{rider.orders_completed || 0} Deliveries Finished</span>
                   </div>
-                  <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                    <div className="h-full bg-slate-700 rounded-full transition-all" style={{ width: `${item.percentage}%` }} />
+                  <div className="text-right">
+                    <span className="bg-amber-50 text-amber-700 font-bold px-2 py-0.5 rounded text-[10px] flex items-center gap-0.5">
+                      ★ {(rider.rating || 0).toFixed(1)}
+                    </span>
                   </div>
                 </div>
               ))
             )}
           </div>
         </div>
+
+        {/* Platform Health Desk Task Panel */}
+        <div className="bg-white border border-[#E2E8F0] rounded-xl p-5 shadow-sm">
+          <h3 className="text-xs font-bold text-[#0F172A] uppercase tracking-wider mb-1">Platform Operations Health</h3>
+          <p className="text-[11px] font-medium text-[#64748B] mb-4">Critical back-office execution logs pending action</p>
+          <div className="space-y-2.5 pt-1">
+            <div className="flex justify-between items-center p-2.5 rounded-lg bg-slate-50 border border-slate-100 text-xs">
+              <span className="font-medium text-slate-600">Subscription Intent Forms</span>
+              <span className={cn("px-2 py-0.5 rounded-full text-[10px] font-bold font-mono", health.pendingSubscriptions > 0 ? "bg-amber-100 text-amber-800" : "bg-slate-200 text-slate-600")}>
+                {health.pendingSubscriptions} pending
+              </span>
+            </div>
+            <div className="flex justify-between items-center p-2.5 rounded-lg bg-slate-50 border border-slate-100 text-xs">
+              <span className="font-medium text-slate-600">Vendor Outbound Settlements</span>
+              <span className={cn("px-2 py-0.5 rounded-full text-[10px] font-bold font-mono", health.pendingSettlements > 0 ? "bg-amber-100 text-amber-800" : "bg-slate-200 text-slate-600")}>
+                {health.pendingSettlements} pending
+              </span>
+            </div>
+            <div className="flex justify-between items-center p-2.5 rounded-lg bg-slate-50 border border-slate-100 text-xs">
+              <span className="font-medium text-slate-600">Pending Customer Escrows</span>
+              <span className={cn("px-2 py-0.5 rounded-full text-[10px] font-bold font-mono", health.pendingRefunds > 0 ? "bg-rose-100 text-rose-800" : "bg-slate-200 text-slate-600")}>
+                {health.pendingRefunds} pending
+              </span>
+            </div>
+            <div className="flex justify-between items-center p-2.5 rounded-lg bg-slate-50 border border-slate-100 text-xs">
+              <span className="font-medium text-slate-600">Open Active Help Tickets</span>
+              <span className={cn("px-2 py-0.5 rounded-full text-[10px] font-bold font-mono", health.openTickets > 0 ? "bg-blue-100 text-blue-800" : "bg-slate-200 text-slate-600")}>
+                {health.openTickets} unresolved
+              </span>
+            </div>
+          </div>
+        </div>
+
       </div>
     </div>
   );

@@ -116,26 +116,50 @@ export function Orders() {
       setIsLoading(true);
       const { data, error } = await supabase
         .from("orders")
-        .select("*")
+        .select(`
+          *,
+          customers (
+            customer_name,
+            phone
+          ),
+          vendors (
+            shop_name
+          ),
+          riders (
+            rider_name
+          )
+        `)
         .order("created_at", { ascending: false });
+
+      console.log(data);
 
       if (error) throw error;
 
       const mapped: Order[] = (data || []).map((row) => ({
-        id: row.id,
-        order_display_id: row.order_display_id || "RIV-0000",
-        customer: row.customer_name || "Unnamed User",
-        customerPhone: row.customer_phone || "—",
-        vendorId: row.vendor_id || "",
-        vendor: row.vendor_name || "Unknown Vendor",
-        riderId: row.rider_id || "",
-        rider: row.rider_name || "—",
-        items: row.total_items || 1,
-        amount: row.amount || 0,
-        status: (row.status as OrderStatus) || "pending",
-        address: row.delivery_address || "No address context",
-        paymentMethod: row.payment_method || "UPI",
-        otp: row.otp_verified || false,
+       id: row.id,
+
+order_display_id: row.order_number || "RVO-0000",
+
+customer: row.customers?.customer_name || "-",
+customerPhone: row.customers?.phone || "-",
+
+vendorId: row.vendor_id || "",
+vendor: row.vendors?.shop_name || "-",
+
+riderId: row.rider_id || "",
+rider: row.riders?.rider_name || "Not Assigned",
+
+items: 1,
+
+amount: row.total_amount || 0,
+
+status: (row.order_status as OrderStatus) || "pending",
+
+address: "-",
+
+paymentMethod: row.payment_status || "pending",
+
+otp: false,
         date: row.created_at
           ? new Date(row.created_at).toLocaleDateString("en-GB", {
               day: "numeric",
@@ -237,7 +261,6 @@ export function Orders() {
         .from("orders")
         .update({
           rider_id: riderId,
-          rider_name: targetRider.label,
           status: "assigned",
         })
         .eq("id", selectedOrder.id);

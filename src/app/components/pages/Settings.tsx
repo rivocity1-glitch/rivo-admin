@@ -13,7 +13,10 @@ import {
   Save,
   RefreshCcw,
   RotateCcw,
-  UserPlus
+  UserPlus,
+  Sun,
+  Moon,
+  Laptop
 } from "lucide-react";
 import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
@@ -40,7 +43,6 @@ const tabs: { id: SettingsTab; label: string; icon: React.ReactNode }[] = [
   { id: "security", label: "Security", icon: <Shield className="w-3.5 h-3.5" /> },
 ];
 
-// 🟢 All 14 Pune District Talukas compiled exactly from image_4477ce.png
 const PUNE_TALUKAS = [
   { value: "Indapur", label: "Indapur Taluka" },
   { value: "Baramati", label: "Baramati Taluka" },
@@ -66,7 +68,7 @@ function Toggle({ enabled, onChange, disabled }: { enabled: boolean; onChange: (
       onClick={() => onChange(!enabled)}
       className={cn(
         "w-9 h-5 rounded-full relative transition-colors duration-200 flex-shrink-0 disabled:opacity-40",
-        enabled ? "bg-[#22C55E]" : "bg-[#CBD5E1]"
+        enabled ? "bg-[#22C55E]" : "bg-[#CBD5E1] dark:bg-slate-700"
       )}
     >
       <span
@@ -81,10 +83,10 @@ function Toggle({ enabled, onChange, disabled }: { enabled: boolean; onChange: (
 
 function SettingRow({ label, description, children }: { label: string; description?: string; children: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between py-4 border-b border-[#F1F5F9] last:border-0">
+    <div className="flex items-center justify-between py-4 border-b border-[#F1F5F9] dark:border-slate-800 last:border-0">
       <div className="mr-8">
-        <p className="text-sm font-medium text-[#0F172A]">{label}</p>
-        {description && <p className="text-xs text-[#64748B] mt-0.5">{description}</p>}
+        <p className="text-sm font-medium text-[#0F172A] dark:text-slate-200">{label}</p>
+        {description && <p className="text-xs text-[#64748B] dark:text-slate-400 mt-0.5">{description}</p>}
       </div>
       <div className="flex-shrink-0">{children}</div>
     </div>
@@ -99,22 +101,24 @@ export function Settings() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
 
-  // Administrative session nodes profiles
   const [adminsList, setAdminsList] = useState<any[]>([]);
   const [newAdmin, setNewAdmin] = useState({ name: "", email: "", password: "", role: "Operations" });
   const [currentAdminProfile, setCurrentAdminProfile] = useState<any>(null);
 
-  // Platform configs state
+  // 🟢 Theme selection state inside workspace views
+  const [appTheme, setAppTheme] = useState<"light" | "dark" | "system">(() => {
+    return (localStorage.getItem("rivo-theme") as "light" | "dark" | "system") || "system";
+  });
+
   const [platformSettings, setPlatformSettings] = useState({
     platformName: "Rivo",
-    supportEmail: "support@rivo.app",
+    supportEmail: "rivocityhelp1@gmail.com",
     district: "Pune",
     taluka: "Baramati",
     maintenanceMode: false,
     allowRegistration: true,
   });
 
-  // Delivery configuration state
   const [deliverySettings, setDeliverySettings] = useState({
     baseDeliveryFee: "25",
     perKmCharge: "5",
@@ -125,7 +129,6 @@ export function Settings() {
     allowScheduledDelivery: false,
   });
 
-  // Master Notifications variables
   const [notifSettings, setNotifSettings] = useState({
     orderUpdates: true,
     promotionalEmails: false,
@@ -134,12 +137,24 @@ export function Settings() {
     adminAlerts: true,
   });
 
-  // 🟢 Load settings and your user profile safely from the 'admins' table
+  // 🟢 Trigger programmatic updates across window listeners cleanly
+  function handleThemeChange(targetTheme: "light" | "dark" | "system") {
+    setAppTheme(targetTheme);
+    localStorage.setItem("rivo-theme", targetTheme);
+    
+    const root = window.document.documentElement;
+    root.classList.remove("light", "dark");
+    if (targetTheme === "system") {
+      const systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      root.classList.add(systemDark ? "dark" : "light");
+    } else {
+      root.classList.add(targetTheme);
+    }
+  }
+
   async function loadSystemSettings() {
     try {
       setIsLoading(true);
-      
-      // 1. Fetch settings key-value entries
       const { data: configData, error: configErr } = await supabase.from("platform_settings").select("*");
       if (configErr) throw configErr;
 
@@ -153,16 +168,14 @@ export function Settings() {
         if (notifObj) setNotifSettings(notifObj.value);
       }
 
-      // 2. Fetch live database admin rows cleanly from the 'admins' table
       const { data: adminData, error: adminErr } = await supabase
-        .from("admins") // 🟢 Wired cleanly to your exact 'admins' table name
+        .from("admins") 
         .select("*")
         .order("created_at", { ascending: true });
 
       if (adminErr) throw adminErr;
       setAdminsList(adminData || []);
 
-      // 3. Match current login profile matching active web tokens context
       const storedSession = localStorage.getItem("rivo_admin_session");
       if (storedSession) {
         const parsed = JSON.parse(storedSession);
@@ -183,7 +196,6 @@ export function Settings() {
     loadSystemSettings();
   }, []);
 
-  // 🟢 Save config selections directly into Supabase row parameters
   async function handleSaveConfig() {
     try {
       setIsSaving(true);
@@ -212,7 +224,6 @@ export function Settings() {
     }
   }
 
-  // 🟢 Reset delivery bounds back to original factory rates constants
   function handleResetDeliveryDefaults() {
     const confirmation = window.confirm("Reset all delivery fees and parameters back to factory defaults?");
     if (!confirmation) return;
@@ -229,7 +240,6 @@ export function Settings() {
     alert("Delivery attributes reset locally. Click 'Save Config changes' to push changes live to Supabase!");
   }
 
-  // 🟢 Provision fresh user profile admins inside the 'admins' table
   async function handleCreateAdminNode() {
     if (!newAdmin.name || !newAdmin.email || !newAdmin.password) {
       alert("Please provide complete credentials to instantiate the profile admin.");
@@ -238,7 +248,7 @@ export function Settings() {
 
     try {
       setIsSaving(true);
-      const { error } = await supabase.from("admins").insert([newAdmin]); // 🟢 Updated to 'admins'
+      const { error } = await supabase.from("admins").insert([newAdmin]);
       if (error) throw error;
 
       setNewAdmin({ name: "", email: "", password: "", role: "Operations" });
@@ -252,7 +262,6 @@ export function Settings() {
     }
   }
 
-  // 🟢 Remove admin access node privileges
   async function handleDeleteAdmin(id: string, name: string) {
     if (adminsList.length <= 1) {
       alert("Cannot truncate the last remaining authorization personnel account.");
@@ -262,7 +271,7 @@ export function Settings() {
     if (!confirmation) return;
 
     try {
-      const { error } = await supabase.from("admins").delete().eq("id", id); // 🟢 Updated to 'admins'
+      const { error } = await supabase.from("admins").delete().eq("id", id);
       if (error) throw error;
       await loadSystemSettings();
     } catch (err) {
@@ -270,13 +279,12 @@ export function Settings() {
     }
   }
 
-  // 🟢 Mutate security password tokens properties entries
   async function handleMutatePassword(newPass: string) {
     if (!currentAdminProfile || !newPass.trim()) return;
     try {
       setIsSaving(true);
       const { error } = await supabase
-        .from("admins") // 🟢 Updated to 'admins'
+        .from("admins") 
         .update({ password: newPass.trim(), name: currentAdminProfile.name })
         .eq("id", currentAdminProfile.id);
 
@@ -291,26 +299,25 @@ export function Settings() {
   }
 
   return (
-    <div>
+    <div className="transition-colors duration-200">
       <PageHeader title="Settings" description="Configure global system variables, logistics fee formulas, and workspace permissions." />
 
       <div className="flex gap-6 relative z-10">
-        {/* Navigation Tabs sidebar */}
         <div className="w-48 flex-shrink-0">
-          <nav className="bg-white border border-[#E2E8F0] rounded-xl p-2 space-y-0.5 shadow-xs">
+          <nav className="bg-white dark:bg-slate-900 border border-[#E2E8F0] dark:border-slate-800 rounded-xl p-2 space-y-0.5 shadow-xs transition-colors duration-200">
             {tabs.map((tab) => (
               <button
                 key={tab.id}
                 type="button"
                 onClick={() => setActiveTab(tab.id)}
                 className={cn(
-                  "w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all text-left",
+                  "w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all duration-200 text-left",
                   activeTab === tab.id
-                    ? "bg-[#F0FDF4] text-[#16A34A]"
-                    : "text-[#64748B] hover:bg-[#F8FAFC] hover:text-[#0F172A]"
+                    ? "bg-[#F0FDF4] dark:bg-emerald-950/40 text-[#16A34A] dark:text-[#22C55E]"
+                    : "text-[#64748B] dark:text-slate-400 hover:bg-[#F8FAFC] dark:hover:bg-slate-800/60 hover:text-[#0F172A] dark:hover:text-slate-200"
                 )}
               >
-                <span className={activeTab === tab.id ? "text-[#22C55E]" : "text-[#94A3B8]"}>
+                <span className={activeTab === tab.id ? "text-[#22C55E]" : "text-[#94A3B8] dark:text-slate-500"}>
                   {tab.icon}
                 </span>
                 {tab.label}
@@ -319,11 +326,10 @@ export function Settings() {
           </nav>
         </div>
 
-        {/* Workspace Display panel */}
         <div className="flex-1 min-w-0">
-          <div className="bg-white border border-[#E2E8F0] rounded-xl shadow-sm">
-            <div className="px-6 py-4 border-b border-[#E2E8F0] flex items-center justify-between bg-[#F8FAFC] rounded-t-xl">
-              <h2 className="text-xs font-bold text-[#0F172A] uppercase tracking-wider">
+          <div className="bg-white dark:bg-slate-900 border border-[#E2E8F0] dark:border-slate-800 rounded-xl shadow-sm transition-colors duration-200">
+            <div className="px-6 py-4 border-b border-[#E2E8F0] dark:border-slate-800 flex items-center justify-between bg-[#F8FAFC] dark:bg-slate-900/40 rounded-t-xl transition-colors duration-200">
+              <h2 className="text-xs font-bold text-[#0F172A] dark:text-slate-200 uppercase tracking-wider">
                 {tabs.find((t) => t.id === activeTab)?.label} Control Setup
               </h2>
               {activeTab !== "admin_users" && activeTab !== "subscription" && (
@@ -341,31 +347,74 @@ export function Settings() {
 
             <div className="px-6 py-2 min-h-[380px]">
               {isLoading ? (
-                <div className="text-center py-24 text-xs font-medium text-[#94A3B8]">Syncing structural configurations from table definitions...</div>
+                <div className="text-center py-24 text-xs font-medium text-[#94A3B8] dark:text-slate-500">Syncing structural configurations from table definitions...</div>
               ) : (
                 <>
-                  {/* Platform Tab */}
                   {activeTab === "platform" && (
-                    <div className="divide-y divide-[#F1F5F9]">
+                    <div className="divide-y divide-[#F1F5F9] dark:divide-slate-800">
+                      {/* 🟢 APPEARANCE CONFIGURATION DISPLAY PANEL */}
+                      <SettingRow label="Appearance" description="Customize how the Rivo workspace displays on your desktop device screen layout.">
+                        <div className="flex items-center gap-1 bg-[#F8FAFC] dark:bg-slate-800 p-1 border border-[#E2E8F0] dark:border-slate-700 rounded-lg transition-colors duration-200">
+                          <button
+                            type="button"
+                            onClick={() => handleThemeChange("light")}
+                            className={cn(
+                              "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all duration-200",
+                              appTheme === "light"
+                                ? "bg-white text-[#16A34A] shadow-xs"
+                                : "text-[#64748B] dark:text-slate-400 hover:text-[#0F172A] dark:hover:text-slate-200"
+                            )}
+                          >
+                            <Sun className="w-3.5 h-3.5" />
+                            Light
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleThemeChange("dark")}
+                            className={cn(
+                              "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all duration-200",
+                              appTheme === "dark"
+                                ? "bg-white dark:bg-slate-700 text-[#16A34A] dark:text-[#22C55E] shadow-xs"
+                                : "text-[#64748B] dark:text-slate-400 hover:text-[#0F172A] dark:hover:text-slate-200"
+                            )}
+                          >
+                            <Moon className="w-3.5 h-3.5" />
+                            Dark
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleThemeChange("system")}
+                            className={cn(
+                              "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all duration-200",
+                              appTheme === "system"
+                                ? "bg-white dark:bg-slate-700 text-[#16A34A] dark:text-[#22C55E] shadow-xs"
+                                : "text-[#64748B] dark:text-slate-400 hover:text-[#0F172A] dark:hover:text-slate-200"
+                            )}
+                          >
+                            <Laptop className="w-3.5 h-3.5" />
+                            System
+                          </button>
+                        </div>
+                      </SettingRow>
+
                       <SettingRow label="Platform Brand Identity Name" description="Displayed across global customer and vendor checkout screens">
-                        <Input value={platformSettings.platformName} onChange={(e) => setPlatformSettings((p) => ({ ...p, platformName: e.target.value }))} className="w-64 text-xs font-semibold" />
+                        <Input value={platformSettings.platformName} onChange={(e) => setPlatformSettings((p) => ({ ...p, platformName: e.target.value }))} className="w-64 text-xs font-semibold dark:bg-slate-800 dark:border-slate-700 dark:text-slate-100" />
                       </SettingRow>
                       <SettingRow label="Gateway Support Helpdesk Email" description="Central mailbox receiving customer troubleshooting requests">
-                        <Input value={platformSettings.supportEmail} onChange={(e) => setPlatformSettings((p) => ({ ...p, supportEmail: e.target.value }))} className="w-64 text-xs font-semibold" />
+                        <Input value={platformSettings.supportEmail} onChange={(e) => setPlatformSettings((p) => ({ ...p, supportEmail: e.target.value }))} className="w-64 text-xs font-semibold dark:bg-slate-800 dark:border-slate-700 dark:text-slate-100" />
                       </SettingRow>
                       <SettingRow label="Operational State Region Assignment">
-                        <Select value="MH" onChange={() => {}} options={[{ value: "MH", label: "Maharashtra (MH)" }]} className="w-64 text-xs font-semibold" disabled />
+                        <Select value="MH" onChange={() => {}} options={[{ value: "MH", label: "Maharashtra (MH)" }]} className="w-64 text-xs font-semibold dark:bg-slate-800 dark:border-slate-700" disabled />
                       </SettingRow>
                       <SettingRow label="Target District Scope Profile (Jilha)">
-                        <Select value={platformSettings.district} onChange={(v) => setPlatformSettings((p) => ({ ...p, district: v }))} options={[{ value: "Pune", label: "Pune District" }]} className="w-64 text-xs font-semibold" />
+                        <Select value={platformSettings.district} onChange={(v) => setPlatformSettings((p) => ({ ...p, district: v }))} options={[{ value: "Pune", label: "Pune District" }]} className="w-64 text-xs font-semibold dark:bg-slate-800 dark:border-slate-700" />
                       </SettingRow>
-                      {/* 🟢 Select dropdown matching all 14 Pune Talukas sequentially from image_4477ce.png */}
                       <SettingRow label="Active Taluka Branch Area" description="Select the specific neighborhood sub-zone operational endpoint">
                         <Select 
                           value={platformSettings.taluka} 
                           onChange={(v) => setPlatformSettings((p) => ({ ...p, taluka: v }))} 
                           options={PUNE_TALUKAS} 
-                          className="w-64 text-xs font-semibold" 
+                          className="w-64 text-xs font-semibold dark:bg-slate-800 dark:border-slate-700" 
                         />
                       </SettingRow>
                       <SettingRow label="Emergency Maintenance Blockade Mode" description="Temporarily disconnects merchant checkout capabilities system-wide">
@@ -377,21 +426,20 @@ export function Settings() {
                     </div>
                   )}
 
-                  {/* Delivery Parameters Tab */}
                   {activeTab === "delivery" && (
                     <div>
-                      <div className="divide-y divide-[#F1F5F9]">
+                      <div className="divide-y divide-[#F1F5F9] dark:divide-slate-800">
                         <SettingRow label="Base Delivery Starting Fee (₹)" description="Baseline starting delivery fee charged on orders">
-                          <Input value={deliverySettings.baseDeliveryFee} onChange={(e) => setDeliverySettings((p) => ({ ...p, baseDeliveryFee: e.target.value }))} type="number" className="w-32 text-xs font-semibold" />
+                          <Input value={deliverySettings.baseDeliveryFee} onChange={(e) => setDeliverySettings((p) => ({ ...p, baseDeliveryFee: e.target.value }))} type="number" className="w-32 text-xs font-semibold dark:bg-slate-800 dark:border-slate-700" />
                         </SettingRow>
                         <SettingRow label="Per Kilometer Distance Increment Charge (₹)" description="Additional fee accumulated per kilometer traveled from vendor location">
-                          <Input value={deliverySettings.perKmCharge} onChange={(e) => setDeliverySettings((p) => ({ ...p, perKmCharge: e.target.value }))} type="number" className="w-32 text-xs font-semibold" />
+                          <Input value={deliverySettings.perKmCharge} onChange={(e) => setDeliverySettings((p) => ({ ...p, perKmCharge: e.target.value }))} type="number" className="w-32 text-xs font-semibold dark:bg-slate-800 dark:border-slate-700" />
                         </SettingRow>
                         <SettingRow label="Free Delivery Capital Cutoff Threshold (₹)" description="Order basket total that overrides delivery distance costs">
-                          <Input value={deliverySettings.freeDeliveryAbove} onChange={(e) => setDeliverySettings((p) => ({ ...p, freeDeliveryAbove: e.target.value }))} type="number" className="w-32 text-xs font-semibold" />
+                          <Input value={deliverySettings.freeDeliveryAbove} onChange={(e) => setDeliverySettings((p) => ({ ...p, freeDeliveryAbove: e.target.value }))} type="number" className="w-32 text-xs font-semibold dark:bg-slate-800 dark:border-slate-700" />
                         </SettingRow>
                         <SettingRow label="Maximum Logistics Radius Constraint (km)" description="Hard limit circle cutoff for delivery availability search zones">
-                          <Input value={deliverySettings.maxDeliveryRadius} onChange={(e) => setDeliverySettings((p) => ({ ...p, maxDeliveryRadius: e.target.value }))} type="number" className="w-32 text-xs font-semibold" />
+                          <Input value={deliverySettings.maxDeliveryRadius} onChange={(e) => setDeliverySettings((p) => ({ ...p, maxDeliveryRadius: e.target.value }))} type="number" className="w-32 text-xs font-semibold dark:bg-slate-800 dark:border-slate-700" />
                         </SettingRow>
                         <SettingRow label="Mandatory Secure OTP Checkpoint Handover" description="Requires a mobile verification token to confirm delivery completions">
                           <Toggle enabled={deliverySettings.otpVerification} onChange={(v) => setDeliverySettings((p) => ({ ...p, otpVerification: v }))} />
@@ -400,7 +448,7 @@ export function Settings() {
                           <Toggle enabled={deliverySettings.autoAssignRider} onChange={(v) => setDeliverySettings((p) => ({ ...p, autoAssignRider: v }))} />
                         </SettingRow>
                       </div>
-                      <div className="mt-4 pt-4 border-t border-[#E2E8F0] text-left">
+                      <div className="mt-4 pt-4 border-t border-[#E2E8F0] dark:border-slate-800 text-left">
                         <Button variant="outline" size="sm" leftIcon={<RotateCcw className="w-3.5 h-3.5" />} onClick={handleResetDeliveryDefaults}>
                           Reset to Factory Defaults
                         </Button>
@@ -408,33 +456,31 @@ export function Settings() {
                     </div>
                   )}
 
-                  {/* Subscriptions Overview */}
                   {activeTab === "subscription" && (
                     <div>
                       {[
                         { plan: "Free Tier Plan Profile", price: "0", commission: "5", label: "Capped at standard 5% order commission cut framework." },
                         { plan: "Premium Membership Tier Plan", price: "499", commission: "0", label: "Fixed pricing framework — 0% platform commission constraints token rules." },
                       ].map((p, i) => (
-                        <div key={i} className="py-5 border-b border-[#F1F5F9] last:border-0">
-                          <p className="text-xs font-bold text-[#0F172A] mb-1">{p.plan}</p>
-                          <p className="text-[11px] text-[#64748B] mb-3 font-medium">{p.label}</p>
+                        <div key={i} className="py-5 border-b border-[#F1F5F9] dark:border-slate-800 last:border-0">
+                          <p className="text-xs font-bold text-[#0F172A] dark:text-slate-200 mb-1">{p.plan}</p>
+                          <p className="text-[11px] text-[#64748B] dark:text-slate-400 mb-3 font-medium">{p.label}</p>
                           <div className="grid grid-cols-3 gap-4">
-                            <Input label="Monthly Rate Base (₹)" defaultValue={p.price} disabled className="text-xs font-semibold" />
-                            <Input label="Order Volume Ceiling Limit" defaultValue="Unlimited Orders (No capping thresholds)" disabled className="text-xs font-semibold" />
-                            <Input label="Commission Deduct Percentage %" defaultValue={p.commission} disabled className="text-xs font-semibold" />
+                            <Input label="Monthly Rate Base (₹)" defaultValue={p.price} disabled className="text-xs font-semibold dark:bg-slate-800 dark:border-slate-700" />
+                            <Input label="Order Volume Ceiling Limit" defaultValue="Unlimited Orders (No capping thresholds)" disabled className="text-xs font-semibold dark:bg-slate-800 dark:border-slate-700" />
+                            <Input label="Commission Deduct Percentage %" defaultValue={p.commission} disabled className="text-xs font-semibold dark:bg-slate-800 dark:border-slate-700" />
                           </div>
                         </div>
                       ))}
                     </div>
                   )}
 
-                  {/* Notifications Master Switches */}
                   {activeTab === "notification" && (
                     <div className="space-y-4">
-                      <div className="bg-blue-50 border border-blue-200 text-blue-700 text-xs rounded-xl p-4 font-medium leading-relaxed">
+                      <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/40 text-blue-700 dark:text-blue-300 text-xs rounded-xl p-4 font-medium leading-relaxed">
                         💡 **Master Switch Controls Indicator:** Use these toggles to silence or allow systemic automatic dispatches (like automated SMS OTP vectors or customer push popups) globally.
                       </div>
-                      <div className="divide-y divide-[#F1F5F9]">
+                      <div className="divide-y divide-[#F1F5F9] dark:divide-slate-800">
                         <SettingRow label="Automated Order Lifecycle Updates" description="Dispatches system push alerts automatically when order state updates occur">
                           <Toggle enabled={notifSettings.orderUpdates} onChange={(v) => setNotifSettings((p) => ({ ...p, orderUpdates: v }))} />
                         </SettingRow>
@@ -451,35 +497,34 @@ export function Settings() {
                     </div>
                   )}
 
-                  {/* Admin Users Roster from 'admins' table */}
                   {activeTab === "admin_users" && (
                     <div className="py-2">
                       <div className="flex items-center justify-between mb-4">
-                        <p className="text-xs text-[#64748B] font-medium">{adminsList.length} system administrator profiles loaded</p>
+                        <p className="text-xs text-[#64748B] dark:text-slate-400 font-medium">{adminsList.length} system administrator profiles loaded</p>
                         <Button variant="primary" size="sm" leftIcon={<UserPlus className="w-3.5 h-3.5" />} onClick={() => setAddUserOpen(true)}>Add New Operator</Button>
                       </div>
-                      <div className="border border-[#E2E8F0] rounded-xl overflow-hidden">
+                      <div className="border border-[#E2E8F0] dark:border-slate-800 rounded-xl overflow-hidden">
                         <table className="w-full text-xs">
                           <thead>
-                            <tr className="bg-[#F8FAFC] border-b border-[#E2E8F0]">
-                              <th className="text-left px-4 py-3 font-medium text-[#64748B] uppercase tracking-wide">Name / Operator Account</th>
-                              <th className="text-left px-4 py-3 font-medium text-[#64748B] uppercase tracking-wide">Email Reference</th>
-                              <th className="text-left px-4 py-3 font-medium text-[#64748B] uppercase tracking-wide">Permission Role</th>
+                            <tr className="bg-[#F8FAFC] dark:bg-slate-800/60 border-b border-[#E2E8F0] dark:border-slate-800">
+                              <th className="text-left px-4 py-3 font-medium text-[#64748B] dark:text-slate-400 uppercase tracking-wide">Name / Operator Account</th>
+                              <th className="text-left px-4 py-3 font-medium text-[#64748B] dark:text-slate-400 uppercase tracking-wide">Email Reference</th>
+                              <th className="text-left px-4 py-3 font-medium text-[#64748B] dark:text-slate-400 uppercase tracking-wide">Permission Role</th>
                               <th className="px-4 py-3" />
                             </tr>
                           </thead>
-                          <tbody className="divide-y divide-[#F1F5F9] font-medium text-[#334155]">
+                          <tbody className="divide-y divide-[#F1F5F9] dark:divide-slate-800 font-medium text-[#334155] dark:text-slate-300">
                             {adminsList.map((user) => (
-                              <tr key={user.id} className="hover:bg-[#FAFAFA] transition-colors">
+                              <tr key={user.id} className="hover:bg-[#FAFAFA] dark:hover:bg-slate-800/40 transition-colors duration-150">
                                 <td className="px-4 py-3.5 flex items-center gap-2.5">
                                   <div className="w-6 h-6 bg-[#22C55E] rounded-full flex items-center justify-center text-white text-[10px] font-bold">{user.name ? user.name[0].toUpperCase() : "A"}</div>
-                                  <span className="font-bold text-[#0F172A]">{user.name}</span>
+                                  <span className="font-bold text-[#0F172A] dark:text-slate-200">{user.name}</span>
                                 </td>
-                                <td className="px-4 py-3.5 text-[#64748B] font-mono">{user.email}</td>
-                                <td className="px-4 py-3.5"><span className="px-2 py-0.5 rounded-md bg-slate-100 font-bold text-[10px] text-slate-700 border border-slate-200">{user.role}</span></td>
+                                <td className="px-4 py-3.5 text-[#64748B] dark:text-slate-400 font-mono">{user.email}</td>
+                                <td className="px-4 py-3.5"><span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 font-bold text-[10px] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">{user.role}</span></td>
                                 <td className="px-4 py-3.5 text-right">
                                   <button onClick={() => handleDeleteAdmin(user.id, user.name)} className="text-[#94A3B8] hover:text-red-500 transition-colors p-1"><Trash2 className="w-3.5 h-3.5" /></button>
-                                  </td>
+                                </td>
                               </tr>
                             ))}
                           </tbody>
@@ -488,18 +533,17 @@ export function Settings() {
                     </div>
                   )}
 
-                  {/* Security Settings Manager Panel context view */}
                   {activeTab === "security" && currentAdminProfile && (
-                    <div className="divide-y divide-[#F1F5F9]">
+                    <div className="divide-y divide-[#F1F5F9] dark:divide-slate-800">
                       <SettingRow label="Logged In Username Identity Context">
                         <Input 
                           value={currentAdminProfile.name || ""} 
                           onChange={(e) => setCurrentAdminProfile((prev: any) => ({ ...prev, name: e.target.value }))}
-                          className="w-64 text-xs font-bold" 
+                          className="w-64 text-xs font-bold dark:bg-slate-800 dark:border-slate-700" 
                         />
                       </SettingRow>
                       <SettingRow label="Account Access Permission Role Scope">
-                        <span className="px-2 py-1 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold text-[10px] uppercase">{currentAdminProfile.role}</span>
+                        <span className="px-2 py-1 rounded-md bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-[#22C55E] border border-emerald-200 dark:border-emerald-900/40 font-bold text-[10px] uppercase">{currentAdminProfile.role}</span>
                       </SettingRow>
                       <SettingRow label="Active Plaintext Password Token" description="Inspect or rewrite your profile database credentials code key string">
                         <div className="relative w-64">
@@ -510,9 +554,9 @@ export function Settings() {
                               const updatedPass = e.target.value;
                               setCurrentAdminProfile((prev: any) => ({ ...prev, password: updatedPass }));
                             }}
-                            className="w-full h-9 bg-white border border-[#E2E8F0] rounded-lg text-xs font-semibold text-[#0F172A] px-3 pr-9 focus:outline-none focus:border-[#22C55E]" 
+                            className="w-full h-9 bg-white dark:bg-slate-800 border border-[#E2E8F0] dark:border-slate-700 rounded-lg text-xs font-semibold text-[#0F172A] dark:text-slate-100 px-3 pr-9 focus:outline-none focus:border-[#22C55E] transition-colors duration-200" 
                           />
-                          <button type="button" onClick={() => setShowPassword((v) => !v)} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#64748B]">
+                          <button type="button" onClick={() => setShowPassword((v) => !v)} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#64748B] dark:text-slate-400">
                             {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                           </button>
                         </div>
@@ -531,7 +575,6 @@ export function Settings() {
         </div>
       </div>
 
-      {/* Onboard Operator Modal overlay */}
       <Modal
         open={addUserOpen}
         onClose={() => setAddUserOpen(false)}
@@ -546,14 +589,15 @@ export function Settings() {
         }
       >
         <div className="space-y-4 text-left">
-          <Input label="Full Name" placeholder="e.g. Aditya Menon" value={newAdmin.name} onChange={(e) => setNewAdmin(p => ({ ...p, name: e.target.value }))} />
-          <Input label="Account Communication Email Address" placeholder="aditya@rivo.app" value={newAdmin.email} onChange={(e) => setNewAdmin(p => ({ ...p, email: e.target.value }))} />
-          <Input label="Secret Account Password Entry" type="text" placeholder="Specify password..." value={newAdmin.password} onChange={(e) => setNewAdmin(p => ({ ...p, password: e.target.value }))} />
+          <Input label="Full Name" placeholder="e.g. Aditya Menon" value={newAdmin.name} onChange={(e) => setNewAdmin(p => ({ ...p, name: e.target.value }))} className="dark:bg-slate-800 dark:border-slate-700" />
+          <Input label="Account Communication Email Address" placeholder="aditya@rivo.app" value={newAdmin.email} onChange={(e) => setNewAdmin(p => ({ ...p, email: e.target.value }))} className="dark:bg-slate-800 dark:border-slate-700" />
+          <Input label="Secret Account Password Entry" type="text" placeholder="Specify password..." value={newAdmin.password} onChange={(e) => setNewAdmin(p => ({ ...p, password: e.target.value }))} className="dark:bg-slate-800 dark:border-slate-700" />
           <Select 
             label="Dashboard Permission Level Role" 
             value={newAdmin.role} 
             onChange={(v) => setNewAdmin(p => ({ ...p, role: v }))} 
             options={[{ value: "Super Admin", label: "Super Admin" }, { value: "Support Lead", label: "Support Lead" }, { value: "Operations", label: "Operations" }]} 
+            className="dark:bg-slate-800 dark:border-slate-700"
           />
         </div>
       </Modal>
