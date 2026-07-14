@@ -154,7 +154,7 @@ export function Dashboard() {
         expiredSubsRes
       ] = await Promise.all([
         supabase.from("vendors").select("id, status, shop_name"),
-        supabase.from("orders").select("id, created_at, order_status, total_amount, delivery_fee, vendor_id, rider_id").gte("created_at", isoStart),
+        supabase.from("orders").select("id, created_at, order_status, total_amount, delivery_fee, vendor_id, rider_id, platform_fee, rivo_delivery_margin").gte("created_at", isoStart),
         supabase.from("riders").select("id, rider_name, status, rating"),
         supabase.from("customers").select("id"),
         supabase.from("orders").select("id, created_at, order_status").order("created_at", { ascending: false }).limit(20),
@@ -176,15 +176,19 @@ export function Dashboard() {
       const vendors = vendorsRes.data || [];
       const riders = ridersRes.data || [];
 
+      // Filter to only include financial metrics where order_status = delivered
+      const deliveredOrders = orders.filter(o => o.order_status === "delivered");
+
       // Computations using actual schema bindings
-      const calculatedGMV = orders.reduce((sum, o) => sum + Number(o.total_amount || 0), 0);
-      const calculatedDelivery = orders.reduce((sum, o) => sum + Number(o.delivery_fee || 0), 0);
+      const calculatedGMV = deliveredOrders.reduce((sum, o) => sum + Number(o.total_amount || 0), 0);
       
-      // Fixed 10% structural commission rule mapping based on 'delivered' status
-      const calculatedCommission = orders
-        .filter(o => o.order_status === "delivered")
-        .reduce((sum, o) => sum + (Number(o.total_amount || 0) * 0.10), 0);
+      // Calculate Commission Revenue using ONLY orders.platform_fee
+      const calculatedCommission = deliveredOrders.reduce((sum, o) => sum + Number(o.platform_fee || 0), 0);
+
+      // Calculate Delivery Revenue using ONLY orders.rivo_delivery_margin
+      const calculatedDelivery = deliveredOrders.reduce((sum, o) => sum + Number(o.rivo_delivery_margin || 0), 0);
         
+      // Net Revenue = Commission Revenue + Delivery Revenue
       const calculatedNet = calculatedCommission + calculatedDelivery;
 
       const activeVendorsCount = vendors.filter(v => v.status === "approved").length;

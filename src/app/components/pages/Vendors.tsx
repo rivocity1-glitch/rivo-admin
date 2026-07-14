@@ -42,7 +42,7 @@ interface Vendor {
   category_name: string;
   
   // Subscriptions Table Mapped Fields
-  plan_name: "FREE" | "499" | "TRIAL";
+  plan_name: "free" | "basic" | "growth" | "pro";
   commission_percent: number;
   start_date: string;
   end_date: string;
@@ -62,29 +62,37 @@ const operationalBadgeMap: Record<string, { variant: "success" | "warning" | "er
 };
 
 export const PLAN_CONFIG = {
-  TRIAL: {
-    label: "Trial Plan",
-    commission: 0,
-    durationDays: 60,
-    variant: "purple" as const
-  },
-  FREE: {
-    label: "Free Plan",
+  free: {
+    label: "FREE",
     commission: 5,
     durationDays: null,
-    variant: "info" as const
+    variant: "neutral" as const // Gray
   },
-  "499": {
-    label: "Base Plan",
+  basic: {
+    label: "BASIC",
     commission: 0,
     durationDays: 30,
-    variant: "neutral" as const
+    variant: "info" as const // Blue
+  },
+  growth: {
+    label: "GROWTH",
+    commission: 0,
+    durationDays: 30,
+    variant: "purple" as const // Purple
+  },
+  pro: {
+    label: "PRO",
+    commission: 0,
+    durationDays: 30,
+    variant: "warning" as const // Gold
   }
 };
 
 function getPlanDisplayLabel(planName: string): string {
-  const key = (planName || "").toUpperCase() as keyof typeof PLAN_CONFIG;
-  return PLAN_CONFIG[key] ? PLAN_CONFIG[key].label : planName || "—";
+  const normalized = (planName || "").toLowerCase();
+  if (normalized === "499") return "BASIC";
+  if (normalized === "free") return "FREE";
+  return normalized.toUpperCase();
 }
 
 function formatDisplayDate(dateString: string | null | undefined): string {
@@ -122,7 +130,7 @@ export function Vendors() {
   const [formCategoryId, setFormCategoryId] = useState("");
   
   // Subscription Form States
-  const [formPlan, setFormPlan] = useState<keyof typeof PLAN_CONFIG>("FREE");
+  const [formPlan, setFormPlan] = useState<keyof typeof PLAN_CONFIG>("free");
   const [formCommission, setFormCommission] = useState<number>(5);
   const [formStartDate, setFormStartDate] = useState("");
   const [formEndDate, setFormEndDate] = useState("");
@@ -179,18 +187,39 @@ export function Vendors() {
             store_status
           )
         `)
-        .order("created_at", { ascending: false })
-        .order("created_at", { foreignTable: "subscriptions", ascending: false });
+        .order("created_at", { ascending: false });
 
       if (error) throw error;
 
       const mappedVendors: Vendor[] = (data || []).map((row: any) => {
-        console.log("ROW DATA:", row);
-        console.log("SUBSCRIPTIONS DATA:", row.subscriptions);
+        // Handle all three types of relation returns (null, object, array) safely
+        let sub = null;
+        if (row.subscriptions) {
+          if (Array.isArray(row.subscriptions)) {
+            const activeSubs = row.subscriptions.filter((s: any) => s && s.status === "active");
+            if (activeSubs.length > 0) {
+              sub = activeSubs.sort((a: any, b: any) => {
+                const dateA = a.start_date ? new Date(a.start_date).getTime() : 0;
+                const dateB = b.start_date ? new Date(b.start_date).getTime() : 0;
+                return dateB - dateA;
+              })[0];
+            } else if (row.subscriptions.length > 0) {
+              sub = row.subscriptions.sort((a: any, b: any) => {
+                const dateA = a.start_date ? new Date(a.start_date).getTime() : 0;
+                const dateB = b.start_date ? new Date(b.start_date).getTime() : 0;
+                return dateB - dateA;
+              })[0];
+            }
+          } else {
+            sub = row.subscriptions;
+          }
+        }
 
-        const sub = row.subscriptions; 
-        
-        // Handle possible single or collection arrays safely from Supabase relation shapes
+        // Backward compatibility normalizations
+        let rawPlanName = (sub?.plan_name || "").toLowerCase();
+        if (rawPlanName === "499") rawPlanName = "basic";
+        if (rawPlanName === "free" || !rawPlanName) rawPlanName = "free";
+
         const profileObj = Array.isArray(row.vendor_profiles) ? row.vendor_profiles[0] : row.vendor_profiles;
         
         return {
@@ -207,7 +236,7 @@ export function Vendors() {
           category_id: row.category_id || "",
           category_name: row.product_categories?.name || "—",
           
-          plan_name: (sub?.plan_name || "FREE") as keyof typeof PLAN_CONFIG,
+          plan_name: rawPlanName as "free" | "basic" | "growth" | "pro",
           commission_percent: sub ? (sub.commission_percent ?? 5) : 5,
           start_date: sub?.start_date || "",
           end_date: sub?.end_date || "",
@@ -241,8 +270,8 @@ export function Vendors() {
     setFormShopCode("");
     setFormStatus("pending");
     setFormCategoryId("");
-    setFormPlan("FREE");
-    setFormCommission(PLAN_CONFIG.FREE.commission);
+    setFormPlan("free");
+    setFormCommission(PLAN_CONFIG.free.commission);
     setFormStartDate("");
     setFormEndDate("");
     setFormSubStatus("active");
@@ -262,7 +291,9 @@ export function Vendors() {
   function handleOpenSubscription(vendor: Vendor) {
     setSelectedVendorForSub(vendor);
     
-    const currentPlanKey = (vendor.plan_name || "FREE").toUpperCase() as keyof typeof PLAN_CONFIG;
+    let currentPlanKey = (vendor.plan_name || "free").toLowerCase() as keyof typeof PLAN_CONFIG;
+    if (currentPlanKey as string === "499") currentPlanKey = "basic";
+    
     setFormPlan(currentPlanKey);
     setFormCommission(vendor.commission_percent);
     setFormStartDate(vendor.start_date ? new Date(vendor.start_date).toISOString().split('T')[0] : "");
@@ -273,6 +304,7 @@ export function Vendors() {
   }
 
   function applySubscriptionPlanRules(plan: keyof typeof PLAN_CONFIG, customStartDate?: string) {
+    if (plan === "growth" || plan === "pro") return;
     setFormPlan(plan);
     const config = PLAN_CONFIG[plan];
     setFormCommission(config.commission);
@@ -453,7 +485,7 @@ export function Vendors() {
   }
 
   async function renewPremiumSubscriptionDirectly(vendor: Vendor) {
-    if (vendor.plan_name === "FREE") return;
+    if (vendor.plan_name === "free") return;
     
     try {
       const anchorBase = vendor.end_date ? new Date(vendor.end_date) : new Date();
@@ -531,12 +563,12 @@ export function Vendors() {
         if (!existingSub || existingSub.length === 0) {
           const now = new Date();
           const future = new Date();
-          future.setDate(now.getDate() + PLAN_CONFIG.TRIAL.durationDays);
+          future.setDate(now.getDate() + PLAN_CONFIG.basic.durationDays);
 
           const autoSubPayload = {
             vendor_id: id,
-            plan_name: "TRIAL",
-            commission_percent: PLAN_CONFIG.TRIAL.commission,
+            plan_name: "basic",
+            commission_percent: PLAN_CONFIG.basic.commission,
             start_date: now.toISOString(),
             end_date: future.toISOString(),
             status: "active"
@@ -576,7 +608,7 @@ export function Vendors() {
           <Button
             variant="primary"
             size="sm"
-            onClick={() => { resetForm(); applySubscriptionPlanRules("FREE"); setAddOpen(true); }}
+            onClick={() => { resetForm(); applySubscriptionPlanRules("free"); setAddOpen(true); }}
           >
             Add Vendor
           </Button>
@@ -637,7 +669,7 @@ export function Vendors() {
               paginated.map((vendor) => {
                 const approvalBadge = statusBadgeMap[vendor.status] || { variant: "neutral", label: vendor.status };
                 const operationalBadge = operationalBadgeMap[vendor.store_status] || { variant: "neutral", label: vendor.store_status };
-                const configMatch = PLAN_CONFIG[vendor.plan_name] || PLAN_CONFIG.FREE;
+                const configMatch = PLAN_CONFIG[vendor.plan_name] || PLAN_CONFIG.free;
                 
                 return (
                   <tr key={vendor.id} className="hover:bg-[#FAFAFA] transition-colors">
@@ -674,7 +706,7 @@ export function Vendors() {
                           { label: "View Details", icon: <Edit className="w-3.5 h-3.5" />, onClick: () => setViewVendor(vendor) },
                           ...(vendor.status !== "approved" ? [{ label: "Approve Vendor", icon: <Edit className="w-3.5 h-3.5 text-emerald-500" />, onClick: () => mutateStatusDirectly(vendor.id, "approved") }] : []),
                           ...(vendor.status === "approved" ? [{ label: "Suspend Vendor", icon: <XCircle className="w-3.5 h-3.5 text-rose-500" />, onClick: () => mutateStatusDirectly(vendor.id, "suspended"), variant: "danger" as const }] : []),
-                          { label: "Renew Subscription", icon: <Plus className="w-3.5 h-3.5 text-emerald-500" />, onClick: () => renewPremiumSubscriptionDirectly(vendor), disabled: vendor.plan_name === "FREE" },
+                          { label: "Renew Subscription", icon: <Plus className="w-3.5 h-3.5 text-emerald-500" />, onClick: () => renewPremiumSubscriptionDirectly(vendor), disabled: vendor.plan_name === "free" },
                           { label: "Manage Plan", icon: <Crown className="w-3.5 h-3.5 text-purple-500" />, onClick: () => handleOpenSubscription(vendor) },
                           { label: "Delete Vendor", icon: <Trash2 className="w-3.5 h-3.5" />, onClick: () => handleDeleteVendor(vendor.id, vendor.shop_name), variant: "danger" as const }
                         ]}
@@ -731,9 +763,10 @@ export function Vendors() {
               value={formPlan}
               onChange={(val: string) => applySubscriptionPlanRules(val as keyof typeof PLAN_CONFIG)}
               options={[
-                { value: "FREE", label: PLAN_CONFIG.FREE.label },
-                { value: "499", label: PLAN_CONFIG["499"].label },
-                { value: "TRIAL", label: PLAN_CONFIG.TRIAL.label },
+                { value: "free", label: "FREE" },
+                { value: "basic", label: "BASIC" },
+                { value: "growth", label: "GROWTH (Coming Soon)" },
+                { value: "pro", label: "PRO (Coming Soon)" },
               ]}
             />
             <Select
@@ -862,9 +895,10 @@ export function Vendors() {
               value={formPlan}
               onChange={(val: string) => applySubscriptionPlanRules(val as keyof typeof PLAN_CONFIG, formStartDate || undefined)}
               options={[
-                { value: "FREE", label: PLAN_CONFIG.FREE.label },
-                { value: "499", label: PLAN_CONFIG["499"].label },
-                { value: "TRIAL", label: PLAN_CONFIG.TRIAL.label },
+                { value: "free", label: "FREE" },
+                { value: "basic", label: "BASIC" },
+                { value: "growth", label: "GROWTH (Coming Soon)" },
+                { value: "pro", label: "PRO (Coming Soon)" },
               ]}
             />
             
@@ -881,7 +915,7 @@ export function Vendors() {
                 type="date" 
                 value={formStartDate} 
                 onChange={(e) => applySubscriptionPlanRules(formPlan, e.target.value)}
-                disabled={formPlan === "FREE"} 
+                disabled={formPlan === "free"} 
               />
               <Input 
                 label="End Date" 

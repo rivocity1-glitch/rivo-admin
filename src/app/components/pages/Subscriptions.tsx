@@ -31,8 +31,9 @@ interface SubscriptionPlan {
 export function Subscriptions() {
   const [vendorMetrics, setVendorMetrics] = useState({
     freeTierCount: 0,
-    premiumTierCount: 0,
-    trialTierCount: 0,
+    basicTierCount: 0,
+    growthTierCount: 0,
+    proTierCount: 0,
     totalVendors: 0
   });
   
@@ -76,30 +77,37 @@ export function Subscriptions() {
       const safeSubs = activeSubs || [];
       
       let freeCount = 0;
-      let premiumCount = 0;
-      let trialCount = 0;
+      let basicCount = 0;
+      let growthCount = 0;
+      let proCount = 0;
       const vendorIds = new Set<string>();
 
       safeSubs.forEach((sub: any) => {
         const vId = sub.vendor_id || sub.merchant_id || sub.id;
         if (vId) vendorIds.add(vId);
 
-        const planIdentifier = String(sub.plan || sub.tier || sub.name || sub.status || "").toLowerCase();
-        const statusValue = String(sub.status || "").toLowerCase();
+        // Read subscriptions ONLY from subscriptions.plan_name with backward compatibility mapping
+        const rawPlanName = String(sub.plan_name || "").toLowerCase();
 
-        if (statusValue === "trial" || planIdentifier.includes("trial")) {
-          trialCount++;
-        } else if (planIdentifier.includes("premium") || planIdentifier.includes("499") || planIdentifier.includes("basic")) {
-          premiumCount++;
+        if (rawPlanName === "free") {
+          freeCount++;
+        } else if (rawPlanName === "basic" || rawPlanName === "499") {
+          basicCount++;
+        } else if (rawPlanName === "growth") {
+          growthCount++;
+        } else if (rawPlanName === "pro") {
+          proCount++;
         } else {
+          // Default unknown or empty records fallback safely to free mapping rules
           freeCount++;
         }
       });
 
       setVendorMetrics({
         freeTierCount: freeCount,
-        premiumTierCount: premiumCount,
-        trialTierCount: trialCount,
+        basicTierCount: basicCount,
+        growthTierCount: growthCount,
+        proTierCount: proCount,
         totalVendors: vendorIds.size || safeSubs.length
       });
 
@@ -114,12 +122,13 @@ export function Subscriptions() {
     fetchPlatformData();
   }, []);
 
+  // Display exactly four cards matching launch specifications
   const currentPlans: SubscriptionPlan[] = [
     {
       id: "free_tier",
-      name: "Free Plan",
-      priceLabel: subConfig?.free?.price !== undefined ? `₹${subConfig.free.price}` : "Free",
-      subtext: `${subConfig?.free?.commission ?? 5}% commission per order`,
+      name: "FREE",
+      priceLabel: "₹0",
+      subtext: "5% commission per order",
       features: [
         { text: "No Fixed Monthly Fee", included: true },
         { text: "Unlimited Customer Orders", included: true },
@@ -129,10 +138,10 @@ export function Subscriptions() {
       ]
     },
     {
-      id: "premium_tier",
-      name: "Rivo Basic",
-      priceLabel: subConfig?.premium?.price ? `₹${subConfig.premium.price}` : "₹499",
-      subtext: `${subConfig?.premium?.commission ?? 0}% commission layout model`,
+      id: "basic_tier",
+      name: "BASIC",
+      priceLabel: "₹499",
+      subtext: "0% commission layout model",
       badge: "Most Popular",
       features: [
         { text: "Fixed Monthly Fee", included: true },
@@ -143,27 +152,33 @@ export function Subscriptions() {
       ]
     },
     {
-      id: "trial_tier",
-      name: "Trial Plan",
-      priceLabel: subConfig?.trial?.price !== undefined ? `₹${subConfig.trial.price}` : "₹0",
-      subtext: `${subConfig?.trial?.commission ?? 0}% commission model • ${subConfig?.trial?.days ?? 60} Days`,
+      id: "growth_tier",
+      name: "GROWTH",
+      priceLabel: "₹999",
+      subtext: "0% commission premium model",
+      isComingSoon: true,
       features: [
-        { text: `Valid for ${subConfig?.trial?.days ?? 60} Extended Test Days`, included: true },
-        { text: "Risk Free Platform Access", included: true },
-        { text: "Unlimited Customer Orders", included: true },
-        { text: "Basic Analytics Workspace", included: true },
-        { text: "Standard Support Helpdesk", included: true }
+        { text: "Advanced Analytics Toolkit", included: true },
+        { text: "0% Commission on Orders", included: true },
+        { text: "Priority Customer Visibility", included: true },
+        { text: "Dedicated Account Support Desk", included: true },
+        { text: "Custom Marketing Campaigns", included: true }
+      ]
+    },
+    {
+      id: "pro_tier",
+      name: "PRO",
+      priceLabel: "₹1499",
+      subtext: "0% commission enterprise model",
+      isComingSoon: true,
+      features: [
+        { text: "Enterprise Workspace Suite", included: true },
+        { text: "0% Commission on Orders", included: true },
+        { text: "Maximum Fleet Routing Multipliers", included: true },
+        { text: "24/7 VIP Dedicated Account Manager", included: true },
+        { text: "API Integration Access Layer", included: true }
       ]
     }
-  ];
-
-  // Map explicitly matching the required data grid from your reference images
-  const distanceSlabs = [
-    { range: "0-2 KM", fee: 25, rider: 20, rivo: 5 },
-    { range: "2-4 KM", fee: 35, rider: 28, rivo: 7 },
-    { range: "4-6 KM", fee: 45, rider: 36, rivo: 9 },
-    { range: "6-8 KM", fee: 55, rider: 44, rivo: 11 },
-    { range: "8-10 KM", fee: 65, rider: 52, rivo: 13 },
   ];
 
   return (
@@ -185,32 +200,41 @@ export function Subscriptions() {
       </div>
 
       {/* DYNAMIC SUBSCRIPTION BREAKDOWN CARDS MATRIX */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        {/* Free Plan Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+        {/* FREE Metrics Card */}
         <div className="bg-white border border-[#E2E8F0] rounded-xl p-4 flex flex-col justify-between">
           <div>
-            <p className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider">Free Members ({subConfig?.free?.commission ?? 5}%)</p>
+            <p className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider">FREE Members (5%)</p>
             <h3 className="text-2xl font-bold text-[#0F172A] mt-1">{isLoading ? "..." : vendorMetrics.freeTierCount}</h3>
           </div>
           <p className="text-xs text-[#94A3B8] mt-3">Live commission contracts</p>
         </div>
 
-        {/* Premium Plan Cards */}
+        {/* BASIC Metrics Card */}
         <div className="bg-white border border-[#E2E8F0] rounded-xl p-4 flex flex-col justify-between border-emerald-100 bg-emerald-50/5">
           <div>
-            <p className="text-[11px] font-semibold text-[#16A34A] uppercase tracking-wider">₹499 Members ({subConfig?.premium?.commission ?? 0}%)</p>
-            <h3 className="text-2xl font-bold text-[#16A34A] mt-1">{isLoading ? "..." : vendorMetrics.premiumTierCount}</h3>
+            <p className="text-[11px] font-semibold text-[#16A34A] uppercase tracking-wider">BASIC Members (0%)</p>
+            <h3 className="text-2xl font-bold text-[#16A34A] mt-1">{isLoading ? "..." : vendorMetrics.basicTierCount}</h3>
           </div>
           <p className="text-xs text-[#16A34A] font-medium mt-3">Active fixed billing models</p>
         </div>
 
-        {/* ACTIVE TRIAL MEMBERS Card */}
+        {/* GROWTH Metrics Card */}
+        <div className="bg-white border border-[#E2E8F0] rounded-xl p-4 flex flex-col justify-between border-purple-100 bg-purple-50/5">
+          <div>
+            <p className="text-[11px] font-semibold text-purple-600 uppercase tracking-wider">GROWTH Members</p>
+            <h3 className="text-2xl font-bold text-purple-700 mt-1">{isLoading ? "..." : vendorMetrics.growthTierCount}</h3>
+          </div>
+          <p className="text-xs text-purple-600 font-medium mt-3">Future expansion plan</p>
+        </div>
+
+        {/* PRO Metrics Card */}
         <div className="bg-white border border-[#E2E8F0] rounded-xl p-4 flex flex-col justify-between border-amber-100 bg-amber-50/5">
           <div>
-            <p className="text-[11px] font-semibold text-amber-600 uppercase tracking-wider">Active Trial Members</p>
-            <h3 className="text-2xl font-bold text-amber-700 mt-1">{isLoading ? "..." : vendorMetrics.trialTierCount}</h3>
+            <p className="text-[11px] font-semibold text-amber-600 uppercase tracking-wider">PRO Members</p>
+            <h3 className="text-2xl font-bold text-amber-700 mt-1">{isLoading ? "..." : vendorMetrics.proTierCount}</h3>
           </div>
-          <p className="text-xs text-amber-600 font-medium mt-3">Temporary test periods</p>
+          <p className="text-xs text-amber-600 font-medium mt-3">Enterprise tier track</p>
         </div>
 
         {/* Summary Card */}
@@ -224,7 +248,7 @@ export function Subscriptions() {
       </div>
 
       {/* Subscription Pricing Matrix Cards Grid Layout */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-2">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 pt-2">
         {currentPlans.map((plan) => (
           <div 
             key={plan.id}
@@ -243,14 +267,14 @@ export function Subscriptions() {
               )}
 
               <div className="mb-4">
-                <h3 className="text-lg font-bold text-[#0F172A]">{plan.name}</h3>
+                <h3 className="text-sm font-bold text-[#64748B] uppercase tracking-wider mb-1">{plan.name}</h3>
                 <div className="flex items-baseline gap-1 mt-2">
-                  <span className="text-4xl font-extrabold text-[#0F172A] tracking-tight">{plan.priceLabel}</span>
-                  {!plan.isComingSoon && plan.priceLabel !== "Free" && plan.priceLabel !== "₹0" && (
+                  <span className="text-3xl font-extrabold text-[#0F172A] tracking-tight">{plan.priceLabel}</span>
+                  {!plan.isComingSoon && plan.priceLabel !== "FREE" && plan.priceLabel !== "₹0" && (
                     <span className="text-xs font-semibold text-[#64748B]">/ month</span>
                   )}
                 </div>
-                <p className="text-xs font-semibold text-[#16A34A] mt-1 bg-[#F0FDF4] inline-block px-2 py-0.5 rounded-md border border-[#DCFCE7]">
+                <p className="text-xs font-semibold text-[#16A34A] mt-2 bg-[#F0FDF4] inline-block px-2 py-0.5 rounded-md border border-[#DCFCE7]">
                   {plan.subtext}
                 </p>
               </div>
@@ -289,60 +313,6 @@ export function Subscriptions() {
             </div>
           </div>
         ))}
-      </div>
-
-      {/* Platform Delivery Matrix UI Layout */}
-      <div className="bg-white border border-[#E2E8F0] rounded-2xl p-6 mt-4">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h3 className="text-base font-bold text-[#0F172A]">Platform Delivery Config</h3>
-            <p className="text-xs text-[#64748B]">Operational delivery rules based on dynamic target metrics.</p>
-          </div>
-          <div className="text-right">
-            <span className="text-xs font-medium text-slate-500 bg-slate-100 px-2.5 py-1 rounded-md">
-              Max Operational Radius: <strong>{deliveryConfig?.maxRadius ?? "10"} KM</strong>
-            </span>
-          </div>
-        </div>
-        
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs border-collapse">
-            <thead>
-              <tr className="border-b border-[#F1F5F9] bg-[#F8FAFC]">
-                <th className="p-3 font-semibold text-[#475569]">Distance Slab</th>
-                <th className="p-3 font-semibold text-[#475569]">Total Fee</th>
-                <th className="p-3 font-semibold text-[#475569]">Rider Share % (Gets)</th>
-                <th className="p-3 font-semibold text-[#475569]">Rivo Share % (Gets)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {distanceSlabs.map((slab, idx) => {
-                const slabKey = slab.range.replace(" ", "").toLowerCase();
-                
-                // Read dynamically if present from remote db override context, otherwise use precise values from layout image
-                const totalFee = deliveryConfig?.slabs?.[slabKey]?.fee ?? slab.fee;
-                const riderGets = deliveryConfig?.slabs?.[slabKey]?.riderGets ?? slab.rider;
-                const rivoGets = deliveryConfig?.slabs?.[slabKey]?.rivoGets ?? slab.rivo;
-
-                return (
-                  <tr key={idx} className="border-b border-[#F1F5F9] hover:bg-slate-50/50 transition-colors">
-                    <td className="p-3 font-medium text-[#334155] flex items-center gap-1.5">
-                      <MapPin className="w-3.5 h-3.5 text-[#64748B]" />
-                      {slab.range}
-                    </td>
-                    <td className="p-3 font-bold text-[#0F172A]">₹{totalFee}</td>
-                    <td className="p-3 font-semibold text-emerald-600">
-                      80% <span className="text-slate-400 font-normal ml-1">(₹{riderGets})</span>
-                    </td>
-                    <td className="p-3 font-semibold text-blue-600">
-                      20% <span className="text-slate-400 font-normal ml-1">(₹{rivoGets})</span>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
       </div>
     </div>
   );

@@ -12,7 +12,9 @@ import {
   Phone,
   Calendar,
   MapPin,
-  Trash2
+  Trash2,
+  ChevronDown,
+  ChevronUp
 } from "lucide-react";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
@@ -52,6 +54,22 @@ export function Customers() {
   const [activeTab, setActiveTab] = useState<"profile" | "orders" | "refunds">("profile");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Profile Real Metrics State
+  const [profileMetrics, setProfileMetrics] = useState({
+    totalOrders: 0,
+    completedOrders: 0,
+    cancelledOrders: 0,
+    pendingOrders: 0,
+    totalSpent: 0,
+    lastOrderDate: "No orders placed",
+    fullAddress: "No address provided"
+  });
+
+  // History Lists States
+  const [customerOrders, setCustomerOrders] = useState<any[]>([]);
+  const [customerRefunds, setCustomerRefunds] = useState<any[]>([]);
+  const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
+
   // Form Controls
   const [formName, setFormName] = useState("");
   const [formEmail, setFormEmail] = useState("");
@@ -72,7 +90,7 @@ export function Customers() {
 
       const { data: addressesData, error: addressesError } = await supabase
         .from("customer_addresses")
-        .select("customer_id, address_line1")
+        .select("customer_id, address_line1, city, state, pin_code")
         .eq("is_default", true);
 
       if (addressesError) console.error("Failed fetching default customer addresses:", addressesError);
@@ -80,7 +98,8 @@ export function Customers() {
       const addressMap: Record<string, string> = {};
       (addressesData || []).forEach(addr => {
         if (addr.customer_id) {
-          addressMap[addr.customer_id] = addr.address_line1 || "";
+          const pieces = [addr.address_line1, addr.city, addr.state, addr.pin_code].filter(Boolean);
+          addressMap[addr.customer_id] = pieces.join(", ") || "No address provided";
         }
       });
 
@@ -116,6 +135,158 @@ export function Customers() {
     }
   }
 
+  async function fetchCustomerModalDetails(customerId: string) {
+    try {
+      // 1. Fetch Orders Telemetry mapped to precise database columns
+      const { data: orders, error: ordersErr } = await supabase
+        .from("orders")
+        .select(`
+          id,
+          order_number,
+          customer_id,
+          vendor_id,
+          rider_id,
+          subtotal,
+          delivery_fee,
+          total_amount,
+          payment_status,
+          order_status,
+          created_at,
+          customer_address_id,
+          payment_method,
+          platform_fee,
+          vendors ( shop_name ),
+          riders ( rider_name )
+        `)
+        .eq("customer_id", customerId)
+        .order("created_at", { ascending: false });
+
+      if (ordersErr) throw ordersErr;
+      const safeOrders = orders || [];
+
+      // Computations
+      const total = safeOrders.length;
+      const completed = safeOrders.filter(o => o.order_status === "delivered").length;
+      const cancelled = safeOrders.filter(o => o.order_status === "cancelled").length;
+      const pending = safeOrders.filter(o => 
+        ["pending", "accepted", "preparing", "packed", "out_for_delivery"].includes(o.order_status || "")
+      ).length;
+      const spent = safeOrders.reduce((sum, o) => sum + Number(o.total_amount || 0), 0);
+      
+      let lastDateText = "No orders placed";
+      if (safeOrders.length > 0 && safeOrders[0].created_at) {
+        lastDateText = new Date(safeOrders[0].created_at).toLocaleDateString("en-GB", {
+          day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit"
+        });
+      }
+
+      // Gather all order IDs to perform a batch lookup of order items
+      const orderIds = safeOrders.map(o => o.id);
+      let allItems: any[] = [];
+      if (orderIds.length > 0) {
+        const { data: itemsData, error: itemsErr } = await supabase
+          .from("order_items")
+          .select(`
+            order_id,
+            product_id,
+            quantity,
+            unit_price,
+            total_price,
+            products ( name )
+          `)
+          .in("order_id", orderIds);
+        if (!itemsErr && itemsData) {
+          allItems = itemsData;
+        }
+      }
+
+      // Gather all distinct customer_address_ids across orders for a batch address lookup
+      const addressIds = safeOrders.map(o => o.customer_address_id).filter(Boolean);
+      let addressMap: Record<string, string> = {};
+      if (addressIds.length > 0) {
+        const { data: addrsData } = await supabase
+          .from("customer_addresses")
+          .select("id, address_line1, address_line2, landmark, city, state, pin_code")
+          .in("id", addressIds);
+        if (addrsData) {
+          addrsData.forEach(addr => {
+            const pieces = [addr.address_line1, addr.address_line2, addr.landmark, addr.city, addr.state, addr.pin_code].filter(Boolean);
+            addressMap[addr.id] = pieces.join(", ") || "No address provided";
+          });
+        }
+      }
+
+      // 2. Map items and addresses back to orders
+      const ordersWithItems = safeOrders.map((o: any) => {
+        const matchingItems = allItems.filter(i => i.order_id === o.id);
+        const formattedItems = matchingItems.map((i: any) => ({
+          item_name: i.products?.name || "Unknown Product",
+          quantity: i.quantity,
+          price: Number(i.unit_price || 0),
+          total_price: Number(i.total_price || 0)
+        }));
+        
+        const orderAddressStr = o.customer_address_id ? (addressMap[o.customer_address_id] || "No address provided") : "No address provided";
+
+        return { ...o, items: formattedItems, delivery_address_computed: orderAddressStr };
+      });
+      setCustomerOrders(ordersWithItems);
+
+      // 3. Fetch Refunds Information matching exact column layout
+      const { data: refunds, error: refundsErr } = await supabase
+        .from("refunds")
+        .select("id, order_id, customer_id, vendor_id, amount, reason, status, created_at")
+        .eq("customer_id", customerId)
+        .order("created_at", { ascending: false });
+
+      if (refundsErr) throw refundsErr;
+      
+      const mappedRefunds = await Promise.all((refunds || []).map(async (r: any) => {
+        let orderNum = "—";
+        if (r.order_id) {
+          const { data: oNumData } = await supabase.from("orders").select("order_number").eq("id", r.order_id).maybeSingle();
+          if (oNumData) orderNum = oNumData.order_number;
+        }
+        return {
+          id: r.id,
+          order_number: orderNum,
+          refund_amount: r.amount,
+          reason: r.reason,
+          status: r.status,
+          created_at: r.created_at,
+          processed_at: null 
+        };
+      }));
+      setCustomerRefunds(mappedRefunds);
+
+      // 4. Fetch Default Address Components
+      const { data: addr } = await supabase
+        .from("customer_addresses")
+        .select("address_line1, address_line2, landmark, city, state, pin_code")
+        .eq("customer_id", customerId)
+        .eq("is_default", true)
+        .maybeSingle();
+
+      let fullAddrStr = "No address provided";
+      if (addr) {
+        fullAddrStr = [addr.address_line1, addr.address_line2, addr.landmark, addr.city, addr.state, addr.pin_code].filter(Boolean).join(", ");
+      }
+
+      setProfileMetrics({
+        totalOrders: total,
+        completedOrders: completed,
+        cancelledOrders: cancelled,
+        pendingOrders: pending,
+        totalSpent: spent,
+        lastOrderDate: lastDateText,
+        fullAddress: fullAddrStr
+      });
+
+    } catch (err) {
+      console.error("Failed fetching context profiles metrics:", err);
+    }
+  }
+
   useEffect(() => {
     fetchCustomers();
   }, []);
@@ -139,7 +310,7 @@ export function Customers() {
       const payload = {
         customer_name: formName,
         email: formEmail.trim().toLowerCase(),
-        phone: formPhone.trim(),
+        phone: formPhone.trim()
       };
 
       const { data: newCustomer, error: customerError } = await supabase
@@ -184,18 +355,9 @@ export function Customers() {
   }
 
   async function toggleBlock(id: string, currentStatus: CustomerStatus) {
-    const nextStatus: CustomerStatus = currentStatus === "blocked" ? "active" : "blocked";
-    
-    setCustomerList((prev) => prev.map((c) => (c.id === id ? { ...c, status: nextStatus } : c)));
-    if (viewCustomer && viewCustomer.id === id) {
-      setViewCustomer((prev) => (prev ? { ...prev, status: nextStatus } : null));
-    }
-
-    try {
-      await fetchCustomers();
-    } catch (err) {
-      console.error("Failed syncing block configuration mutations:", err);
-    }
+    // Database updates/reads for customers.status removed since it doesn't exist.
+    // Display is purely UI-managed for now as a static placeholder.
+    alert("Customer blocking feature is currently under implementation.");
   }
 
   async function handleDeleteCustomer(id: string, name: string) {
@@ -297,7 +459,7 @@ export function Customers() {
                         <span className="text-sm font-semibold text-purple-600">{customer.name[0]}</span>
                       </div>
                       <div>
-                        <button onClick={() => { setViewCustomer(customer); setActiveTab("profile"); }} className="text-sm font-medium text-[#0F172A] hover:text-[#22C55E] text-left">
+                        <button onClick={() => { setViewCustomer(customer); setActiveTab("profile"); fetchCustomerModalDetails(customer.id); }} className="text-sm font-medium text-[#0F172A] hover:text-[#22C55E] text-left">
                           {customer.name}
                         </button>
                         <p className="text-xs text-[#64748B]">{customer.email}</p>
@@ -308,18 +470,18 @@ export function Customers() {
                   <td className="px-4 py-3.5 text-right"><span className="text-sm font-medium text-[#0F172A]">{customer.orders}</span></td>
                   <td className="px-4 py-3.5 text-right"><span className="text-sm font-medium text-[#0F172A]">₹{customer.spent.toLocaleString()}</span></td>
                   <td className="px-4 py-3.5 text-sm text-[#64748B]">{customer.lastOrder}</td>
-                  <td className="px-4 py-3.5"><Badge variant={customer.status === "active" ? "success" : "error"} label={customer.status === "active" ? "Active" : "Blocked"} dot /></td>
+                  <td className="px-4 py-3.5"><Badge variant="success" label="Active" dot /></td>
                   <td className="px-4 py-3.5">
                     <Dropdown
                       align="right"
                       trigger={<button className="h-7 w-7 flex items-center justify-center rounded-md text-[#64748B] hover:bg-[#F1F5F9]"><MoreHorizontal className="w-4 h-4" /></button>}
                       items={[
-                        { label: "View Profile", icon: <User className="w-3.5 h-3.5" />, onClick: () => { setViewCustomer(customer); setActiveTab("profile"); } },
+                        { label: "View Profile", icon: <User className="w-3.5 h-3.5" />, onClick: () => { setViewCustomer(customer); setActiveTab("profile"); fetchCustomerModalDetails(customer.id); } },
                         {
-                          label: customer.status === "blocked" ? "Unblock Customer" : "Block Customer",
-                          icon: customer.status === "blocked" ? <ShieldCheck className="w-3.5 h-3.5" /> : <ShieldOff className="w-3.5 h-3.5" />,
+                          label: "Block Customer",
+                          icon: <ShieldOff className="w-3.5 h-3.5" />,
                           onClick: () => toggleBlock(customer.id, customer.status),
-                          variant: customer.status !== "blocked" ? "danger" : "default",
+                          variant: "danger",
                         },
                         { label: "Delete Permanent", icon: <Trash2 className="w-3.5 h-3.5 text-rose-500" />, onClick: () => handleDeleteCustomer(customer.id, customer.name), variant: "danger" as const, divider: true }
                       ]}
@@ -373,11 +535,11 @@ export function Customers() {
               <div className="flex items-center gap-2">
                 <Button variant="secondary" onClick={() => setViewCustomer(null)}>Close</Button>
                 <Button
-                  variant={viewCustomer.status === "blocked" ? "primary" : "destructive"}
-                  leftIcon={viewCustomer.status === "blocked" ? <ShieldCheck className="w-3.5 h-3.5" /> : <ShieldOff className="w-3.5 h-3.5" />}
+                  variant="destructive"
+                  leftIcon={<ShieldOff className="w-3.5 h-3.5" />}
                   onClick={() => { toggleBlock(viewCustomer.id, viewCustomer.status); setViewCustomer(null); }}
                 >
-                  {viewCustomer.status === "blocked" ? "Unblock Account" : "Block Account"}
+                  Block Account
                 </Button>
               </div>
             </div>
@@ -402,7 +564,7 @@ export function Customers() {
                   { label: "Email", value: viewCustomer.email, icon: <Mail className="w-3.5 h-3.5" /> },
                   { label: "Phone", value: viewCustomer.phone, icon: <Phone className="w-3.5 h-3.5" /> },
                   { label: "Joined", value: viewCustomer.joinedAt, icon: <Calendar className="w-3.5 h-3.5" /> },
-                  { label: "Last Order Update", value: viewCustomer.lastOrder, icon: <ShoppingBag className="w-3.5 h-3.5" /> },
+                  { label: "Last Order Update", value: profileMetrics.lastOrderDate, icon: <ShoppingBag className="w-3.5 h-3.5" /> },
                 ].map((item) => (
                   <div key={item.label} className="bg-[#F8FAFC] rounded-lg p-3">
                     <div className="flex items-center gap-1.5 text-xs text-[#64748B] mb-1">{item.icon}{item.label}</div>
@@ -415,35 +577,134 @@ export function Customers() {
                 <div className="flex items-center gap-1.5 text-xs font-semibold text-[#64748B] mb-1">
                   <MapPin className="w-3.5 h-3.5 text-[#22C55E]" /> Default Delivery Address
                 </div>
-                <p className="text-sm text-[#334155] font-medium pl-5">{viewCustomer.delivery_address}</p>
+                <p className="text-sm text-[#334155] font-medium pl-5">{profileMetrics.fullAddress}</p>
               </div>
 
               <div className="grid grid-cols-3 gap-3">
                 <div className="bg-[#F0FDF4] border border-[#DCFCE7] rounded-lg p-4 text-center">
-                  <p className="text-2xl font-semibold text-[#16A34A]">{viewCustomer.orders}</p>
+                  <p className="text-2xl font-semibold text-[#16A34A]">{profileMetrics.totalOrders}</p>
                   <p className="text-xs text-[#64748B] mt-1">Total Orders</p>
                 </div>
                 <div className="bg-[#EFF6FF] border border-[#DBEAFE] rounded-lg p-4 text-center">
-                  <p className="text-2xl font-semibold text-blue-700">₹{viewCustomer.spent.toLocaleString()}</p>
+                  <p className="text-2xl font-semibold text-blue-700">₹{profileMetrics.totalSpent.toLocaleString()}</p>
                   <p className="text-xs text-[#64748B] mt-1">Total Spent</p>
                 </div>
-                <div className={cn("rounded-lg p-4 text-center border flex flex-col items-center justify-center", viewCustomer.status === "active" ? "bg-[#F0FDF4] border-[#DCFCE7]" : "bg-red-50 border-red-200")}>
-                  <Badge variant={viewCustomer.status === "active" ? "success" : "error"} label={viewCustomer.status === "active" ? "Active" : "Blocked"} />
+                <div className="rounded-lg p-4 text-center border flex flex-col items-center justify-center bg-[#F0FDF4] border-[#DCFCE7]">
+                  <Badge variant="success" label="Active" />
                   <p className="text-xs text-[#64748B] mt-2">Status</p>
                 </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2 text-center text-xs text-[#64748B] font-medium bg-[#F8FAFC] p-3 rounded-xl border border-[#E2E8F0]">
+                <div>Completed: <span className="font-bold text-[#16A34A]">{profileMetrics.completedOrders}</span></div>
+                <div>Pending: <span className="font-bold text-blue-600">{profileMetrics.pendingOrders}</span></div>
+                <div>Cancelled: <span className="font-bold text-rose-600">{profileMetrics.cancelledOrders}</span></div>
               </div>
             </div>
           )}
 
           {activeTab === "orders" && (
-            <div className="space-y-2 max-h-[350px] overflow-y-auto text-center py-8 text-xs text-[#94A3B8] italic">
-              No recent delivery order interactions associated with this profile node.
+            <div className="space-y-3 max-h-[350px] overflow-y-auto pr-1">
+              {customerOrders.length === 0 ? (
+                <div className="text-center py-8 text-xs text-[#94A3B8] italic">No recent delivery order interactions associated with this profile node.</div>
+              ) : (
+                customerOrders.map((order) => {
+                  const isExpanded = expandedOrderId === order.id;
+
+                  return (
+                    <div key={order.id} className="border border-[#E2E8F0] rounded-xl p-3 bg-white space-y-2 text-xs">
+                      <div className="flex items-center justify-between font-medium text-[#334155]">
+                        <div>Order Number: <span className="font-mono font-bold text-[#0F172A]">#{order.order_number || order.id.slice(0, 8)}</span></div>
+                        <div className="text-[#64748B]">
+                          Order Date: {new Date(order.created_at).toLocaleDateString("en-GB", { day: 'numeric', month: 'short' })}
+                        </div>
+                      </div>
+                      
+                      <div className="grid grid-cols-2 gap-2 text-[#475569]">
+                        <div>Vendor Shop Name: <span className="font-semibold text-[#0F172A]">{order.vendors?.shop_name || "—"}</span></div>
+                        <div className="text-right font-bold text-[#0F172A]">Total Amount: ₹{order.total_amount}</div>
+                      </div>
+
+                      <div className="flex flex-wrap gap-1.5 pt-1">
+                        <Badge variant="neutral" label={`Payment Method: ${order.payment_method || "—"}`} />
+                        <Badge variant={order.payment_status === "paid" ? "success" : "warning"} label={`Payment Status: ${order.payment_status}`} />
+                        <Badge variant={order.order_status === "delivered" ? "success" : order.order_status === "cancelled" ? "error" : "warning"} label={`Order Status: ${order.order_status}`} />
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => setExpandedOrderId(isExpanded ? null : order.id)}
+                        className="w-full text-center flex items-center justify-center gap-1 text-[#64748B] hover:text-[#0F172A] font-medium pt-1 border-t border-[#F1F5F9]"
+                      >
+                        {isExpanded ? (
+                          <>Hide Breakdown <ChevronUp size={14} /></>
+                        ) : (
+                          <>View Breakdown <ChevronDown size={14} /></>
+                        )}
+                      </button>
+
+                      {isExpanded && (
+                        <div className="mt-2 p-3 bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl space-y-2 text-[#475569] animate-in fade-in duration-100">
+                          <div className="font-bold text-[#0F172A] mb-1">Items List</div>
+                          <div className="space-y-1 divide-y divide-[#E2E8F0]/50">
+                            <div className="grid grid-cols-4 font-semibold text-[#64748B] pb-1 text-[10px] uppercase">
+                              <span>Product Name</span>
+                              <span className="text-center">Quantity</span>
+                              <span className="text-right">Unit Price</span>
+                              <span className="text-right">Total Price</span>
+                            </div>
+                            {(order.items || []).map((item: any, idx: number) => (
+                              <div key={idx} className="grid grid-cols-4 py-1 items-center">
+                                <span className="truncate pr-1">{item.item_name}</span>
+                                <span className="text-center">x{item.quantity}</span>
+                                <span className="text-right">₹{item.price}</span>
+                                <span className="font-medium text-[#0F172A] text-right">₹{item.total_price || (item.price * item.quantity)}</span>
+                              </div>
+                            ))}
+                          </div>
+                          <div className="border-t border-[#E2E8F0] pt-2 space-y-1">
+                            <div className="flex justify-between"><span>Subtotal:</span><span>₹{order.subtotal || 0}</span></div>
+                            <div className="flex justify-between"><span>Delivery Fee:</span><span>₹{order.delivery_fee || 0}</span></div>
+                            <div className="flex justify-between"><span>Platform Fee:</span><span>₹{order.platform_fee || 0}</span></div>
+                            <div className="flex justify-between font-bold text-[#0F172A] pt-1 border-t border-dashed border-[#E2E8F0]">
+                              <span>Total Amount:</span><span>₹{order.total_amount}</span>
+                            </div>
+                          </div>
+                          <div className="pt-2 border-t border-[#E2E8F0] space-y-1">
+                            <div>Rider Name: <span className="font-medium text-[#0F172A]">{order.riders?.rider_name || "Not Assigned"}</span></div>
+                            <div className="break-words">Delivery Address: <span className="font-medium text-[#0F172A]">{order.delivery_address_computed || "—"}</span></div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
             </div>
           )}
 
           {activeTab === "refunds" && (
-            <div className="space-y-2 max-h-[350px] overflow-y-auto text-center py-8 text-xs text-[#94A3B8] italic">
-              No recent platform refund ledger tracking items associated with this profile node.
+            <div className="space-y-2 max-h-[350px] overflow-y-auto pr-1">
+              {customerRefunds.length === 0 ? (
+                <div className="text-center py-8 text-xs text-[#94A3B8] italic">No refunds found.</div>
+              ) : (
+                customerRefunds.map((refund) => (
+                  <div key={refund.id} className="border border-[#E2E8F0] rounded-xl p-3 bg-white space-y-1.5 text-xs">
+                    <div className="flex justify-between font-bold text-[#0F172A]">
+                      <span>Refund ID: #{refund.id.slice(0, 8)}</span>
+                      <span className="text-[#16A34A]">₹{refund.refund_amount}</span>
+                    </div>
+                    <div className="text-[#475569]">Order Number: <span className="font-mono font-medium">#{refund.order_number}</span></div>
+                    <div className="text-[#475569] break-words">Reason: <span className="font-medium text-[#334155]">{refund.reason || "—"}</span></div>
+                    <div className="flex items-center justify-between pt-1">
+                      <Badge variant={refund.status === "completed" || refund.status === "approved" ? "success" : "warning"} label={refund.status || "pending"} />
+                      <div className="text-[10px] text-[#94A3B8] space-y-0.5 text-right">
+                        <div>Created: {refund.created_at ? new Date(refund.created_at).toLocaleDateString("en-GB") : "—"}</div>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           )}
         </Modal>

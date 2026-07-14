@@ -44,6 +44,7 @@ export function Notifications() {
   const [audience, setAudience] = useState<Audience>("customers");
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
+  const [successMessage, setSuccessMessage] = useState("");
   
   const [historyLogs, setHistoryLogs] = useState<NotificationHistory[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -90,30 +91,35 @@ export function Notifications() {
 
       if (error) throw error;
 
-      const mapped: NotificationHistory[] = (data || []).map((row) => {
-        const target: Audience = "all";
-        
-        return {
-          id: row.id.slice(0, 8).toUpperCase(),
-          rawId: row.id,
-          title: row.title || "Untitled Notification",
-          body: row.message || "—",
-          audience: target,
-          reached: audienceSizes.all || 1,
-          opened: 0,
-          sentAt: row.created_at
-            ? new Date(row.created_at).toLocaleDateString("en-GB", {
-                day: "numeric",
-                month: "short",
-                year: "numeric",
-                hour: "2-digit",
-                minute: "2-digit",
-              })
-            : "—",
-        };
+      // Group or uniquely map entries to present in the history panel
+      const uniqueBroadcasts: Record<string, NotificationHistory> = {};
+      
+      (data || []).forEach((row) => {
+        const key = `${row.title}_${row.message}_${row.created_at}`;
+        if (!uniqueBroadcasts[key]) {
+          uniqueBroadcasts[key] = {
+            id: row.id.slice(0, 8).toUpperCase(),
+            rawId: row.id, 
+            title: row.title || "Untitled Notification",
+            body: row.message || "—",
+            audience: "all", // Default mapping label for historic visualization
+            reached: 0,
+            opened: 0,
+            sentAt: row.created_at
+              ? new Date(row.created_at).toLocaleDateString("en-GB", {
+                  day: "numeric",
+                  month: "short",
+                  year: "numeric",
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })
+              : "—",
+          };
+        }
+        uniqueBroadcasts[key].reached++;
       });
 
-      setHistoryLogs(mapped);
+      setHistoryLogs(Object.values(uniqueBroadcasts));
     } catch (err) {
       console.error("Failed loading notification ledger:", err);
     } finally {
@@ -138,16 +144,56 @@ export function Notifications() {
     try {
       setSending(true);
 
-      const payload = {
+      let targetRecipients: { id: string; type: string }[] = [];
+
+      // Step 1: Fetch target recipients based on selection mapping context
+      if (audience === "customers" || audience === "all") {
+        const { data } = await supabase.from("customers").select("id");
+        if (data) {
+          targetRecipients = [...targetRecipients, ...data.map(r => ({ id: r.id, type: "customer" }))];
+        }
+      }
+      if (audience === "vendors" || audience === "all") {
+        const { data } = await supabase.from("vendors").select("id");
+        if (data) {
+          targetRecipients = [...targetRecipients, ...data.map(r => ({ id: r.id, type: "vendor" }))];
+        }
+      }
+      if (audience === "riders" || audience === "all") {
+        const { data } = await supabase.from("riders").select("id");
+        if (data) {
+          targetRecipients = [...targetRecipients, ...data.map(r => ({ id: r.id, type: "rider" }))];
+        }
+      }
+
+      if (targetRecipients.length === 0) {
+        alert("No active recipients found in selected context audience query.");
+        return;
+      }
+
+      const timestamp = new Date().toISOString();
+
+      // Step 2: Form rows dynamically satisfying constraints (recipient_id/type NOT NULL)
+      const notificationRows = targetRecipients.map((rec) => ({
+        recipient_id: rec.id,
+        recipient_type: rec.type,
         title: title.trim(),
         message: body.trim(),
         type: "broadcast",
         is_read: false,
-        created_at: new Date().toISOString()
-      };
+        created_at: timestamp,
+        deleted_at: null,
+        metadata: null,
+        reference_id: null
+      }));
 
-      const { error } = await supabase.from("notifications").insert([payload]);
+      // Step 3: Atomic collection operation bulk insert layout assignment execution
+      const { error } = await supabase.from("notifications").insert(notificationRows);
       if (error) throw error;
+
+      // Step 5: Configure explicit dynamic numeric response label tracking strings
+      const targetLabel = audience === "all" ? "Users" : audienceConfig[audience].label;
+      setSuccessMessage(`Successfully sent to ${notificationRows.length} ${targetLabel}`);
 
       setSent(true);
       setTitle("");
@@ -157,7 +203,10 @@ export function Notifications() {
       await calculateAudienceMetrics();
       await fetchNotificationHistory();
 
-      setTimeout(() => setSent(false), 3000);
+      setTimeout(() => {
+        setSent(false);
+        setSuccessMessage("");
+      }, 4000);
     } catch (err) {
       console.error("Failed sending unified notification broadcast:", err);
       alert("Error dispatching communication channel write payload.");
@@ -171,10 +220,16 @@ export function Notifications() {
     if (!confirmation) return;
 
     try {
+      // Find the template reference item to drop related components uniformly
+      const item = historyLogs.find(l => l.rawId === rawId);
+      if (!item) return;
+
       const { error } = await supabase
         .from("notifications")
         .delete()
-        .eq("id", rawId);
+        .eq("title", item.title)
+        .eq("message", item.body)
+        .eq("type", "broadcast");
 
       if (error) throw error;
       
@@ -272,7 +327,7 @@ export function Notifications() {
               {sent && (
                 <div className="flex items-center gap-2 p-3 bg-[#F0FDF4] border border-[#DCFCE7] rounded-lg">
                   <CheckCircle2 className="w-4 h-4 text-green-600" />
-                  <span className="text-sm font-bold text-[#16A34A]">Notification sent successfully!</span>
+                  <span className="text-sm font-bold text-[#16A34A]">{successMessage}</span>
                 </div>
               )}
 
@@ -320,26 +375,13 @@ export function Notifications() {
                               <Clock className="w-3 h-3 text-[#94A3B8]" />{notif.sentAt}
                             </span>
                             <span>
-                              <span className="font-bold text-[#0F172A]">{notif.reached.toLocaleString()}</span> reached
-                            </span>
-                            <span>
-                              <span className="font-bold text-[#0F172A]">{notif.opened.toLocaleString()}</span> opened ({openRate}%)
+                              <span className="font-bold text-[#0F172A]">{notif.reached.toLocaleString()}</span> targets reached
                             </span>
                           </div>
                         </div>
 
                         {/* Interactive Deletion Action and Progress section metrics layout side row */}
-                        <div className="flex items-center gap-3 w-32 justify-end flex-shrink-0">
-                          <div className="w-20 text-right">
-                            <p className="text-xs font-bold text-[#475569] mb-1">{openRate}%</p>
-                            <div className="h-1.5 bg-[#E2E8F0] rounded-full overflow-hidden">
-                              <div
-                                className="h-full bg-[#22C55E] rounded-full transition-all"
-                                style={{ width: `${openRate}%` }}
-                              />
-                            </div>
-                          </div>
-                          
+                        <div className="flex items-center gap-3 justify-end flex-shrink-0">
                           <button
                             onClick={() => handleDeleteNotification(notif.rawId, notif.title)}
                             className="p-1 text-slate-300 hover:text-red-500 rounded transition-colors"

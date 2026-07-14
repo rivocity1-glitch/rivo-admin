@@ -166,9 +166,30 @@ export default function AllRequests() {
 
       if (patchRequestError) throw patchRequestError;
 
-      // Calculate future renewal epoch constraint boundary markers (30 days ahead)
-      const expiryDate = new Date();
-      expiryDate.setDate(expiryDate.getDate() + 30);
+      // Map incoming value to target database value
+      const rawPlan = req.plan_name || "";
+      let targetPlan: 'free' | 'basic' | 'growth' | 'pro' = 'basic';
+
+      if (rawPlan === "499" || rawPlan === "BASIC" || rawPlan === "basic") {
+        targetPlan = 'basic';
+      } else if (rawPlan === "FREE" || rawPlan === "free") {
+        targetPlan = 'free';
+      } else if (rawPlan === "GROWTH" || rawPlan === "growth") {
+        targetPlan = 'growth';
+      } else if (rawPlan === "PRO" || rawPlan === "pro") {
+        targetPlan = 'pro';
+      }
+
+      // Configure commission percent based on plan
+      const commissionPercent = targetPlan === 'free' ? 5 : 0;
+
+      // Calculate future renewal boundary markers or manage unlimited configurations
+      let expiryDate: string | null = null;
+      if (targetPlan !== 'free') {
+        const computedExpiry = new Date();
+        computedExpiry.setDate(computedExpiry.getDate() + 30);
+        expiryDate = computedExpiry.toISOString();
+      }
 
       // 2. Fetch or update current subscription row map sequence
       const { data: existingSub } = await supabase
@@ -181,11 +202,11 @@ export default function AllRequests() {
         const { error: updateSubError } = await supabase
           .from('subscriptions')
           .update({
-            plan_name: req.plan_name || '499',
+            plan_name: targetPlan,
             status: 'active',
-            commission_percent: 0,
+            commission_percent: commissionPercent,
             start_date: new Date().toISOString(),
-            end_date: expiryDate.toISOString(),
+            ...(expiryDate ? { end_date: expiryDate } : {}),
             updated_at: new Date().toISOString()
           })
           .eq('id', existingSub.id);
@@ -196,11 +217,11 @@ export default function AllRequests() {
           .from('subscriptions')
           .insert([{
             vendor_id: req.vendor_id,
-            plan_name: req.plan_name || '499',
+            plan_name: targetPlan,
             status: 'active',
-            commission_percent: 0,
+            commission_percent: commissionPercent,
             start_date: new Date().toISOString(),
-            end_date: expiryDate.toISOString(),
+            ...(expiryDate ? { end_date: expiryDate } : {}),
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString()
           }]);

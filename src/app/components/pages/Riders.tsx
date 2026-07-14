@@ -4,7 +4,6 @@ import {
   Search,
   Plus,
   MoreHorizontal,
-  Filter,
   CheckCircle,
   XCircle,
   PauseCircle,
@@ -29,21 +28,40 @@ import { cn } from "../../../lib/utils";
 import { supabase } from "../../../lib/supabase";
 
 type RiderStatus = "active" | "inactive" | "suspended";
+type AvailabilityStatus = "available" | "offline";
 type VehicleType = "bicycle" | "bike" | "scooter" | "electric_scooter";
+type KycStatus = "not_submitted" | "pending" | "verified" | "rejected";
 
 interface Rider {
   id: string;
+  auth_user_id: string;
   name: string;
   email: string;
   phone: string;
   vehicle_type: VehicleType;
   vehicle_number: string;
   status: RiderStatus;
+  availability_status: AvailabilityStatus;
   location_area: string;
   orders_completed: number;
   rating: number;
   joinedAt: string;
   assigned_vendors: { id: string; name: string }[];
+  kyc_status: KycStatus;
+  verification_notes: string;
+  documents_updated_at: string;
+  aadhaar_number: string;
+  aadhaar_document_url: string;
+  pan_number: string;
+  pan_document_url: string;
+  driving_license_number: string;
+  driving_license_document_url: string;
+  profile_photo_url: string;
+  bank_name: string;
+  account_holder_name: string;
+  account_number: string;
+  ifsc_code: string;
+  upi_id: string;
 }
 
 interface VendorOption {
@@ -53,8 +71,15 @@ interface VendorOption {
 
 const statusBadgeMap: Record<RiderStatus, { variant: "success" | "warning" | "error" | "neutral" | "info"; label: string }> = {
   active: { variant: "success", label: "Active" },
-  inactive: { variant: "neutral", label: "Offline" },
+  inactive: { variant: "neutral", label: "Pending Approval" },
   suspended: { variant: "error", label: "Suspended" },
+};
+
+const kycBadgeMap: Record<KycStatus, { variant: "success" | "warning" | "error" | "neutral"; label: string }> = {
+  not_submitted: { variant: "neutral", label: "⚪ Not Submitted" },
+  pending: { variant: "warning", label: "🟡 Pending" },
+  verified: { variant: "success", label: "🟢 Verified" },
+  rejected: { variant: "error", label: "🔴 Rejected" },
 };
 
 const vehicleLabelMap: Record<VehicleType, string> = {
@@ -160,6 +185,12 @@ export function Riders() {
   const [viewRider, setViewRider] = useState<Rider | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // KYC Specific States
+  const [kycOpen, setKycOpen] = useState(false);
+  const [kycRider, setKycRider] = useState<Rider | null>(null);
+  const [rejectConfirmOpen, setRejectConfirmOpen] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
+
   // Form Controls
   const [formName, setFormName] = useState("");
   const [formEmail, setFormEmail] = useState("");
@@ -167,7 +198,7 @@ export function Riders() {
   const [formVehicleType, setFormVehicleType] = useState<VehicleType>("bike");
   const [formVehicleNumber, setFormVehicleNumber] = useState("");
   const [formLocation, setFormLocation] = useState("");
-  const [formStatus, setFormStatus] = useState<RiderStatus>("inactive"); // mapped from pending -> inactive
+  const [formStatus, setFormStatus] = useState<RiderStatus>("inactive"); 
   const [formVendors, setFormVendors] = useState<{ id: string; name: string }[]>([]);
 
   const itemsPerPage = 10;
@@ -223,12 +254,14 @@ export function Riders() {
 
         return {
           id: row.id,
+          auth_user_id: row.auth_user_id || "",
           name: row.rider_name || "Unnamed Rider",
           email: row.email || "—",
           phone: row.phone || "—",
           vehicle_type: (row.vehicle_type as VehicleType) || "bike",
           vehicle_number: row.vehicle_number || "—",
           status: (row.status as RiderStatus) || "inactive",
+          availability_status: (row.availability_status as AvailabilityStatus) || "offline",
           location_area: row.location_area || "No Area Listed",
           orders_completed: row.orders_completed || 0,
           rating: row.rating || 5.0,
@@ -240,6 +273,21 @@ export function Riders() {
                 year: "numeric",
               })
             : "—",
+          kyc_status: (row.kyc_status as KycStatus) || "not_submitted",
+          verification_notes: row.verification_notes || "",
+          documents_updated_at: row.documents_updated_at || "",
+          aadhaar_number: row.aadhaar_number || "",
+          aadhaar_document_url: row.aadhaar_document_url || "",
+          pan_number: row.pan_number || "",
+          pan_document_url: row.pan_document_url || "",
+          driving_license_number: row.driving_license_number || "",
+          driving_license_document_url: row.driving_license_document_url || "",
+          profile_photo_url: row.profile_photo_url || "",
+          bank_name: row.bank_name || "",
+          account_holder_name: row.account_holder_name || "",
+          account_number: row.account_number || "",
+          ifsc_code: row.ifsc_code || "",
+          upi_id: row.upi_id || "",
         };
       });
 
@@ -248,6 +296,10 @@ export function Riders() {
       if (viewRider) {
         const freshTarget = mapped.find((r) => r.id === viewRider.id);
         if (freshTarget) setViewRider(freshTarget);
+      }
+      if (kycRider) {
+        const freshKycTarget = mapped.find((r) => r.id === kycRider.id);
+        if (freshKycTarget) setKycRider(freshKycTarget);
       }
     } catch (err) {
       console.error("Failed fleet datastream construction mapping:", err);
@@ -259,6 +311,25 @@ export function Riders() {
   useEffect(() => {
     fetchVendorOptions();
     fetchRiders();
+
+    const channel = supabase
+      .channel("public:riders")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "riders",
+        },
+        () => {
+          fetchRiders();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   function resetForm() {
@@ -268,7 +339,7 @@ export function Riders() {
     setFormVehicleType("bike");
     setFormVehicleNumber("");
     setFormLocation("");
-    setFormStatus("active"); // mapped from available -> active
+    setFormStatus("active"); 
     setFormVendors([]);
   }
 
@@ -283,14 +354,6 @@ export function Riders() {
     setFormStatus(rider.status);
     setFormVendors(rider.assigned_vendors);
     setEditOpen(true);
-  }
-
-  // Maintains UI mapping contexts for logic updates internally
-  function getUIMappedStatus(dbStatus: RiderStatus, targetUI: "available" | "approved" | "pending" | "paused"): RiderStatus {
-    if (dbStatus === "suspended") return "suspended";
-    if (targetUI === "available" || targetUI === "approved") return "active";
-    if (targetUI === "pending" || targetUI === "paused") return "inactive";
-    return dbStatus;
   }
 
   function handleOpenStoreAssignment(rider: Rider) {
@@ -328,7 +391,7 @@ export function Riders() {
         .insert(batchJunctionPayload);
 
       if (junctionError) {
-        console.error("[DEBUG] Error inserting new junction rows:", junctionError);
+        console.log("[DEBUG] Error inserting new junction rows:", junctionError);
         throw junctionError;
       }
     }
@@ -351,7 +414,7 @@ export function Riders() {
         vehicle_type: formVehicleType,
         vehicle_number: formVehicleNumber || null,
         location_area: formLocation,
-        status: "active", // mapped from available -> active
+        status: "active", 
         orders_completed: 0,
         rating: 5.0,
       };
@@ -431,56 +494,22 @@ export function Riders() {
     }
   }
 
-  async function mutateStatusDirectly(id: string, newStatus: RiderStatus) {
-    console.log("[DEBUG] mutateStatusDirectly invocation initiated.");
-    console.log("[DEBUG] Target Rider ID:", id);
-    console.log("[DEBUG] Target Status to apply:", newStatus);
+  async function mutateStatusDirectly(id: string, updates: Partial<Pick<Rider, "status" | "availability_status">>) {
+    console.log("[DEBUG] mutateStatusDirectly invocation initiated.", id, updates);
 
-    setRiderList(prev => prev.map(r => r.id === id ? { ...r, status: newStatus } : r));
+    setRiderList(prev => prev.map(r => r.id === id ? { ...r, ...updates } : r));
     if (viewRider && viewRider.id === id) {
-      setViewRider(prev => prev ? { ...prev, status: newStatus } : null);
+      setViewRider(prev => prev ? { ...prev, ...updates } : null);
     }
     
     try {
-      const { data: beforeCheck, error: fetchBeforeError } = await supabase
+      const { error: updateError } = await supabase
         .from("riders")
-        .select("id, rider_name, status")
-        .eq("id", id)
-        .single();
-        
-      if (fetchBeforeError) {
-        console.error("[DEBUG] Error fetching row before update:", fetchBeforeError);
-      } else {
-        console.log("[DEBUG] Database record status prior to update execution:", beforeCheck);
-      }
-
-      const { data: updateResponse, error: updateError } = await supabase
-        .from("riders")
-        .update({ status: newStatus })
-        .eq("id", id)
-        .select();
+        .update(updates)
+        .eq("id", id);
 
       if (updateError) {
-        console.error("[DEBUG] Database update query rejected with error:", updateError);
         throw updateError;
-      }
-      console.log("[DEBUG] Database update operation response payload matrix:", updateResponse);
-      
-      const { data: verifyData, error: verifyError } = await supabase
-        .from("riders")
-        .select("id, rider_name, status")
-        .eq("id", id)
-        .single();
-        
-      if (verifyError) {
-        console.error("[DEBUG] Post-mutation integrity check validation error:", verifyError);
-      } else {
-        console.log("[DEBUG] Post-mutation verified status property profile configuration:", verifyData);
-        if (verifyData && verifyData.status === newStatus) {
-          console.log("[DEBUG] Verification complete. Database confirms state persistence matching.");
-        } else {
-          console.warn("[DEBUG] WARNING: Database state property value mismatch detected during validation query processing.");
-        }
       }
 
       await fetchRiders();
@@ -521,13 +550,121 @@ export function Riders() {
     }
   }
 
+  // --- Core Administrative KYC Status Engine Hooks ---
+  const checkDocumentsComplete = (rider: Rider | null): boolean => {
+    if (!rider) return false;
+    return !!(
+      rider.aadhaar_number &&
+      rider.pan_number &&
+      rider.driving_license_number &&
+      rider.bank_name &&
+      rider.account_holder_name &&
+      rider.account_number &&
+      rider.ifsc_code
+    );
+  };
+
+  async function handleApproveKyc() {
+    if (!kycRider) return;
+    
+    if (!checkDocumentsComplete(kycRider)) {
+      alert("Complete documents required before approval.");
+      return;
+    }
+
+    try {
+      setIsSubmitting(true);
+
+      const { error: updateError } = await supabase
+        .from("riders")
+        .update({
+          kyc_status: "verified",
+          verification_notes: "Verified by Admin"
+        })
+        .eq("id", kycRider.id);
+
+      if (updateError) throw updateError;
+
+      if (kycRider.auth_user_id) {
+        const { error: notificationError } = await supabase
+          .from("notifications")
+          .insert({
+            recipient_id: kycRider.auth_user_id,
+            recipient_type: "rider",
+            title: "✅ KYC Approved",
+            message: "Your KYC has been approved. You can now go online and receive delivery requests.",
+            type: "kyc",
+            metadata: {}
+          });
+
+        if (notificationError) console.error("KYC notification fault:", notificationError);
+      }
+
+      setKycOpen(false);
+      setKycRider(null);
+      await fetchRiders();
+    } catch (err: any) {
+      console.error("KYC approval error:", err);
+      alert(err.message || "Failed to finalize verification parameters.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function handleRejectKyc() {
+    if (!kycRider) return;
+    if (!rejectReason.trim()) {
+      alert("A clarification reason note note is explicitly mandatory.");
+      return;
+    }
+
+    try {
+      setIsSubmitting(true);
+
+      const { error: updateError } = await supabase
+        .from("riders")
+        .update({
+          kyc_status: "rejected",
+          verification_notes: rejectReason
+        })
+        .eq("id", kycRider.id);
+
+      if (updateError) throw updateError;
+
+      if (kycRider.auth_user_id) {
+        const { error: notificationError } = await supabase
+          .from("notifications")
+          .insert({
+            recipient_id: kycRider.auth_user_id,
+            recipient_type: "rider",
+            title: "❌ KYC Rejected",
+            message: `Your KYC was rejected. Reason: ${rejectReason}. Please update your documents and resubmit.`,
+            type: "kyc",
+            metadata: {}
+          });
+
+        if (notificationError) console.error("KYC rejection notification fault:", notificationError);
+      }
+
+      setRejectConfirmOpen(false);
+      setRejectReason("");
+      setKycOpen(false);
+      setKycRider(null);
+      await fetchRiders();
+    } catch (err: any) {
+      console.error("KYC rejection fault:", err);
+      alert(err.message || "Failed to submit document revision payload.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
   const filtered = riderList.filter((r) => {
     const matchSearch =
       r.name.toLowerCase().includes(search.toLowerCase()) ||
       r.location_area.toLowerCase().includes(search.toLowerCase()) ||
       r.assigned_vendors.some(v => v.name.toLowerCase().includes(search.toLowerCase()));
       
-    // Status filter configuration maps the state parameters to DB variables cleanly
     let matchStatus = false;
     if (statusFilter === "all") {
       matchStatus = true;
@@ -537,6 +674,14 @@ export function Riders() {
       matchStatus = r.status === "inactive";
     } else if (statusFilter === "suspended") {
       matchStatus = r.status === "suspended";
+    } else if (statusFilter === "pending_kyc") {
+      matchStatus = r.kyc_status === "pending";
+    } else if (statusFilter === "verified_kyc") {
+      matchStatus = r.kyc_status === "verified";
+    } else if (statusFilter === "rejected_kyc") {
+      matchStatus = r.kyc_status === "rejected";
+    } else if (statusFilter === "not_submitted_kyc") {
+      matchStatus = r.kyc_status === "not_submitted";
     }
 
     return matchSearch && matchStatus;
@@ -568,13 +713,22 @@ export function Riders() {
           />
         </div>
         <div className="flex flex-wrap items-center gap-1 border border-border rounded-lg p-1 bg-card overflow-x-auto">
-          {["all", "available", "approved", "pending", "paused", "suspended"].map((s) => (
+          {[
+            { key: "all", label: "All Riders" },
+            { key: "approved", label: "Active" },
+            { key: "pending", label: "Pending Approval" },
+            { key: "suspended", label: "Suspended" },
+            { key: "pending_kyc", label: "Pending KYC" },
+            { key: "verified_kyc", label: "Verified KYC" },
+            { key: "rejected_kyc", label: "Rejected KYC" },
+            { key: "not_submitted_kyc", label: "Not Submitted" }
+          ].map((s) => (
             <button
-              key={s}
-              onClick={() => { setStatusFilter(s); setCurrentPage(1); }}
-              className={cn("h-7 px-3 rounded-md text-xs font-medium capitalize transition-all", statusFilter === s ? "bg-[#22C55E] text-white shadow-sm" : "text-muted-foreground hover:text-foreground")}
+              key={s.key}
+              onClick={() => { setStatusFilter(s.key); setCurrentPage(1); }}
+              className={cn("h-7 px-3 rounded-md text-xs font-medium transition-all whitespace-nowrap", statusFilter === s.key ? "bg-[#22C55E] text-white shadow-sm" : "text-muted-foreground hover:text-foreground")}
             >
-              {s === "all" ? "All Fleet" : s === "approved" ? "Active" : s}
+              {s.label}
             </button>
           ))}
         </div>
@@ -588,7 +742,8 @@ export function Riders() {
                 <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Rider</th>
                 <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Vehicle Model</th>
                 <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Assigned Shops</th>
-                <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Status</th>
+                <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Status & Availability</th>
+                <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">KYC</th>
                 <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide text-right">Deliveries</th>
                 <th className="px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Rating</th>
                 <th className="px-4 py-3 w-10" />
@@ -597,7 +752,7 @@ export function Riders() {
             <tbody className="divide-y divide-border">
               {isLoading ? (
                 <tr>
-                  <td colSpan={7} className="text-center py-16 text-sm text-muted-foreground">
+                  <td colSpan={8} className="text-center py-16 text-sm text-muted-foreground">
                     <div className="flex items-center justify-center gap-2">
                       <Loader2 className="w-4 h-4 animate-spin text-[#22C55E]" />
                       <span>Loading active fleet logs...</span>
@@ -606,13 +761,12 @@ export function Riders() {
                 </tr>
               ) : paginated.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="text-center py-16 text-sm text-muted-foreground">
+                  <td colSpan={8} className="text-center py-16 text-sm text-muted-foreground">
                     No matching rider records found.
                   </td>
                 </tr>
               ) : (
                 paginated.map((rider) => {
-                  const badge = statusBadgeMap[rider.status] || { variant: "neutral", label: "Offline" };
                   return (
                     <tr key={rider.id} className="hover:bg-muted/30 transition-colors group">
                       <td className="px-4 py-3.5">
@@ -670,8 +824,25 @@ export function Riders() {
                       </td>
 
                       <td className="px-4 py-3.5">
-                        <Badge variant={badge.variant} label={badge.label} dot />
+                        <div className="flex flex-col gap-1.5 justify-center">
+                          <div className="flex items-center gap-1">
+                            <span className="text-[11px] font-medium text-muted-foreground min-w-[72px]">Status:</span>
+                            <Badge variant={statusBadgeMap[rider.status]?.variant || "neutral"} label={statusBadgeMap[rider.status]?.label || rider.status} dot />
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <span className="text-[11px] font-medium text-muted-foreground min-w-[72px]">Availability:</span>
+                            <Badge variant={rider.availability_status === "available" ? "success" : "neutral"} label={rider.availability_status === "available" ? "Available" : "Offline"} dot />
+                          </div>
+                        </div>
                       </td>
+
+                      <td className="px-4 py-3.5">
+                        <Badge 
+                          variant={kycBadgeMap[rider.kyc_status]?.variant || "neutral"} 
+                          label={kycBadgeMap[rider.kyc_status]?.label || "⚪ Not Submitted"}
+                        />
+                      </td>
+
                       <td className="px-4 py-3.5 text-right font-medium text-foreground">
                         {rider.orders_completed.toLocaleString()}
                       </td>
@@ -694,26 +865,32 @@ export function Riders() {
                           }
                           items={[
                             { label: "View Details", icon: <Edit className="w-3.5 h-3.5" />, onClick: () => { console.log("[DEBUG] Clicked Action: View Details. Rider ID:", rider.id); setViewRider(rider); } },
+                            { label: "View KYC", icon: <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />, onClick: () => { console.log("[DEBUG] Clicked Action: View KYC. Rider ID:", rider.id); setKycRider(rider); setKycOpen(true); } },
                             { label: "Manage Stores", icon: <Store className="w-3.5 h-3.5 text-emerald-500" />, onClick: () => { console.log("[DEBUG] Clicked Action: Manage Stores. Rider ID:", rider.id); handleOpenStoreAssignment(rider); } },
-                            ...(rider.status !== "active" ? [{ 
+                            ...(rider.status === "inactive" ? [{ 
+                              label: "Approve Rider", 
+                              icon: <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />, 
+                              onClick: () => { console.log("[DEBUG] Clicked Action: Approve Rider. Rider ID:", rider.id); mutateStatusDirectly(rider.id, { status: "active" }); } 
+                            }] : []),
+                            ...(rider.availability_status !== "available" ? [{ 
                               label: "Mark Available", 
                               icon: <UserCheck className="w-3.5 h-3.5 text-sky-500" />, 
-                              onClick: () => { console.log("[DEBUG] Clicked Action: Mark Available. Rider ID:", rider.id); mutateStatusDirectly(rider.id, "active"); } 
+                              onClick: () => { console.log("[DEBUG] Clicked Action: Mark Available. Rider ID:", rider.id); mutateStatusDirectly(rider.id, { availability_status: "available" }); } 
                             }] : []),
-                            ...(rider.status !== "active" ? [{ 
+                            ...(rider.status !== "active" && rider.status !== "inactive" ? [{ 
                               label: "Set Active", 
                               icon: <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />, 
-                              onClick: () => { console.log("[DEBUG] Clicked Action: Set Active. Rider ID:", rider.id); mutateStatusDirectly(rider.id, "active"); } 
+                              onClick: () => { console.log("[DEBUG] Clicked Action: Set Active. Rider ID:", rider.id); mutateStatusDirectly(rider.id, { status: "active" }); } 
                             }] : []),
-                            ...(rider.status === "active" ? [{ 
+                            ...(rider.availability_status === "available" ? [{ 
                               label: "Put Offline", 
                               icon: <PauseCircle className="w-3.5 h-3.5 text-amber-500" />, 
-                              onClick: () => { console.log("[DEBUG] Clicked Action: Put Offline. Rider ID:", rider.id); mutateStatusDirectly(rider.id, "inactive"); } 
+                              onClick: () => { console.log("[DEBUG] Clicked Action: Put Offline. Rider ID:", rider.id); mutateStatusDirectly(rider.id, { availability_status: "offline" }); } 
                             }] : []),
                             ...(rider.status !== "suspended" ? [{ 
                               label: "Suspend Rider", 
                               icon: <XCircle className="w-3.5 h-3.5 text-rose-500" />, 
-                              onClick: () => { console.log("[DEBUG] Clicked Action: Suspend Rider. Rider ID:", rider.id); mutateStatusDirectly(rider.id, "suspended"); }, 
+                              onClick: () => { console.log("[DEBUG] Clicked Action: Suspend Rider. Rider ID:", rider.id); mutateStatusDirectly(rider.id, { status: "suspended" }); }, 
                               variant: "danger" as const 
                             }] : []),
                             { label: "Delete Permanent", icon: <Trash2 className="w-3.5 h-3.5" />, onClick: () => { console.log("[DEBUG] Clicked Action: Delete Permanent. Rider ID:", rider.id); handleDeleteRider(rider.id, rider.name); }, variant: "danger" as const }
@@ -735,6 +912,172 @@ export function Riders() {
           onPageChange={setCurrentPage} 
         />
       </div>
+
+      {/* View KYC Management Modal */}
+      {kycRider && kycOpen && (
+        <Modal
+          open={kycOpen}
+          onClose={() => { setKycOpen(false); setKycRider(null); }}
+          title={`KYC Verification Profile: ${kycRider.name}`}
+          description="Review operational credentials, verification records, and document files."
+          size="md"
+          footer={
+            <div className="flex gap-2 justify-end w-full items-center">
+              {kycRider.kyc_status === "not_submitted" && (
+                <span className="text-sm font-semibold text-amber-600 mr-auto bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-lg">
+                  KYC not submitted yet.
+                </span>
+              )}
+              {!checkDocumentsComplete(kycRider) && kycRider.kyc_status !== "not_submitted" && kycRider.kyc_status !== "verified" && (
+                <span className="text-xs font-semibold text-red-500 mr-auto max-w-[50%] leading-tight bg-red-50 border border-red-100 p-2 rounded-md">
+                  Complete documents required before approval.
+                </span>
+              )}
+              
+              <Button variant="secondary" onClick={() => { setKycOpen(false); setKycRider(null); }}>Close</Button>
+              
+              {kycRider.kyc_status !== "not_submitted" && (
+                <>
+                  <Button variant="destructive" onClick={() => setRejectConfirmOpen(true)} disabled={isSubmitting}>
+                    Reject KYC
+                  </Button>
+                  <Button 
+                    variant="primary" 
+                    onClick={handleApproveKyc} 
+                    disabled={kycRider.kyc_status === "verified" || !checkDocumentsComplete(kycRider) || isSubmitting}
+                  >
+                    {kycRider.kyc_status === "verified" ? "Already Verified" : "Approve KYC"}
+                  </Button>
+                </>
+              )}
+            </div>
+          }
+        >
+          <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1 pt-2">
+            {/* Profile Photo Section */}
+            <div className="bg-muted/30 border border-border p-3 rounded-lg flex items-center justify-between">
+              <div>
+                <p className="text-xs text-muted-foreground mb-1 font-medium">Profile Photo</p>
+                {kycRider.profile_photo_url ? (
+                  <div className="w-16 h-16 rounded-lg border border-border overflow-hidden bg-card mt-1">
+                    <img src={kycRider.profile_photo_url} alt="Rider Profile" className="w-full h-full object-cover" />
+                  </div>
+                ) : (
+                  <span className="text-xs font-semibold text-amber-600 italic block mt-1 bg-amber-50 px-2 py-1 rounded border border-amber-100">Document Not Uploaded</span>
+                )}
+              </div>
+              <span className="text-xs text-muted-foreground font-medium italic">Document Upload Coming in V2</span>
+            </div>
+
+            {/* Aadhaar Section */}
+            <div className="bg-muted/30 border border-border p-3 rounded-lg flex items-center justify-between">
+              <div>
+                <p className="text-xs text-muted-foreground mb-1 font-medium">Aadhaar Number</p>
+                <p className="text-sm font-semibold text-foreground tracking-wide">{kycRider.aadhaar_number ? "[Aadhaar Redacted]" : "—"}</p>
+              </div>
+              <span className="text-xs text-muted-foreground font-medium italic">Document Upload Coming in V2</span>
+            </div>
+
+            {/* PAN Section */}
+            <div className="bg-muted/30 border border-border p-3 rounded-lg flex items-center justify-between">
+              <div>
+                <p className="text-xs text-muted-foreground mb-1 font-medium">PAN Number</p>
+                <p className="text-sm font-semibold text-foreground tracking-wide uppercase">{kycRider.pan_number || "—"}</p>
+              </div>
+              <span className="text-xs text-muted-foreground font-medium italic">Document Upload Coming in V2</span>
+            </div>
+
+            {/* Driving License Section */}
+            <div className="bg-muted/30 border border-border p-3 rounded-lg flex items-center justify-between">
+              <div>
+                <p className="text-xs text-muted-foreground mb-1 font-medium">Driving Licence Number</p>
+                <p className="text-sm font-semibold text-foreground tracking-wide uppercase">{kycRider.driving_license_number || "—"}</p>
+              </div>
+              <span className="text-xs text-muted-foreground font-medium italic">Document Upload Coming in V2</span>
+            </div>
+
+            {/* Bank Details Section */}
+            <div className="bg-muted/30 border border-border p-3 rounded-lg space-y-2">
+              <p className="text-xs text-muted-foreground font-medium">Bank Details</p>
+              <div className="grid grid-cols-2 gap-3 text-xs bg-card border border-border/60 p-2.5 rounded-md">
+                <div>
+                  <span className="block text-[10px] uppercase text-muted-foreground font-semibold">Bank Name</span>
+                  <span className="font-semibold text-foreground">{kycRider.bank_name || "—"}</span>
+                </div>
+                <div>
+                  <span className="block text-[10px] uppercase text-muted-foreground font-semibold">Account Holder</span>
+                  <span className="font-semibold text-foreground">{kycRider.account_holder_name || "—"}</span>
+                </div>
+                <div>
+                  <span className="block text-[10px] uppercase text-muted-foreground font-semibold">Account Number</span>
+                  <span className="font-semibold text-foreground">{kycRider.account_number || "—"}</span>
+                </div>
+                <div>
+                  <span className="block text-[10px] uppercase text-muted-foreground font-semibold">IFSC Code</span>
+                  <span className="font-semibold text-foreground uppercase">{kycRider.ifsc_code || "—"}</span>
+                </div>
+                <div className="col-span-2 border-t border-border/60 pt-1.5 mt-0.5">
+                  <span className="block text-[10px] uppercase text-muted-foreground font-semibold">UPI</span>
+                  <span className="font-semibold text-foreground text-emerald-500">{kycRider.upi_id || "—"}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Submission Parameters */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bg-muted/30 border border-border p-3 rounded-lg">
+                <p className="text-xs text-muted-foreground mb-1 font-medium">Verification Status</p>
+                <Badge 
+                  variant={kycBadgeMap[kycRider.kyc_status]?.variant || "neutral"} 
+                  label={kycBadgeMap[kycRider.kyc_status]?.label || "⚪ Not Submitted"}
+                />
+              </div>
+              <div className="bg-muted/30 border border-border p-3 rounded-lg">
+                <p className="text-xs text-muted-foreground mb-1 font-medium">Submitted Date</p>
+                <p className="text-xs font-semibold text-foreground mt-1">
+                  {kycRider.documents_updated_at ? new Date(kycRider.documents_updated_at).toLocaleString("en-GB") : "—"}
+                </p>
+              </div>
+            </div>
+
+            {/* Verification Notes */}
+            <div className="bg-muted/30 border border-border p-3 rounded-lg">
+              <p className="text-xs text-muted-foreground mb-1 font-medium">Verification Notes</p>
+              <p className="text-xs text-foreground bg-card p-2 rounded border border-border/50 min-h-[40px]">
+                {kycRider.verification_notes || "No verification ledger details logs entered yet."}
+              </p>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Reject KYC Confirmation Modal Reason Requirement */}
+      {rejectConfirmOpen && (
+        <Modal
+          open={rejectConfirmOpen}
+          onClose={() => setRejectConfirmOpen(false)}
+          title="Reject KYC Verification"
+          description="Enter the exact rationale message to inform the rider why their KYC failed verification metrics."
+          size="sm"
+          footer={
+            <div className="flex gap-2 justify-end w-full">
+              <Button variant="secondary" onClick={() => setRejectConfirmOpen(false)} disabled={isSubmitting}>Cancel</Button>
+              <Button variant="destructive" onClick={handleRejectKyc} disabled={isSubmitting || !rejectReason.trim()}>
+                {isSubmitting ? "Rejecting..." : "Confirm Rejection"}
+              </Button>
+            </div>
+          }
+        >
+          <div className="pt-2">
+            <Input 
+              label="Reason for Rejection *" 
+              placeholder="e.g. Blurred document photograph image, incorrect account mismatch details" 
+              value={rejectReason} 
+              onChange={(e) => setRejectReason(e.target.value)} 
+            />
+          </div>
+        </Modal>
+      )}
 
       {/* Quick Store Assignment Modal */}
       {viewRider && assignmentOpen && (
@@ -930,10 +1273,8 @@ export function Riders() {
                 value={formStatus}
                 onChange={(val: string) => setFormStatus(val as RiderStatus)}
                 options={[
-                  { value: "inactive", label: "Pending Review" }, 
-                  { value: "active", label: "Available (Online/Ready)" }, 
-                  { value: "active", label: "Active (On Delivery)" }, 
-                  { value: "inactive", label: "Offline" }, 
+                  { value: "inactive", label: "Pending Approval" }, 
+                  { value: "active", label: "Active" }, 
                   { value: "suspended", label: "Suspended" }
                 ]}
               />
