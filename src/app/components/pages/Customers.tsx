@@ -39,6 +39,7 @@ interface Customer {
   delivery_address: string;
   joinedAt: string;
   lastOrder: string;
+  lastOrderRaw?: string;
 }
 
 export function Customers() {
@@ -62,7 +63,8 @@ export function Customers() {
     pendingOrders: 0,
     totalSpent: 0,
     lastOrderDate: "No orders placed",
-    fullAddress: "No address provided"
+    fullAddress: "No address provided",
+    avgOrderValue: 0
   });
 
   // History Lists States
@@ -78,6 +80,31 @@ export function Customers() {
 
   const itemsPerPage = 10;
 
+  // Realtime subscription listeners setup
+  useEffect(() => {
+    const customersChannel = supabase
+      .channel("customers-realtime-changes")
+      .on(("postgres_changes" as any), { event: "*", scheme: "public", table: "customers" }, () => {
+        fetchCustomers();
+      })
+      .on(("postgres_changes" as any), { event: "*", scheme: "public", table: "orders" }, () => {
+        fetchCustomers();
+        if (viewCustomer) {
+          fetchCustomerModalDetails(viewCustomer.id);
+        }
+      })
+      .on(("postgres_changes" as any), { event: "*", scheme: "public", table: "refunds" }, () => {
+        if (viewCustomer) {
+          fetchCustomerModalDetails(viewCustomer.id);
+        }
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(customersChannel);
+    };
+  }, [viewCustomer?.id]);
+
   async function fetchCustomers() {
     try {
       setIsLoading(true);
@@ -88,6 +115,7 @@ export function Customers() {
 
       if (customersError) throw customersError;
 
+      // Fetch default addresses
       const { data: addressesData, error: addressesError } = await supabase
         .from("customer_addresses")
         .select("customer_id, address_line1, city, state, pin_code")
@@ -103,24 +131,63 @@ export function Customers() {
         }
       });
 
-      const mapped: Customer[] = (customersData || []).map((row) => ({
-        id: row.id,
-        name: row.customer_name || "Unnamed User",
-        email: row.email || "—",
-        phone: row.phone || "—",
-        orders: 0, 
-        spent: 0,  
-        status: "active", 
-        delivery_address: addressMap[row.id] || "No address provided",
-        lastOrder: "No orders placed",
-        joinedAt: row.created_at
-          ? new Date(row.created_at).toLocaleDateString("en-GB", {
-              day: "numeric",
-              month: "short",
-              year: "numeric",
-            })
-          : "—",
-      }));
+      // Load aggregated information from orders table
+      const { data: ordersData, error: ordersError } = await supabase
+        .from("orders")
+        .select("customer_id, total_amount, created_at");
+
+      if (ordersError) console.error("Failed fetching orders for aggregation:", ordersError);
+
+      const ordersAggregation: Record<string, { count: number; spent: number; lastOrderTime: string | null }> = {};
+      (ordersData || []).forEach(order => {
+        if (!order.customer_id) return;
+        if (!ordersAggregation[order.customer_id]) {
+          ordersAggregation[order.customer_id] = { count: 0, spent: 0, lastOrderTime: null };
+        }
+        
+        ordersAggregation[order.customer_id].count += 1;
+        ordersAggregation[order.customer_id].spent += Number(order.total_amount || 0);
+        
+        const orderTime = order.created_at;
+        if (orderTime) {
+          if (!ordersAggregation[order.customer_id].lastOrderTime || new Date(orderTime) > new Date(ordersAggregation[order.customer_id].lastOrderTime!)) {
+            ordersAggregation[order.customer_id].lastOrderTime = orderTime;
+          }
+        }
+      });
+
+      const mapped: Customer[] = (customersData || []).map((row) => {
+        const agg = ordersAggregation[row.id] || { count: 0, spent: 0, lastOrderTime: null };
+        
+        let lastOrderText = "No orders placed";
+        if (agg.lastOrderTime) {
+          lastOrderText = new Date(agg.lastOrderTime).toLocaleDateString("en-GB", {
+            day: "numeric",
+            month: "short",
+            year: "numeric"
+          });
+        }
+
+        return {
+          id: row.id,
+          name: row.customer_name || "Unnamed User",
+          email: row.email || "—",
+          phone: row.phone || "—",
+          orders: agg.count, 
+          spent: agg.spent,  
+          status: row.status === "blocked" ? "blocked" : "active", 
+          delivery_address: addressMap[row.id] || "No address provided",
+          lastOrder: lastOrderText,
+          lastOrderRaw: agg.lastOrderTime || undefined,
+          joinedAt: row.created_at
+            ? new Date(row.created_at).toLocaleDateString("en-GB", {
+                day: "numeric",
+                month: "short",
+                year: "numeric",
+              })
+            : "—",
+        };
+      });
 
       setCustomerList(mapped);
 
@@ -172,6 +239,7 @@ export function Customers() {
         ["pending", "accepted", "preparing", "packed", "out_for_delivery"].includes(o.order_status || "")
       ).length;
       const spent = safeOrders.reduce((sum, o) => sum + Number(o.total_amount || 0), 0);
+      const avg = total > 0 ? spent / total : 0;
       
       let lastDateText = "No orders placed";
       if (safeOrders.length > 0 && safeOrders[0].created_at) {
@@ -279,7 +347,8 @@ export function Customers() {
         pendingOrders: pending,
         totalSpent: spent,
         lastOrderDate: lastDateText,
-        fullAddress: fullAddrStr
+        fullAddress: fullAddrStr,
+        avgOrderValue: avg
       });
 
     } catch (err) {
@@ -310,7 +379,8 @@ export function Customers() {
       const payload = {
         customer_name: formName,
         email: formEmail.trim().toLowerCase(),
-        phone: formPhone.trim()
+        phone: formPhone.trim(),
+        status: "active"
       };
 
       const { data: newCustomer, error: customerError } = await supabase
@@ -355,13 +425,25 @@ export function Customers() {
   }
 
   async function toggleBlock(id: string, currentStatus: CustomerStatus) {
-    // Database updates/reads for customers.status removed since it doesn't exist.
-    // Display is purely UI-managed for now as a static placeholder.
-    alert("Customer blocking feature is currently under implementation.");
+    try {
+      const nextStatus = currentStatus === "active" ? "blocked" : "active";
+      const { error } = await supabase
+        .from("customers")
+        .update({ status: nextStatus })
+        .eq("id", id);
+
+      if (error) throw error;
+      
+      await fetchCustomers();
+      alert(`Customer status updated to ${nextStatus}.`);
+    } catch (err: any) {
+      console.error("Failed status update toggling:", err);
+      alert(`Failed to toggle status: ${err.message || "Database structural error"}`);
+    }
   }
 
   async function handleDeleteCustomer(id: string, name: string) {
-    const confirmation = window.confirm(`Are you absolutely sure you want to permanently delete customer account "${name}"? This action cannot be undone.`);
+    const confirmation = window.confirm(`Are you absolutely sure you want to permanently delete customer account "${name}"? Warning: Deleting the customer may affect historical order records. This action cannot be undone.`);
     if (!confirmation) return;
 
     try {
@@ -389,7 +471,8 @@ export function Customers() {
     const matchSearch =
       c.name.toLowerCase().includes(search.toLowerCase()) ||
       c.email.toLowerCase().includes(search.toLowerCase()) ||
-      c.phone.includes(search);
+      c.phone.includes(search) ||
+      c.id.toLowerCase().includes(search.toLowerCase());
     const matchStatus = statusFilter === "all" || c.status === statusFilter;
     return matchSearch && matchStatus;
   });
@@ -414,8 +497,8 @@ export function Customers() {
           <input
             type="text"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search customers..."
+            onChange={(e) => { setSearch(e.target.value); setCurrentPage(1); }}
+            placeholder="Search by name, email, phone or ID..."
             className="w-full h-9 pl-9 pr-3 bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg text-sm text-[#0F172A] focus:outline-none focus:border-[#22C55E]"
           />
         </div>
@@ -432,7 +515,7 @@ export function Customers() {
         </div>
       </div>
 
-      <div className="bg-white border border-[#E2E8F0] rounded-xl overflow-hidden relative z-10">
+      <div className="bg-white border border-[#E2E8F0] rounded-xl overflow-visible relative z-10">
         <table className="w-full">
           <thead>
             <tr className="border-b border-[#E2E8F0] bg-[#F8FAFC]">
@@ -470,18 +553,20 @@ export function Customers() {
                   <td className="px-4 py-3.5 text-right"><span className="text-sm font-medium text-[#0F172A]">{customer.orders}</span></td>
                   <td className="px-4 py-3.5 text-right"><span className="text-sm font-medium text-[#0F172A]">₹{customer.spent.toLocaleString()}</span></td>
                   <td className="px-4 py-3.5 text-sm text-[#64748B]">{customer.lastOrder}</td>
-                  <td className="px-4 py-3.5"><Badge variant="success" label="Active" dot /></td>
                   <td className="px-4 py-3.5">
+                    <Badge variant={customer.status === "active" ? "success" : "error"} label={customer.status === "active" ? "Active" : "Blocked"} dot />
+                  </td>
+                  <td className="px-4 py-3.5 overflow-visible">
                     <Dropdown
                       align="right"
                       trigger={<button className="h-7 w-7 flex items-center justify-center rounded-md text-[#64748B] hover:bg-[#F1F5F9]"><MoreHorizontal className="w-4 h-4" /></button>}
                       items={[
                         { label: "View Profile", icon: <User className="w-3.5 h-3.5" />, onClick: () => { setViewCustomer(customer); setActiveTab("profile"); fetchCustomerModalDetails(customer.id); } },
                         {
-                          label: "Block Customer",
-                          icon: <ShieldOff className="w-3.5 h-3.5" />,
+                          label: customer.status === "active" ? "Block Customer" : "Unblock Customer",
+                          icon: customer.status === "active" ? <ShieldOff className="w-3.5 h-3.5" /> : <ShieldCheck className="w-3.5 h-3.5" />,
                           onClick: () => toggleBlock(customer.id, customer.status),
-                          variant: "danger",
+                          variant: customer.status === "active" ? "danger" : "default",
                         },
                         { label: "Delete Permanent", icon: <Trash2 className="w-3.5 h-3.5 text-rose-500" />, onClick: () => handleDeleteCustomer(customer.id, customer.name), variant: "danger" as const, divider: true }
                       ]}
@@ -525,7 +610,7 @@ export function Customers() {
           open={!!viewCustomer}
           onClose={() => setViewCustomer(null)}
           title={viewCustomer.name}
-          description={`Customer Reference: ${viewCustomer.id.slice(0, 8)}... • Joined ${viewCustomer.joinedAt}`}
+          description={`Customer Reference: ${viewCustomer.id} • Joined ${viewCustomer.joinedAt}`}
           size="lg"
           footer={
             <div className="flex items-center justify-between w-full">
@@ -536,10 +621,10 @@ export function Customers() {
                 <Button variant="secondary" onClick={() => setViewCustomer(null)}>Close</Button>
                 <Button
                   variant="destructive"
-                  leftIcon={<ShieldOff className="w-3.5 h-3.5" />}
+                  leftIcon={viewCustomer.status === "active" ? <ShieldOff className="w-3.5 h-3.5" /> : <ShieldCheck className="w-3.5 h-3.5" />}
                   onClick={() => { toggleBlock(viewCustomer.id, viewCustomer.status); setViewCustomer(null); }}
                 >
-                  Block Account
+                  {viewCustomer.status === "active" ? "Block Account" : "Unblock Account"}
                 </Button>
               </div>
             </div>
@@ -561,10 +646,12 @@ export function Customers() {
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
                 {[
+                  { label: "Customer Name", value: viewCustomer.name, icon: <User className="w-3.5 h-3.5" /> },
                   { label: "Email", value: viewCustomer.email, icon: <Mail className="w-3.5 h-3.5" /> },
                   { label: "Phone", value: viewCustomer.phone, icon: <Phone className="w-3.5 h-3.5" /> },
-                  { label: "Joined", value: viewCustomer.joinedAt, icon: <Calendar className="w-3.5 h-3.5" /> },
-                  { label: "Last Order Update", value: profileMetrics.lastOrderDate, icon: <ShoppingBag className="w-3.5 h-3.5" /> },
+                  { label: "Joined Date", value: viewCustomer.joinedAt, icon: <Calendar className="w-3.5 h-3.5" /> },
+                  { label: "Last Order Date", value: profileMetrics.lastOrderDate, icon: <ShoppingBag className="w-3.5 h-3.5" /> },
+                  { label: "Average Order Value", value: `₹${profileMetrics.avgOrderValue.toLocaleString(undefined, { maximumFractionDigits: 2 })}`, icon: <RefreshCcw className="w-3.5 h-3.5" /> }
                 ].map((item) => (
                   <div key={item.label} className="bg-[#F8FAFC] rounded-lg p-3">
                     <div className="flex items-center gap-1.5 text-xs text-[#64748B] mb-1">{item.icon}{item.label}</div>
@@ -587,18 +674,18 @@ export function Customers() {
                 </div>
                 <div className="bg-[#EFF6FF] border border-[#DBEAFE] rounded-lg p-4 text-center">
                   <p className="text-2xl font-semibold text-blue-700">₹{profileMetrics.totalSpent.toLocaleString()}</p>
-                  <p className="text-xs text-[#64748B] mt-1">Total Spent</p>
+                  <p className="text-xs text-[#64748B] mt-1">Total Spending</p>
                 </div>
-                <div className="rounded-lg p-4 text-center border flex flex-col items-center justify-center bg-[#F0FDF4] border-[#DCFCE7]">
-                  <Badge variant="success" label="Active" />
+                <div className="rounded-lg p-4 text-center border flex flex-col items-center justify-center bg-[#F8FAFC] border-[#E2E8F0]">
+                  <Badge variant={viewCustomer.status === "active" ? "success" : "error"} label={viewCustomer.status === "active" ? "Active" : "Blocked"} />
                   <p className="text-xs text-[#64748B] mt-2">Status</p>
                 </div>
               </div>
 
               <div className="grid grid-cols-3 gap-2 text-center text-xs text-[#64748B] font-medium bg-[#F8FAFC] p-3 rounded-xl border border-[#E2E8F0]">
-                <div>Completed: <span className="font-bold text-[#16A34A]">{profileMetrics.completedOrders}</span></div>
-                <div>Pending: <span className="font-bold text-blue-600">{profileMetrics.pendingOrders}</span></div>
-                <div>Cancelled: <span className="font-bold text-rose-600">{profileMetrics.cancelledOrders}</span></div>
+                <div>Completed Orders: <span className="font-bold text-[#16A34A]">{profileMetrics.completedOrders}</span></div>
+                <div>Pending Orders: <span className="font-bold text-blue-600">{profileMetrics.pendingOrders}</span></div>
+                <div>Cancelled Orders: <span className="font-bold text-rose-600">{profileMetrics.cancelledOrders}</span></div>
               </div>
             </div>
           )}
@@ -614,15 +701,20 @@ export function Customers() {
                   return (
                     <div key={order.id} className="border border-[#E2E8F0] rounded-xl p-3 bg-white space-y-2 text-xs">
                       <div className="flex items-center justify-between font-medium text-[#334155]">
-                        <div>Order Number: <span className="font-mono font-bold text-[#0F172A]">#{order.order_number || order.id.slice(0, 8)}</span></div>
+                        <div>Order Number: <span 
+                          onClick={() => { window.location.hash = `/orders?id=${order.id}`; }}
+                          className="font-mono font-bold text-[#0F172A] cursor-pointer hover:text-[#22C55E] hover:underline"
+                        >
+                          #{order.order_number || order.id.slice(0, 8)}
+                        </span></div>
                         <div className="text-[#64748B]">
-                          Order Date: {new Date(order.created_at).toLocaleDateString("en-GB", { day: 'numeric', month: 'short' })}
+                          Created At: {new Date(order.created_at).toLocaleDateString("en-GB", { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
                         </div>
                       </div>
                       
                       <div className="grid grid-cols-2 gap-2 text-[#475569]">
-                        <div>Vendor Shop Name: <span className="font-semibold text-[#0F172A]">{order.vendors?.shop_name || "—"}</span></div>
-                        <div className="text-right font-bold text-[#0F172A]">Total Amount: ₹{order.total_amount}</div>
+                        <div>Vendor: <span className="font-semibold text-[#0F172A]">{order.vendors?.shop_name || "—"}</span></div>
+                        <div className="text-right font-bold text-[#0F172A]">Amount: ₹{order.total_amount}</div>
                       </div>
 
                       <div className="flex flex-wrap gap-1.5 pt-1">
@@ -699,7 +791,7 @@ export function Customers() {
                     <div className="flex items-center justify-between pt-1">
                       <Badge variant={refund.status === "completed" || refund.status === "approved" ? "success" : "warning"} label={refund.status || "pending"} />
                       <div className="text-[10px] text-[#94A3B8] space-y-0.5 text-right">
-                        <div>Created: {refund.created_at ? new Date(refund.created_at).toLocaleDateString("en-GB") : "—"}</div>
+                        <div>Created Date: {refund.created_at ? new Date(refund.created_at).toLocaleDateString("en-GB", { day: 'numeric', month: 'short', year: 'numeric' }) : "—"}</div>
                       </div>
                     </div>
                   </div>

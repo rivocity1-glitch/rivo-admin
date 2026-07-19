@@ -1,1191 +1,1157 @@
-import React, { useState, useEffect } from "react";
-import { 
-  Banknote, 
-  Search, 
-  CheckCircle, 
-  XCircle, 
-  Clock, 
-  TrendingUp, 
-  AlertCircle,
+import React, { useState, useEffect, useMemo, useCallback } from "react";
+import {
+  Search,
+  CheckCircle,
+  XCircle,
+  Clock,
   Eye,
   IndianRupee,
-  CreditCard,
   Calendar,
-  History
+  History,
+  Download,
+  Filter,
+  ShieldCheck,
+  User,
+  Store,
+  FileText,
+  X,
+  Loader2,
+  TrendingUp,
+  QrCode
 } from "lucide-react";
-import { supabase } from "../../../lib/supabase"; // Adjust path based on your project structure
+import { supabase } from "../../../lib/supabase";
 
-// --- Types ---
-interface Settlement {
+// =========================================================
+// DATA TYPE DEFINITIONS
+// =========================================================
+interface VendorProfile {
   id: string;
-  type: "vendor" | "rider";
-  entity_id: string;
-  entity_name: string; 
-  owner_name?: string;
-  phone?: string;
-  amount: number;
-  status: "pending_request" | "processing" | "paid" | "rejected";
-  payment_method?: string;
-  utr_number?: string;
-  remarks?: string;
-  paid_at?: string;
-  created_at: string;
-  order_ids?: string[];
-  // Bank Details
+  vendor_id: string;
   account_holder_name?: string;
   bank_name?: string;
   account_number?: string;
   ifsc_code?: string;
   upi_id?: string;
-  qr_code_url?: string;
-  // Address Fields (Vendor Only)
+  billing_address?: string;
+  address?: string;
   address_line1?: string;
   address_line2?: string;
   city?: string;
   state?: string;
   pin_code?: string;
+  email?: string;
+  qr_code_url?: string;
+  created_at?: string;
+  updated_at?: string;
 }
 
-interface LedgerEntry {
+interface RiderProfile {
+  id: string;
+  rider_id: string;
+  account_holder_name?: string;
+  bank_name?: string;
+  account_number?: string;
+  ifsc_code?: string;
+  upi_id?: string;
+  home_address?: string;
+  address?: string;
+  email?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+interface Vendor {
+  id: string;
+  shop_name: string;
+  owner_name: string;
+  phone: string;
+}
+
+interface Rider {
+  id: string;
+  rider_name: string;
+  phone: string;
+  email?: string;
+  account_holder_name?: string;
+  bank_name?: string;
+  account_number?: string;
+  ifsc_code?: string;
+  upi_id?: string;
+}
+
+interface Wallet {
+  id: string;
+  entity_id: string;
+  entity_type: 'vendor' | 'rider';
+  balance: number;
+}
+
+interface VendorSettlement {
+  id: string;
+  vendor_id: string;
+  amount: number;
+  order_ids: string[];
+  status: 'pending_request' | 'paid' | 'rejected';
+  created_at: string;
+  paid_at?: string;
+  payment_method?: string;
+  utr_number?: string;
+  remarks?: string;
+}
+
+interface RiderSettlement {
+  id: string;
+  rider_id: string;
+  amount: number;
+  order_ids: string[];
+  status: 'pending_request' | 'paid' | 'rejected';
+  created_at: string;
+  paid_at?: string;
+  payment_method?: string;
+  utr_number?: string;
+  remarks?: string;
+}
+
+interface FinancialLedger {
   id: string;
   entity_type: string;
   entity_id: string;
   transaction_type: string;
+  entry_type: 'credit' | 'debit';
   amount: number;
   reference_id: string;
   remarks: string;
   created_at: string;
 }
 
-interface PlatformSettings {
-  subscription_upi_id?: string;
-  subscription_qr_url?: string;
+interface SubscriptionPaymentRequest {
+  id: string;
+  amount: number;
+  status: 'pending' | 'approved' | 'rejected';
+  created_at: string;
 }
 
-// --- Mock Modal Component ---
-interface ModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-  title: string;
-  children: React.ReactNode;
-}
-
-function Modal({ isOpen, onClose, title, children }: ModalProps) {
-  if (!isOpen) return null;
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
-      <div className="w-full max-w-xl rounded-lg bg-white p-6 shadow-xl dark:bg-gray-800 max-h-[90vh] overflow-y-auto">
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">{title}</h3>
-        {children}
-      </div>
-    </div>
-  );
+interface Order {
+  id: string;
+  total_amount: number;
+  platform_fee: number;
+  commission_amount?: number;
+  created_at: string;
 }
 
 export function Settlements() {
-  // --- State ---
-  const [settlements, setSettlements] = useState<Settlement[]>([]);
+  // --- Active Tab State Engine ---
+  const [activeTab, setActiveTab] = useState<'overview' | 'vendor' | 'rider' | 'ledger' | 'audit'>('overview');
+  const [globalSearch, setGlobalSearch] = useState("");
   const [loading, setLoading] = useState(true);
-  const [platformSettings, setPlatformSettings] = useState<PlatformSettings | null>(null);
+  const [realtimePulse, setRealtimePulse] = useState(false);
 
-  // Tabs & Filters
-  const [activeTab, setActiveTab] = useState<"pending" | "paid" | "rejected" | "all">("all");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [filterType, setFilterType] = useState<"all" | "vendor" | "rider">("all");
-  const [filterMethod, setFilterMethod] = useState<string>("all");
-  const [filterDateRange, setFilterDateRange] = useState<{ start: string; end: string }>({ start: "", end: "" });
+  // --- Mapped States Data Models ---
+  const [vendorSettlements, setVendorSettlements] = useState<VendorSettlement[]>([]);
+  const [riderSettlements, setRiderSettlements] = useState<RiderSettlement[]>([]);
+  const [vendors, setVendors] = useState<Vendor[]>([]);
+  const [vendorProfiles, setVendorProfiles] = useState<VendorProfile[]>([]);
+  const [riders, setRiders] = useState<Rider[]>([]);
+  const [riderProfiles, setRiderProfiles] = useState<RiderProfile[]>([]);
+  const [wallets, setWallets] = useState<Wallet[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [ledger, setLedger] = useState<FinancialLedger[]>([]);
+  const [subscriptionRequests, setSubscriptionRequests] = useState<SubscriptionPaymentRequest[]>([]);
 
-  // Summary Metrics
-  const [metrics, setMetrics] = useState({
-    pendingVendor: 0,
-    pendingRider: 0,
-    paidToday: 0,
-    pendingAmount: 0,
-    paidThisMonth: 0,
-    rejectedAmount: 0
-  });
+  // NEW: Custom Date Range Pickers States
+  const [startDate, setStartDate] = useState<string>("");
+  const [endDate, setStartDateEnd] = useState<string>("");
 
-  // Selection state for Bulk Settlements
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [processingBulk, setProcessingBulk] = useState(false);
-  const [bulkSummary, setBulkSummary] = useState<{ success: number; failure: number } | null>(null);
+  // --- Operation Control Modals State Matrix ---
+  const [detailsModalOpen, setDetailsModalOpen] = useState(false);
+  const [payModalOpen, setPayModalOpen] = useState(false);
+  const [rejectModalOpen, setRejectModalOpen] = useState(false);
+  const [selectedSettlement, setSelectedSettlement] = useState<any>(null);
+  const [selectedType, setSelectedType] = useState<'vendor' | 'rider'>('vendor');
 
-  // Modal & Action States
-  const [activeModal, setActiveModal] = useState<"approve" | "reject" | "view" | "ledger" | null>(null);
-  const [selectedSettlement, setSelectedSettlement] = useState<Settlement | null>(null);
-  const [ledgerHistory, setLedgerHistory] = useState<LedgerEntry[]>([]);
-  const [loadingLedger, setLoadingLedger] = useState(false);
-  const [includedOrders, setIncludedOrders] = useState<any[]>([]);
-  const [loadingOrders, setLoadingOrders] = useState(false);
-  
-  // Form State
-  const [paymentMethod, setPaymentMethod] = useState("Bank Transfer");
-  const [utrNumber, setUtrNumber] = useState("");
-  const [remarks, setRemarks] = useState("");
+  // --- Execution Form Fields Parameters ---
+  const [formUtr, setFormUtr] = useState("");
+  const [formRemarks, setFormRemarks] = useState("");
+  const [formPaymentMethod, setFormPaymentMethod] = useState("Bank Transfer");
 
-  // --- Fetch Core Data ---
-  const fetchData = async () => {
+  // --- Filter Engines Configuration ---
+  const [ledgerFilter, setLedgerFilter] = useState("all");
+  const [auditFilter, setAuditFilter] = useState({ entity: "all", status: "all" });
+  const [actionLoading, setActionLoading] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  const triggerToast = (message: string, type: 'success' | 'error' = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 4000);
+  };
+
+  // DATA HYDRATION ENGINE
+  const loadDatabaseState = useCallback(async () => {
     try {
-      setLoading(true);
-      
-      // 1. Fetch Vendor Settlements joined with vendors (No address column queried here)
-      const { data: vendorData, error: vError } = await supabase
-        .from("vendor_settlements")
-        .select(`
-          id, vendor_id, amount, status, payment_method, utr_number, remarks, paid_at, created_at, order_ids,
-          vendors!vendor_id(shop_name, owner_name, phone)
-        `);
-      
-      // Fetch Rider Settlements with riders join
-      const { data: rData, error: rError } = await supabase
-        .from("rider_settlements")
-        .select(`
-          id, rider_id, amount, status, payment_method, utr_number, remarks, paid_at, created_at, order_ids,
-          riders(rider_name, phone, account_holder_name, bank_name, account_number, ifsc_code, upi_id)
-        `);
+      setRealtimePulse(true);
+      const [
+        resVSet, resRSet, resVendors, resVProf, resRiders, 
+        resRProf, resWallets, resOrders, resLedger, resSubs
+      ] = await Promise.all([
+        supabase.from("vendor_settlements").select("*").order("created_at", { ascending: false }),
+        supabase.from("rider_settlements").select("*").order("created_at", { ascending: false }),
+        supabase.from("vendors").select("*"),
+        supabase.from("vendor_profiles").select("*"),
+        supabase.from("riders").select("*"),
+        supabase.from("rider_profiles").select("*"),
+        supabase.from("wallets").select("*"),
+        supabase.from("orders").select("*").order("created_at", { ascending: false }),
+        supabase.from("financial_ledger").select("*").order("created_at", { ascending: false }),
+        supabase.from("subscription_payment_requests").select("*").eq("status", "approved")
+      ]);
 
-      if (vError) throw vError;
-      if (rError) throw rError;
-
-      // 2. Extract vendor IDs for secondary join profile loading
-      const vendorIds = (vendorData || []).map((v: any) => v.vendor_id).filter((id): id is string => !!id);
-
-      let vendorProfilesMap: Record<string, any> = {};
-      if (vendorIds.length > 0) {
-        // Fetch bank details along with address fields and qr_code_url from vendor_profiles
-        const { data: pData, error: pError } = await supabase
-          .from("vendor_profiles")
-          .select("vendor_id, account_holder_name, bank_name, account_number, ifsc_code, upi_id, qr_code_url, address_line1, address_line2, city, state, pin_code")
-          .in("vendor_id", vendorIds);
-        if (!pError && pData) {
-          vendorProfilesMap = pData.reduce((acc: any, profile: any) => {
-            acc[profile.vendor_id] = profile;
-            return acc;
-          }, {});
-        }
-      }
-
-      // 3. Transform and format data sets
-      const formattedVendors: Settlement[] = (vendorData || []).map((v: any) => {
-        const profile = vendorProfilesMap[v.vendor_id] || {};
-        return {
-          id: v.id,
-          type: "vendor",
-          entity_id: v.vendor_id || "",
-          entity_name: v.vendors?.shop_name || "Unknown Vendor",
-          owner_name: v.vendors?.owner_name || "",
-          phone: v.vendors?.phone || "",
-          amount: v.amount,
-          status: v.status,
-          payment_method: v.payment_method,
-          utr_number: v.utr_number,
-          remarks: v.remarks,
-          paid_at: v.paid_at,
-          created_at: v.created_at,
-          order_ids: v.order_ids || [],
-          account_holder_name: profile.account_holder_name || "",
-          bank_name: profile.bank_name || "",
-          account_number: profile.account_number || "",
-          ifsc_code: profile.ifsc_code || "",
-          upi_id: profile.upi_id || "",
-          qr_code_url: profile.qr_code_url || "",
-          address_line1: profile.address_line1 || "",
-          address_line2: profile.address_line2 || "",
-          city: profile.city || "",
-          state: profile.state || "",
-          pin_code: profile.pin_code || ""
-        };
-      });
-
-      const formattedRiders: Settlement[] = (rData || []).map((r: any) => ({
-        id: r.id,
-        type: "rider",
-        entity_id: r.rider_id || "",
-        entity_name: r.riders?.rider_name || "Unknown Rider",
-        owner_name: r.riders?.rider_name || "",
-        phone: r.riders?.phone || "",
-        amount: r.amount,
-        status: r.status,
-        payment_method: r.payment_method,
-        utr_number: r.utr_number,
-        remarks: r.remarks,
-        paid_at: r.paid_at,
-        created_at: r.created_at,
-        order_ids: r.order_ids || [],
-        account_holder_name: r.riders?.account_holder_name || "",
-        bank_name: r.riders?.bank_name || "",
-        account_number: r.riders?.account_number || "",
-        ifsc_code: r.riders?.ifsc_code || "",
-        upi_id: r.riders?.upi_id || "",
-      }));
-
-      const allData = [...formattedVendors, ...formattedRiders].sort(
-        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-      );
-
-      setSettlements(allData);
-      calculateMetrics(allData);
-    } catch (err) {
-      console.error("Error fetching financial settlements center datasets:", err);
+      if (resVSet.data) setVendorSettlements(resVSet.data);
+      if (resRSet.data) setRiderSettlements(resRSet.data);
+      if (resVendors.data) setVendors(resVendors.data);
+      if (resVProf.data) setVendorProfiles(resVProf.data);
+      if (resRiders.data) setRiders(resRiders.data);
+      if (resRProf.data) setRiderProfiles(resRProf.data);
+      if (resWallets.data) setWallets(resWallets.data);
+      if (resOrders.data) setOrders(resOrders.data);
+      if (resLedger.data) setLedger(resLedger.data);
+      if (resSubs.data) setSubscriptionRequests(resSubs.data);
+    } catch (e) {
+      console.error("Database loading exception:", e);
     } finally {
       setLoading(false);
+      setTimeout(() => setRealtimePulse(false), 500);
     }
-  };
-
-  // --- Compute Financial Framework Analytical Dashboards Metrics ---
-  const calculateMetrics = (data: Settlement[]) => {
-    const now = new Date();
-    const todayStr = now.toISOString().split("T")[0];
-    const currentMonth = now.getMonth();
-    const currentYear = now.getFullYear();
-
-    let pendingVendor = 0;
-    let pendingRider = 0;
-    let paidToday = 0;
-    let pendingAmount = 0;
-    let paidThisMonth = 0;
-    let rejectedAmount = 0;
-
-    data.forEach((s) => {
-      if (s.status === "pending_request" || s.status === "processing") {
-        pendingAmount += s.amount;
-        if (s.type === "vendor") pendingVendor += s.amount;
-        if (s.type === "rider") pendingRider += s.amount;
-      } else if (s.status === "paid") {
-        if (s.paid_at && s.paid_at.startsWith(todayStr)) {
-          paidToday += s.amount;
-        }
-        if (s.paid_at) {
-          const paidDate = new Date(s.paid_at);
-          if (paidDate.getMonth() === currentMonth && paidDate.getFullYear() === currentYear) {
-            paidThisMonth += s.amount;
-          }
-        }
-      } else if (s.status === "rejected") {
-        rejectedAmount += s.amount;
-      }
-    });
-
-    setMetrics({ pendingVendor, pendingRider, paidToday, pendingAmount, paidThisMonth, rejectedAmount });
-  };
-
-  // --- Fetch Configuration Platform Settings ---
-  const fetchPlatformConfig = async () => {
-    try {
-      const { data, error } = await supabase
-        .from("platform_settings")
-        .select("subscription_upi_id, subscription_qr_url")
-        .maybeSingle();
-      if (!error && data) {
-        setPlatformSettings(data);
-      }
-    } catch (err) {
-      console.error("Error extracting platform global settings lookup fallback configurations:", err);
-    }
-  };
-
-  // --- Realtime Subscriptions Synchronization Hooks ---
-  useEffect(() => {
-    fetchData();
-    fetchPlatformConfig();
-
-    const vendorChannel = supabase
-      .channel("vendor-settlements-center-realtime")
-      .on("postgres_changes", { event: "*", schema: "public", table: "vendor_settlements" }, () => fetchData())
-      .subscribe();
-
-    const riderChannel = supabase
-      .channel("rider-settlements-center-realtime")
-      .on("postgres_changes", { event: "*", schema: "public", table: "rider_settlements" }, () => fetchData())
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(vendorChannel);
-      supabase.removeChannel(riderChannel);
-    };
   }, []);
 
-  // --- Load Ledger Database History Logs ---
-  const viewLedgerHistory = async (settlement: Settlement) => {
-    try {
-      setLoadingLedger(true);
-      setSelectedSettlement(settlement);
-      setActiveModal("ledger");
-      
-      const orderIds = settlement.order_ids || [];
-      if (orderIds.length === 0) {
-        setLedgerHistory([]);
-        return;
-      }
-
-      const { data, error } = await supabase
-        .from("financial_ledger")
-        .select("id, entity_type, entity_id, transaction_type, amount, reference_id, remarks, created_at")
-        .in("reference_id", orderIds);
-
-      if (!error && data) {
-        setLedgerHistory(data);
-      } else {
-        setLedgerHistory([]);
-      }
-    } catch (err) {
-      console.error("Failed downloading audit logging history traces from system ledger files:", err);
-    } finally {
-      setLoadingLedger(false);
-    }
-  };
-
-  // --- Action Framework Dispatch Interconnect Modals Operations ---
-  const openApproveModal = (settlement: Settlement) => {
-    setSelectedSettlement(settlement);
-    setPaymentMethod(settlement.payment_method || "Bank Transfer");
-    setUtrNumber("");
-    setRemarks("");
-    setActiveModal("approve");
-  };
-
-  const openRejectModal = (settlement: Settlement) => {
-    setSelectedSettlement(settlement);
-    setRemarks("");
-    setActiveModal("reject");
-  };
-
-  const openViewModal = async (settlement: Settlement) => {
-    setSelectedSettlement(settlement);
-    setActiveModal("view");
-    setIncludedOrders([]);
+  // Setup Live Realtime Stream Channels Mappings
+  useEffect(() => {
+    loadDatabaseState();
+    const tables = [
+      "vendor_settlements", "rider_settlements", "vendors", "vendor_profiles", 
+      "riders", "rider_profiles", "wallets", "orders", "financial_ledger", "subscription_payment_requests"
+    ];
     
-    const orderIds = settlement.order_ids || [];
-    if (orderIds.length > 0) {
-      setLoadingOrders(true);
-      try {
-        const { data, error } = await supabase
-          .from("orders")
-          .select("id, order_number, payment_method, status, vendor_earning, rider_earning, platform_fee")
-          .in("id", orderIds);
-        if (!error && data) {
-          setIncludedOrders(data);
-        }
-      } catch (err) {
-        console.error("Error loading linked orders for settlement profile:", err);
-      } finally {
-        setLoadingOrders(false);
-      }
+    const channels = tables.map(table => 
+      supabase.channel(`realtime-${table}`)
+        .on("postgres_changes", { event: "*", schema: "public", table }, () => loadDatabaseState())
+        .subscribe()
+    );
+
+    return () => {
+      channels.forEach(ch => supabase.removeChannel(ch));
+    };
+  }, [loadDatabaseState]);
+
+  // =========================================================================
+  // UNIFIED WORKSPACE RELATED DATA RESOLUTION RESOLVER ENGINE
+  // =========================================================================
+  const resolvedEntity = useMemo(() => {
+    if (!selectedSettlement) return null;
+
+    if (selectedType === 'vendor') {
+      const vendorId = selectedSettlement.vendor_id;
+      const vendor = vendors.find(v => v.id === vendorId) || null;
+      const wallet = wallets.find(w => w.entity_id === vendorId && w.entity_type === 'vendor') || null;
+      
+      const sortedProfiles = [...vendorProfiles]
+        .filter(p => p.vendor_id === vendorId)
+        .sort((a, b) => {
+          const timeA = new Date(a.updated_at || a.created_at || 0).getTime();
+          const timeB = new Date(b.updated_at || b.created_at || 0).getTime();
+          return timeB - timeA;
+        });
+      
+      const vendorProfile = sortedProfiles[0] || null;
+
+      return {
+        vendor,
+        vendorProfile,
+        wallet,
+        rider: null,
+        riderProfile: null
+      };
+
+    } else {
+      const riderId = selectedSettlement.rider_id;
+      const rider = riders.find(r => r.id === riderId) || null;
+      const wallet = wallets.find(w => w.entity_id === riderId && w.entity_type === 'rider') || null;
+      
+      const sortedProfiles = [...riderProfiles]
+        .filter(p => p.rider_id === riderId)
+        .sort((a, b) => {
+          const timeA = new Date(a.updated_at || a.created_at || 0).getTime();
+          const timeB = new Date(b.updated_at || b.created_at || 0).getTime();
+          return timeB - timeA;
+        });
+
+      const riderProfile = sortedProfiles[0] || null;
+
+      return {
+        rider,
+        riderProfile,
+        wallet,
+        vendor: null,
+        vendorProfile: null
+      };
     }
+  }, [selectedSettlement, selectedType, vendors, vendorProfiles, riders, riderProfiles, wallets]);
+
+  // =========================================================
+  // OVERVIEW METRICS TIMEFRAME PARSER MATRIX WITH CUSTOM DATE RANGE
+  // =========================================================
+  const metrics = useMemo(() => {
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    
+    const startOfWeek = new Date(now);
+    startOfWeek.setDate(now.getDate() - now.getDay());
+    startOfWeek.setHours(0,0,0,0);
+    const startOfWeekTime = startOfWeek.getTime();
+
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+
+    const isInCustomRange = (timestampStr: string) => {
+      if (!startDate && !endDate) return true;
+      const targetTime = new Date(timestampStr).getTime();
+      if (startDate && targetTime < new Date(startDate).setHours(0,0,0,0)) return false;
+      if (endDate && targetTime > new Date(endDate).setHours(23,59,59,999)) return false;
+      return true;
+    };
+
+    const parseMetricsForSet = (items: any[], dateField: string, amountField: string = "amount") => {
+      let today = 0, week = 0, month = 0, total = 0, customRangeTotal = 0;
+      items.forEach(item => {
+        const time = new Date(item[dateField]).getTime();
+        const val = item[amountField] || 0;
+        total += val;
+        if (time >= startOfToday) today += val;
+        if (time >= startOfWeekTime) week += val;
+        if (time >= startOfMonth) month += val;
+        if (isInCustomRange(item[dateField])) customRangeTotal += val;
+      });
+      return { today, week, month, total, customRangeTotal };
+    };
+
+    const collections = parseMetricsForSet(orders, "created_at", "total_amount");
+    const commissions = parseMetricsForSet(orders, "created_at", "platform_fee");
+    const subRevenue = parseMetricsForSet(subscriptionRequests, "created_at", "amount");
+    const riderEarnings = parseMetricsForSet(riderSettlements, "created_at", "amount");
+
+    const paidVendorsThisWeek = vendorSettlements.filter(s => s.status === "paid" && new Date(s.paid_at || "").getTime() >= startOfWeekTime).reduce((a,c) => a + c.amount, 0);
+    const paidRidersThisWeek = riderSettlements.filter(s => s.status === "paid" && new Date(s.paid_at || "").getTime() >= startOfWeekTime).reduce((a,c) => a + c.amount, 0);
+    const paidThisWeek = paidVendorsThisWeek + paidRidersThisWeek;
+
+    const pendingVendorLiability = vendorSettlements.filter(s => s.status === "pending_request").reduce((a,c) => a + c.amount, 0);
+    const pendingRiderLiability = riderSettlements.filter(s => s.status === "pending_request").reduce((a,c) => a + c.amount, 0);
+    const pendingRequestsCount = vendorSettlements.filter(s => s.status === "pending_request").length + riderSettlements.filter(s => s.status === "pending_request").length;
+
+    return {
+      collections,
+      commissions,
+      subRevenue,
+      riderEarnings,
+      pendingVendorLiability,
+      pendingRiderLiability,
+      paidThisWeek,
+      pendingRequestsCount,
+      hasCustomFilter: !!(startDate || endDate)
+    };
+  }, [orders, subscriptionRequests, vendorSettlements, riderSettlements, startDate, endDate]);
+
+  // =========================================================
+  // GLOBAL SEARCH MATRIX FILTER
+  // =========================================================
+  const matchesGlobalSearch = useCallback((entityId: string, type: 'vendor' | 'rider', utr: string = "", settlementId: string = "") => {
+    if (!globalSearch.trim()) return true;
+    const query = globalSearch.toLowerCase();
+    
+    const targetUtr = utr.toLowerCase();
+    const targetId = settlementId.toLowerCase();
+
+    if (type === 'vendor') {
+      const vendor = vendors.find(v => v.id === entityId);
+      const shopName = (vendor?.shop_name || "").toLowerCase();
+      const ownerName = (vendor?.owner_name || "").toLowerCase();
+      const phone = (vendor?.phone || "").toLowerCase();
+      return shopName.includes(query) || ownerName.includes(query) || phone.includes(query) || targetUtr.includes(query) || targetId.includes(query);
+    } else {
+      const rider = riders.find(r => r.id === entityId);
+      const riderName = (rider?.rider_name || "").toLowerCase();
+      const phone = (rider?.phone || "").toLowerCase();
+      return riderName.includes(query) || phone.includes(query) || targetUtr.includes(query) || targetId.includes(query);
+    }
+  }, [globalSearch, vendors, riders]);
+
+  // =========================================================
+  // OPERATIONS HANDLERS
+  // =========================================================
+  const handleOpenPayWorkflow = (settlement: any, type: 'vendor' | 'rider') => {
+    setSelectedSettlement(settlement);
+    setSelectedType(type);
+    setFormUtr("");
+    setFormRemarks("");
+    setFormPaymentMethod("Bank Transfer");
+    setPayModalOpen(true);
   };
 
-  const closeModal = () => {
-    setActiveModal(null);
-    setSelectedSettlement(null);
-    setLedgerHistory([]);
-    setIncludedOrders([]);
+  const handleOpenRejectWorkflow = (settlement: any, type: 'vendor' | 'rider') => {
+    setSelectedSettlement(settlement);
+    setSelectedType(type);
+    setFormRemarks("");
+    setRejectModalOpen(true);
   };
 
-  const handleApprove = async () => {
+  const handleOpenDetailsWorkflow = (settlement: any, type: 'vendor' | 'rider') => {
+    setSelectedSettlement(settlement);
+    setSelectedType(type);
+    setDetailsModalOpen(true);
+  };
+
+  const executePayFinalization = async () => {
     if (!selectedSettlement) return;
-    if (selectedSettlement.status === "paid") return;
-
-    const tableName = selectedSettlement.type === "vendor" ? "vendor_settlements" : "rider_settlements";
-    const now = new Date().toISOString();
-
+    setActionLoading(true);
     try {
-      const { error: updateError } = await supabase
-        .from(tableName)
+      const targetTable = selectedType === 'vendor' ? 'vendor_settlements' : 'rider_settlements';
+      const entityIdKey = selectedType === 'vendor' ? selectedSettlement.vendor_id : selectedSettlement.rider_id;
+
+      const { error: patchError } = await supabase
+        .from(targetTable)
         .update({
-          status: "paid",
-          payment_method: paymentMethod,
-          utr_number: utrNumber,
-          remarks: remarks,
-          paid_at: now
+          status: 'paid',
+          paid_at: new Date().toISOString(),
+          payment_method: formPaymentMethod,
+          utr_number: formUtr.trim(),
+          remarks: formRemarks.trim()
         })
-        .eq("id", selectedSettlement.id)
-        .eq("status", "pending_request");
+        .eq('id', selectedSettlement.id);
 
-      if (updateError) throw updateError;
+      if (patchError) throw patchError;
 
-      const orderIds = selectedSettlement.order_ids || [];
-      if (orderIds.length > 0) {
-        if (selectedSettlement.type === "vendor") {
-          await supabase
-            .from("orders")
-            .update({ settled_vendor: true })
-            .in("id", orderIds);
-        } else if (selectedSettlement.type === "rider") {
-          await supabase
-            .from("orders")
-            .update({ settled_rider: true })
-            .in("id", orderIds);
-        }
-      }
-
-      const { data: existingLedger } = await supabase
-        .from("financial_ledger")
-        .select("id")
-        .eq("transaction_type", "settlement")
-        .eq("reference_id", selectedSettlement.id)
-        .maybeSingle();
-
-      if (!existingLedger) {
-        await supabase.from("financial_ledger").insert({
-          entity_type: selectedSettlement.type,
-          entity_id: selectedSettlement.entity_id,
-          transaction_type: "settlement",
-          entry_type: "debit",
+      await supabase
+        .from('financial_ledger')
+        .insert([{
+          entity_type: selectedType,
+          entity_id: entityIdKey,
+          transaction_type: 'Manual Transfer Clearance',
+          entry_type: 'debit',
           amount: selectedSettlement.amount,
           reference_id: selectedSettlement.id,
-          remarks: "Settlement payout completed"
-        });
-      }
+          remarks: `Payout processed. Method: ${formPaymentMethod}. UTR: ${formUtr}. Remarks: ${formRemarks}`
+        }]);
 
-      closeModal();
-      fetchData();
-    } catch (error) {
-      console.error("Error finalizing state modification transaction cycles:", error);
-      alert("Failed to submit state transition adjustments down into system records safely.");
+      setPayModalOpen(false);
+      triggerToast("Payment recorded successfully.");
+      loadDatabaseState();
+    } catch (err) {
+      console.error("Payout trigger error: ", err);
+      triggerToast("Failed to record payment.", "error");
+    } finally {
+      setActionLoading(false);
     }
   };
 
-  const handleReject = async () => {
+  const executeRejectFinalization = async () => {
     if (!selectedSettlement) return;
-    if (selectedSettlement.status !== "pending_request") return;
-    
-    const tableName = selectedSettlement.type === "vendor" ? "vendor_settlements" : "rider_settlements";
-
+    setActionLoading(true);
     try {
-      const { error } = await supabase
-        .from(tableName)
-        .update({ status: "rejected", remarks: remarks })
-        .eq("id", selectedSettlement.id)
-        .eq("status", "pending_request");
+      const targetTable = selectedType === 'vendor' ? 'vendor_settlements' : 'rider_settlements';
+      const { error: rejectError } = await supabase
+        .from(targetTable)
+        .update({
+          status: 'rejected',
+          remarks: formRemarks.trim()
+        })
+        .eq('id', selectedSettlement.id);
 
-      if (error) throw error;
-      closeModal();
-      fetchData();
-    } catch (error) {
-      console.error("Error setting operational workflow cancellation status flags:", error);
+      if (rejectError) throw rejectError;
+
+      setRejectModalOpen(false);
+      triggerToast("Settlement request rejected.");
+      loadDatabaseState();
+    } catch (err) {
+      console.error("Rejection error:", err);
+      triggerToast("Failed to reject settlement.", "error");
+    } finally {
+      setActionLoading(false);
     }
   };
 
-  // --- Sequential Transaction Framework Loop Processing Batch Elements ---
-  const processBulkSettlementBatch = async () => {
-    if (selectedIds.length === 0) return;
-    const itemsToProcess = settlements.filter(s => selectedIds.includes(s.id) && s.status === "pending_request");
-    
-    if (!window.confirm(`Initialize processing queue array for [${itemsToProcess.length}] chosen entries?`)) return;
-
-    setProcessingBulk(true);
-    let successCount = 0;
-    let failureCount = 0;
-
-    for (const item of itemsToProcess) {
-      const tableName = item.type === "vendor" ? "vendor_settlements" : "rider_settlements";
-      const now = new Date().toISOString();
-      const generatedUtr = `BATCH-${Date.now()}-${item.id.substring(0, 4)}`.toUpperCase();
-
-      try {
-        const { error: updateError } = await supabase
-          .from(tableName)
-          .update({
-            status: "paid",
-            payment_method: "Bank Transfer",
-            utr_number: generatedUtr,
-            remarks: "Settled automatically via system administrative mass selection pipelines.",
-            paid_at: now
-          })
-          .eq("id", item.id)
-          .eq("status", "pending_request");
-
-        if (updateError) throw updateError;
-
-        const orderIds = item.order_ids || [];
-        if (orderIds.length > 0) {
-          if (item.type === "vendor") {
-            await supabase
-              .from("orders")
-              .update({ settled_vendor: true })
-              .in("id", orderIds);
-          } else if (item.type === "rider") {
-            await supabase
-              .from("orders")
-              .update({ settled_rider: true })
-              .in("id", orderIds);
-          }
-        }
-
-        const { data: existingLedger } = await supabase
-          .from("financial_ledger")
-          .select("id")
-          .eq("transaction_type", "settlement")
-          .eq("reference_id", item.id)
-          .maybeSingle();
-
-        if (!existingLedger) {
-          await supabase.from("financial_ledger").insert({
-            entity_type: item.type,
-            entity_id: item.entity_id,
-            transaction_type: "settlement",
-            entry_type: "debit",
-            amount: item.amount,
-            reference_id: item.id,
-            remarks: "Settlement payout completed"
-          });
-        }
-        successCount++;
-      } catch (err) {
-        console.error(`Failure processing discrete entry element item ID [${item.id}]:`, err);
-        failureCount++;
+  const auditLogsTimeline = useMemo(() => {
+    const list: any[] = [];
+    vendorSettlements.forEach(vs => {
+      list.push({ ts: vs.created_at, actor: 'Vendor Payout Request', action: 'Settlement Request Received', amount: vs.amount, targetId: vs.id, status: vs.status, type: 'vendor' });
+      if (vs.paid_at) {
+        list.push({ ts: vs.paid_at, actor: 'Finance Admin', action: 'Settlement Marked Paid', amount: vs.amount, targetId: vs.id, status: 'paid', type: 'vendor' });
       }
-    }
+    });
+    riderSettlements.forEach(rs => {
+      list.push({ ts: rs.created_at, actor: 'Rider Payout Request', action: 'Settlement Request Received', amount: rs.amount, targetId: rs.id, status: 'paid', type: 'rider' });
+      if (rs.paid_at) {
+        list.push({ ts: rs.paid_at, actor: 'Finance Admin', action: 'Settlement Marked Paid', amount: rs.amount, targetId: rs.id, status: 'paid', type: 'rider' });
+      }
+    });
+    return list.sort((a,b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
+  }, [vendorSettlements, riderSettlements]);
 
-    setBulkSummary({ success: successCount, failure: failureCount });
-    setSelectedIds([]);
-    setProcessingBulk(false);
-    fetchData();
-  };
-
-  const handleSelectToggle = (id: string) => {
-    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
-  };
-
-  const handleSelectAllVisiblePending = (visiblePendingItems: Settlement[]) => {
-    const visiblePendingIds = visiblePendingItems.map(x => x.id);
-    const checkingAll = visiblePendingIds.every(id => selectedIds.includes(id));
-    
-    if (checkingAll) {
-      setSelectedIds(prev => prev.filter(id => !visiblePendingIds.includes(id)));
-    } else {
-      setSelectedIds(prev => Array.from(new Set([...prev, ...visiblePendingIds])));
-    }
-  };
-
-  // --- Filtering Evaluation Architecture Layer ---
-  const filteredSettlements = settlements.filter((s) => {
-    // 1. Tab Status Filter
-    if (activeTab === "pending" && s.status !== "pending_request" && s.status !== "processing") return false;
-    if (activeTab === "paid" && s.status !== "paid") return false;
-    if (activeTab === "rejected" && s.status !== "rejected") return false;
-
-    // 2. Settlement Type Filter
-    if (filterType !== "all" && s.type !== filterType) return false;
-
-    // 3. Payment Method Filter
-    if (filterMethod !== "all" && s.payment_method !== filterMethod) return false;
-
-    // 4. Date Range Filter
-    if (filterDateRange.start) {
-      const startBoundary = new Date(filterDateRange.start).getTime();
-      const itemTime = new Date(s.created_at).getTime();
-      if (itemTime < startBoundary) return false;
-    }
-    if (filterDateRange.end) {
-      const endBoundary = new Date(filterDateRange.end).setHours(23, 59, 59, 999);
-      const itemTime = new Date(s.created_at).getTime();
-      if (itemTime > endBoundary) return false;
-    }
-
-    // 5. Query Search String Matching Text Components
-    const query = searchQuery.toLowerCase();
+  if (loading) {
     return (
-      s.id.toLowerCase().includes(query) ||
-      s.entity_name.toLowerCase().includes(query) ||
-      (s.utr_number && s.utr_number.toLowerCase().includes(query))
+      <div className="flex h-screen w-full items-center justify-center bg-white text-slate-900">
+        <div className="flex flex-col items-center gap-2">
+          <Loader2 className="h-6 w-6 animate-spin text-emerald-600" />
+          <span className="text-xs font-mono font-bold tracking-widest uppercase text-slate-400">Loading Financial Matrices...</span>
+        </div>
+      </div>
     );
-  });
-
-  const visiblePending = filteredSettlements.filter(s => s.status === "pending_request");
+  }
 
   return (
-    <div className="p-6 space-y-6 max-w-[1700px] mx-auto">
-      {/* Header Banner */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="p-3 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-xl">
-            <Banknote className="h-6 w-6" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Finance Settlement Center</h1>
-            <p className="text-sm text-gray-500 dark:text-gray-400">Advanced corporate clearing ledger configuration architecture workspace matrix control.</p>
-          </div>
-        </div>
-      </div>
-
-      {/* Analytics Summary Matrices Cards Segment */}
-      <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
-        <div className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm">
-          <p className="text-xs font-semibold text-gray-400 truncate">Pending Vendor Payouts</p>
-          <h4 className="text-lg font-bold text-gray-900 dark:text-white mt-1 flex items-center"><IndianRupee className="h-4 w-4" />{metrics.pendingVendor.toFixed(2)}</h4>
-        </div>
-        <div className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm">
-          <p className="text-xs font-semibold text-gray-400 truncate">Pending Rider Payouts</p>
-          <h4 className="text-lg font-bold text-gray-900 dark:text-white mt-1 flex items-center"><IndianRupee className="h-4 w-4" />{metrics.pendingRider.toFixed(2)}</h4>
-        </div>
-        <div className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm">
-          <p className="text-xs font-semibold text-gray-400 truncate">Paid Today</p>
-          <h4 className="text-lg font-bold text-emerald-600 dark:text-emerald-400 mt-1 flex items-center"><IndianRupee className="h-4 w-4" />{metrics.paidToday.toFixed(2)}</h4>
-        </div>
-        <div className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm">
-          <p className="text-xs font-semibold text-gray-400 truncate">Pending Amount</p>
-          <h4 className="text-lg font-bold text-amber-600 dark:text-amber-400 mt-1 flex items-center"><IndianRupee className="h-4 w-4" />{metrics.pendingAmount.toFixed(2)}</h4>
-        </div>
-        <div className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm">
-          <p className="text-xs font-semibold text-gray-400 truncate">Paid This Month</p>
-          <h4 className="text-lg font-bold text-blue-600 dark:text-blue-400 mt-1 flex items-center"><IndianRupee className="h-4 w-4" />{metrics.paidThisMonth.toFixed(2)}</h4>
-        </div>
-        <div className="p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm">
-          <p className="text-xs font-semibold text-gray-400 truncate">Rejected</p>
-          <h4 className="text-lg font-bold text-rose-600 dark:text-rose-400 mt-1 flex items-center"><IndianRupee className="h-4 w-4" />{metrics.rejectedAmount.toFixed(2)}</h4>
-        </div>
-      </div>
-
-      {/* Batch Processing Execution Loop Reporting Status Alerts */}
-      {bulkSummary && (
-        <div className="p-3 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 rounded-xl text-sm flex items-center justify-between">
-          <div className="flex items-center gap-2 text-blue-800 dark:text-blue-300">
-            <AlertCircle className="h-4 w-4" />
-            <span>Massive clearing updates completed. <strong>Success: {bulkSummary.success}</strong> rows, <strong>Failures: {bulkSummary.failure}</strong> rows.</span>
-          </div>
-          <button onClick={() => setBulkSummary(null)} className="text-xs underline text-blue-600 dark:text-blue-400 font-semibold">Dismiss</button>
+    <div className="space-y-6 p-6 max-w-7xl mx-auto bg-white min-h-screen antialiased text-slate-800 font-sans relative">
+      
+      {/* TOAST FEEDBACK */}
+      {toast && (
+        <div className="fixed top-6 right-6 z-50 flex items-center gap-2 px-4 py-3 rounded-xl shadow-md border text-white font-medium bg-slate-900 border-emerald-500/30 animate-in fade-in slide-in-from-top-4 duration-200">
+          <span className="text-xs tracking-wide">{toast.message}</span>
         </div>
       )}
 
-      {/* Primary Workflow Sorting Tab Matrices Panels */}
-      <div className="flex border-b border-gray-200 dark:border-gray-700">
-        {(["all", "pending", "paid", "rejected"] as const).map((tab) => (
+      {/* HEADER SECTION CONTROLS BAR */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between pb-4 border-b border-gray-100 gap-4">
+        <div>
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-bold tracking-tight text-slate-950">Settlements</h1>
+            {realtimePulse && <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />}
+          </div>
+          <p className="text-xs text-slate-400 font-medium mt-0.5">Review pending balances, look up bank details, and log manual payments</p>
+        </div>
+
+        {/* Search Interface */}
+        <div className="relative w-full md:w-80">
+          <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+          <input
+            type="text"
+            placeholder="Search by name, shop, phone or UTR..."
+            value={globalSearch}
+            onChange={(e) => setGlobalSearch(e.target.value)}
+            className="w-full pl-9 pr-4 py-2 text-xs bg-gray-50 border border-gray-200 rounded-lg text-slate-900 focus:outline-none focus:bg-white focus:border-emerald-600 transition-all font-medium"
+          />
+        </div>
+      </div>
+
+      {/* NAVIGATION TABS ACCORDION */}
+      <div className="flex gap-1.5 border-b border-gray-100 overflow-x-auto pb-px scrollbar-none">
+        {[
+          { id: 'overview', label: 'Overview' },
+          { id: 'vendor', label: 'Vendor Settlements' },
+          { id: 'rider', label: 'Rider Settlements' },
+          { id: 'ledger', label: 'Financial Ledger' },
+          { id: 'audit', label: 'Audit Trail Logs' }
+        ].map((tab) => (
           <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`px-4 py-2 text-sm font-medium capitalize border-b-2 transition-colors -mb-px ${
-              activeTab === tab 
-                ? "border-blue-600 text-blue-600 dark:text-blue-400 dark:border-blue-400" 
-                : "border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id as any)}
+            className={`px-4 py-2 text-xs font-bold uppercase tracking-wider border-b-2 transition-all cursor-pointer whitespace-nowrap ${
+              activeTab === tab.id
+                ? 'border-emerald-600 text-emerald-600'
+                : 'border-transparent text-slate-400 hover:text-slate-600'
             }`}
           >
-            {tab === "all" ? "History Logs (All)" : tab === "pending" ? "Pending Tab" : tab}
+            {tab.label}
           </button>
         ))}
       </div>
 
-      {/* Controls Filters Grid Infrastructure */}
-      <div className="bg-white dark:bg-gray-800 p-4 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm space-y-3">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-          {/* Text Queries Input */}
-          <div className="relative">
-            <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Filter ID, Target, Merchant, Key, UTR..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-9 pr-4 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+      {/* ========================================================================================================= SECTION: OVERVIEW */}
+      {activeTab === 'overview' && (
+        <div className="space-y-6 animate-in fade-in duration-150">
+          
+          {/* CUSTOM DATE RANGE BAR */}
+          <div className="bg-gray-50 p-4 border border-gray-200 rounded-xl flex flex-wrap items-center gap-4 justify-between">
+            <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase tracking-wider">
+              <Calendar size={14} className="text-emerald-600" /> Filter Overview By Date Range
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-1.5 text-xs text-slate-600">
+                <span className="font-semibold">Start:</span>
+                <input 
+                  type="date" 
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="p-1.5 bg-white border border-gray-200 rounded-lg font-medium text-slate-700 focus:outline-none focus:border-emerald-600"
+                />
+              </div>
+              <div className="flex items-center gap-1.5 text-xs text-slate-600">
+                <span className="font-semibold">End:</span>
+                <input 
+                  type="date" 
+                  value={endDate}
+                  onChange={(e) => setStartDateEnd(e.target.value)}
+                  className="p-1.5 bg-white border border-gray-200 rounded-lg font-medium text-slate-700 focus:outline-none focus:border-emerald-600"
+                />
+              </div>
+              {(startDate || endDate) && (
+                <button 
+                  onClick={() => { setStartDate(""); setStartDateEnd(""); }}
+                  className="text-[11px] font-bold text-rose-600 bg-rose-50 border border-rose-200 px-2 py-1 rounded-md hover:bg-rose-100 cursor-pointer"
+                >
+                  Clear Filter
+                </button>
+              )}
+            </div>
           </div>
 
-          {/* Type Selectors */}
-          <div>
-            <select
-              value={filterType}
-              onChange={(e) => setFilterType(e.target.value as any)}
-              className="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none"
-            >
-              <option value="all">All Recipient Types</option>
-              <option value="vendor">Vendors Only</option>
-              <option value="rider">Riders Only</option>
-            </select>
-          </div>
-
-          {/* Method Selectors */}
-          <div>
-            <select
-              value={filterMethod}
-              onChange={(e) => setFilterMethod(e.target.value)}
-              className="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none"
-            >
-              <option value="all">All Settlement Methods</option>
-              <option value="Bank Transfer">Bank Transfer</option>
-              <option value="UPI">UPI Payout</option>
-              <option value="Card Payout">Card Payout</option>
-              <option value="Wallet">Wallet Transfer</option>
-            </select>
-          </div>
-
-          {/* Mass Clearing Batch Automation Buttons Triggers */}
-          <div>
-            {selectedIds.length > 0 && (
-              <button
-                onClick={processBulkSettlementBatch}
-                disabled={processingBulk}
-                className="w-full inline-flex items-center justify-center gap-2 px-4 py-1.5 text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white rounded-lg shadow transition-all"
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+            {[
+              { title: "Today's Collection", value: metrics.hasCustomFilter ? metrics.collections.customRangeTotal : metrics.collections.today, sub: metrics.hasCustomFilter ? "Calculated for chosen range" : `This Week: ₹${metrics.collections.week.toLocaleString()}` },
+              { title: "Platform Commission", value: metrics.hasCustomFilter ? metrics.commissions.customRangeTotal : metrics.commissions.today, sub: metrics.hasCustomFilter ? "Calculated for chosen range" : `Month Total: ₹${metrics.commissions.month.toLocaleString()}` },
+              { title: "Subscription Revenue", value: metrics.hasCustomFilter ? metrics.subRevenue.customRangeTotal : metrics.subRevenue.total, sub: "Approved vendor requests" },
+              { title: "Rider Earnings Summary", value: metrics.hasCustomFilter ? metrics.riderEarnings.customRangeTotal : metrics.riderEarnings.total, sub: metrics.hasCustomFilter ? "Custom date scope value" : `Month Total: ₹${metrics.riderEarnings.month.toLocaleString()}` },
+              { title: "Pending Vendor Payouts", value: metrics.pendingVendorLiability, sub: "Awaiting confirmation review" },
+              { title: "Pending Rider Payouts", value: metrics.pendingRiderLiability, sub: "Awaiting tracking reference entry" },
+              { title: "Paid This Week", value: metrics.paidThisWeek, sub: "Cleared bank transactions total" }
+            ].map((kpi, idx) => (
+              <div 
+                key={idx} 
+                className="bg-white border border-gray-200 p-5 rounded-xl transition-all duration-200 hover:border-emerald-600/30 hover:shadow-2xs group"
               >
-                <CreditCard className="h-4 w-4" />
-                {processingBulk ? "Processing Batch Loop..." : `Execute Mass Clear (${selectedIds.length})`}
-              </button>
-            )}
-          </div>
-        </div>
+                <div>
+                  <span className="text-[10px] font-bold tracking-wider text-slate-400 uppercase block transition-colors group-hover:text-slate-500">{kpi.title}</span>
+                  <h3 className="text-2xl font-black text-slate-900 tracking-tight mt-2 flex items-baseline">
+                    <span className="text-base font-bold text-slate-400 mr-0.5">₹</span>
+                    {kpi.value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </h3>
+                </div>
+                <p className="text-[10px] text-slate-400 font-medium mt-2.5 pt-2 border-t border-gray-50">{kpi.sub}</p>
+              </div>
+            ))}
 
-        {/* Date Ranges Matrix Selection Component Panels */}
-        <div className="flex flex-wrap items-center gap-4 pt-1 text-xs text-gray-500 dark:text-gray-400">
-          <div className="flex items-center gap-2">
-            <span>Range:</span>
+            <div className="bg-white border border-gray-200 p-5 rounded-xl transition-all duration-200 hover:border-emerald-600/30 hover:shadow-2xs group">
+              <div>
+                <span className="text-[10px] font-bold tracking-wider text-slate-400 uppercase block">Pending Payout Requests</span>
+                <h3 className="text-3xl font-black text-slate-900 mt-2">{metrics.pendingRequestsCount}</h3>
+              </div>
+              <p className="text-[10px] text-slate-400 font-medium mt-2.5 pt-2 border-t border-gray-50">Active orders settlement queue</p>
+            </div>
           </div>
-          <div className="flex items-center gap-1">
-            <span>From</span>
-            <input 
-              type="date" 
-              value={filterDateRange.start} 
-              onChange={(e) => setFilterDateRange(prev => ({ ...prev, start: e.target.value }))}
-              className="px-2 py-0.5 border border-gray-300 dark:border-gray-600 rounded bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white"
-            />
-          </div>
-          <div className="flex items-center gap-1">
-            <span>Until</span>
-            <input 
-              type="date" 
-              value={filterDateRange.end} 
-              onChange={(e) => setFilterDateRange(prev => ({ ...prev, end: e.target.value }))}
-              className="px-2 py-0.5 border border-gray-300 dark:border-gray-600 rounded bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white"
-            />
-          </div>
-          {(filterDateRange.start || filterDateRange.end || filterMethod !== "all" || filterType !== "all" || searchQuery) && (
-            <button 
-              onClick={() => {
-                setFilterDateRange({ start: "", end: "" });
-                setFilterMethod("all");
-                setFilterType("all");
-                setSearchQuery("");
-              }}
-              className="text-blue-600 dark:text-blue-400 font-medium hover:underline ml-auto"
-            >
-              Reset Center Filters Matrix
-            </button>
-          )}
-        </div>
-      </div>
 
-      {/* Main Core Tracking Table Output Visualization Canvas */}
-      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700/50 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                <th className="px-6 py-3 w-4">
-                  {activeTab === "pending" || visiblePending.length > 0 ? (
-                    <input 
-                      type="checkbox"
-                      checked={visiblePending.length > 0 && visiblePending.every(x => selectedIds.includes(x.id))}
-                      onChange={() => handleSelectAllVisiblePending(visiblePending)}
-                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                    />
-                  ) : null}
-                </th>
-                <th className="px-6 py-3">Settlement ID</th>
-                <th className="px-6 py-3">Type</th>
-                <th className="px-6 py-3">Recipient Name</th>
-                <th className="px-6 py-3">Disbursement Total</th>
-                <th className="px-6 py-3">Clearing Details</th>
-                <th className="px-6 py-3">Status</th>
-                <th className="px-6 py-3 text-right">Operations Architecture</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200 dark:divide-gray-700 text-sm text-gray-700 dark:text-gray-300">
-              {loading ? (
-                <tr>
-                  <td colSpan={8} className="text-center py-8 text-gray-500">Retrieving secure financial records data metrics layers...</td>
-                </tr>
-              ) : filteredSettlements.length === 0 ? (
-                <tr>
-                  <td colSpan={8} className="text-center py-8 text-gray-500">No matches found within current filter configurations.</td>
-                </tr>
-              ) : (
-                filteredSettlements.map((s) => (
-                  <tr key={s.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-colors">
-                    <td className="px-6 py-4">
-                      {s.status === "pending_request" ? (
-                        <input 
-                          type="checkbox"
-                          checked={selectedIds.includes(s.id)}
-                          onChange={() => handleSelectToggle(s.id)}
-                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                        />
-                      ) : null}
-                    </td>
-                    <td className="px-6 py-4 font-mono text-xs text-gray-500 dark:text-gray-400">{s.id}</td>
-                    <td className="px-6 py-4 capitalize">
-                      <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                        s.type === "vendor" ? "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400" : "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
-                      }`}>
-                        {s.type}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 font-medium text-gray-900 dark:text-white">{s.entity_name}</td>
-                    <td className="px-6 py-4 font-semibold flex items-center gap-0.5 mt-4">
-                      <IndianRupee className="h-3.5 w-3.5" />
-                      {s.amount.toFixed(2)}
-                    </td>
-                    <td className="px-6 py-4 max-w-xs truncate">
-                      {s.status === "paid" ? (
-                        <div className="text-xs space-y-0.5 text-gray-500 dark:text-gray-400">
-                          <div><span className="font-medium">Method:</span> {s.payment_method}</div>
-                          <div><span className="font-medium">UTR:</span> {s.utr_number}</div>
-                        </div>
-                      ) : (
-                        <span className="text-xs text-gray-400 italic">Awaiting clearance confirmation</span>
-                      )}
-                    </td>
-                    <td className="px-6 py-4">
-                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-full ${
-                        s.status === "paid" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400" :
-                        s.status === "rejected" ? "bg-rose-100 text-rose-800 dark:bg-rose-900/30 dark:text-rose-400" :
-                        s.status === "processing" ? "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400" :
-                        "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400"
-                      }`}>
-                        {s.status === "paid" && <CheckCircle className="h-3 w-3" />}
-                        {s.status === "rejected" && <XCircle className="h-3 w-3" />}
-                        {(s.status === "pending_request" || s.status === "processing") && <Clock className="h-3 w-3" />}
-                        <span>
-                          {s.status === "pending_request" ? "Pending Request" : 
-                           s.status === "processing" ? "Processing" : 
-                           s.status === "paid" ? "Paid" : "Rejected"}
-                        </span>
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 text-right space-x-2 whitespace-nowrap">
-                      <button
-                        onClick={() => openViewModal(s)}
-                        className="inline-flex items-center justify-center gap-1 text-xs font-medium bg-gray-100 hover:bg-gray-200 text-gray-800 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-200 px-2 py-1 rounded-lg transition-colors"
-                      >
-                        <Eye className="h-3.5 w-3.5" />
-                        Details
-                      </button>
-                      <button
-                        onClick={() => viewLedgerHistory(s)}
-                        className="inline-flex items-center justify-center gap-1 text-xs font-medium bg-gray-100 hover:bg-gray-200 text-gray-800 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-200 px-2 py-1 rounded-lg transition-colors"
-                      >
-                        <History className="h-3.5 w-3.5" />
-                        Ledger
-                      </button>
-                      {s.status === "pending_request" && (
-                        <>
-                          <button
-                            onClick={() => openApproveModal(s)}
-                            className="inline-flex items-center justify-center text-xs font-medium bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded-lg transition-colors shadow-sm"
-                          >
-                            Approve
-                          </button>
-                          <button
-                            onClick={() => openRejectModal(s)}
-                            className="inline-flex items-center justify-center text-xs font-medium bg-rose-600 hover:bg-rose-700 text-white px-2.5 py-1 rounded-lg transition-colors shadow-sm"
-                          >
-                            Reject
-                          </button>
-                        </>
-                      )}
-                      {s.status === "processing" && (
-                        <span className="text-xs text-gray-400 italic px-2">View only</span>
-                      )}
-                    </td>
+          {/* RECENT TRANSACTIONS LEDGER MINI TABLE */}
+          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-3xs space-y-3 p-5">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5"><History size={14} className="text-emerald-600" /> Recent Transactions Overview</h3>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-gray-50 border-b border-gray-200 text-[10px] font-bold uppercase text-slate-400 tracking-wider">
+                    <th className="p-3">Date</th>
+                    <th className="p-3">Scope</th>
+                    <th className="p-3">Transaction Type</th>
+                    <th className="p-3">Credit (+ Inflow)</th>
+                    <th className="p-3">Debit (- Outflow)</th>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                </thead>
+                <tbody className="divide-y divide-gray-100 font-medium text-slate-700">
+                  {ledger.slice(0, 8).map((item) => (
+                    <tr 
+                      key={item.id} 
+                      className="transition-colors duration-200 hover:bg-emerald-50/30 cursor-pointer"
+                    >
+                      <td className="p-3 text-slate-400 font-normal">{new Date(item.created_at).toLocaleDateString('en-IN', { dateStyle: 'medium' })}</td>
+                      <td className="p-3 capitalize font-bold text-slate-900">{item.entity_type}</td>
+                      <td className="p-3 text-slate-400 font-sans">{item.transaction_type}</td>
+                      <td className="p-3 text-emerald-600 font-bold">{item.entry_type === 'credit' ? `₹${item.amount.toFixed(2)}` : '—'}</td>
+                      <td className="p-3 text-rose-600 font-bold">{item.entry_type === 'debit' ? `₹${item.amount.toFixed(2)}` : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
         </div>
-      </div>
+      )}
 
-      {/* View Comprehensive Settlement Information Modal */}
-      <Modal isOpen={activeModal === "view"} onClose={closeModal} title="Comprehensive Settlement Profile View">
-        {selectedSettlement && (
-          <div className="space-y-4 text-sm text-gray-600 dark:text-gray-300">
-            <div className="grid grid-cols-2 gap-4 border-b border-gray-100 dark:border-gray-700 pb-3">
-              <div>
-                <span className="text-xs font-bold text-gray-400 uppercase block mb-0.5">Recipient Profile</span>
-                <p className="font-semibold text-gray-900 dark:text-white capitalize">{selectedSettlement.type} ({selectedSettlement.entity_name})</p>
-              </div>
-              <div>
-                <span className="text-xs font-bold text-gray-400 uppercase block mb-0.5">Contact Connection</span>
-                <p className="font-mono text-gray-900 dark:text-white">{selectedSettlement.phone || "None Logged"}</p>
-              </div>
-              {selectedSettlement.type === "vendor" && (
-                <div className="col-span-2">
-                  <span className="text-xs font-bold text-gray-400 uppercase block mb-0.5">Physical Store Registration Address</span>
-                  <p className="text-xs text-gray-900 dark:text-white bg-gray-50 dark:bg-gray-700/30 p-2 rounded border border-gray-100 dark:border-gray-700 whitespace-pre-wrap">
-                    {selectedSettlement.address_line1 ? (
-                      <>
-                        {selectedSettlement.address_line1}
-                        {selectedSettlement.address_line2 ? `\n${selectedSettlement.address_line2}` : ""}
-                        {`\n${selectedSettlement.city || ""}, ${selectedSettlement.state || ""} - ${selectedSettlement.pin_code || ""}`}
-                      </>
-                    ) : (
-                      "No Physical Address Fields Found In Profiles Records"
-                    )}
-                  </p>
-                </div>
-              )}
-            </div>
-
-            {/* Secure Banking Context Matrices Mapping Blocks */}
-            <div className="bg-gray-50 dark:bg-gray-700/40 p-3 rounded-lg border border-gray-100 dark:border-gray-700 space-y-3">
-              <span className="text-xs font-bold text-gray-500 uppercase block tracking-wider">Secured Target Node Remittance Wire Details</span>
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                <div>
-                  <span className="text-gray-400 block">Bank Account Holder</span>
-                  <p className="font-medium text-gray-900 dark:text-white">{selectedSettlement.account_holder_name || "N/A"}</p>
-                </div>
-                <div>
-                  <span className="text-gray-400 block">Bank Entity Identifier</span>
-                  <p className="font-medium text-gray-900 dark:text-white">{selectedSettlement.bank_name || "N/A"}</p>
-                </div>
-                <div>
-                  <span className="text-gray-400 block">Account Registration Serial</span>
-                  <p className="font-mono font-medium text-gray-900 dark:text-white">{selectedSettlement.account_number || "N/A"}</p>
-                </div>
-                <div>
-                  <span className="text-gray-400 block">IFSC System Code</span>
-                  <p className="font-mono font-medium text-gray-900 dark:text-white">{selectedSettlement.ifsc_code || "N/A"}</p>
-                </div>
-                <div className="col-span-2 pt-1 border-t border-gray-200/50 dark:border-gray-600/50">
-                  <span className="text-gray-400 block">Target Remittance Virtual Address (UPI)</span>
-                  <p className="font-mono font-medium text-gray-900 dark:text-white flex items-center gap-1.5">
-                    {selectedSettlement.upi_id || "No Setup Configured"} 
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex flex-col items-center justify-center pt-2 bg-white dark:bg-gray-800 rounded p-3 border border-gray-200/60 dark:border-gray-600/60">
-                {selectedSettlement.type === "vendor" ? (
-                  selectedSettlement.qr_code_url ? (
-                    <img 
-                      src={selectedSettlement.qr_code_url} 
-                      alt="Vendor QR" 
-                      className="w-28 h-28 object-contain cursor-pointer" 
-                      onClick={() => window.open(selectedSettlement.qr_code_url, "_blank")}
-                    />
-                  ) : (
-                    <span className="text-xs text-gray-400 font-medium py-4">QR Not Uploaded</span>
-                  )
-                ) : (
-                  <span className="text-xs text-gray-400 font-medium py-4">No QR Uploaded</span>
-                )}
-                <span className="text-[10px] text-gray-400 mt-1.5 uppercase font-semibold"> remitting node scanner index link </span>
-              </div>
-            </div>
-
-            {/* Orders Included Section */}
-            <div className="space-y-2">
-              <span className="text-xs font-bold text-gray-500 uppercase block tracking-wider">Orders Included</span>
-              {loadingOrders ? (
-                <p className="text-xs text-gray-400 italic">Loading included orders...</p>
-              ) : includedOrders.length === 0 ? (
-                <p className="text-xs text-gray-400 italic">No orders linked to this settlement.</p>
-              ) : (
-                <div className="overflow-x-auto border border-gray-200 dark:border-gray-700 rounded-lg">
-                  <table className="w-full text-left text-xs">
-                    <thead className="bg-gray-50 dark:bg-gray-700 text-gray-500 dark:text-gray-400 font-semibold uppercase">
-                      <tr>
-                        <th className="px-3 py-1.5">Order Number</th>
-                        <th className="px-3 py-1.5">Payment Method</th>
-                        <th className="px-3 py-1.5">Status</th>
-                        <th className="px-3 py-1.5">Vendor Earning</th>
-                        <th className="px-3 py-1.5">Rider Earning</th>
-                        <th className="px-3 py-1.5">Platform Fee</th>
+      {/* ========================================================================================================= SECTION: VENDOR SETTLEMENT */}
+      {activeTab === 'vendor' && (
+        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-3xs animate-in fade-in duration-150">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-200 text-[10px] font-bold uppercase text-slate-400 tracking-wider">
+                  <th className="p-3.5 pl-4">Shop Name</th>
+                  <th className="p-3.5">Owner Name</th>
+                  <th className="p-3.5">Phone</th>
+                  <th className="p-3.5">Wallet Balance</th>
+                  <th className="p-3.5 text-emerald-600">Amount to Pay This Week</th>
+                  <th className="p-3.5">Order Count</th>
+                  <th className="p-3.5">Request Date</th>
+                  <th className="p-3.5">Status</th>
+                  <th className="p-3.5 text-right pr-4">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 font-medium text-slate-700">
+                {vendorSettlements
+                  .filter(vs => matchesGlobalSearch(vs.vendor_id, 'vendor', vs.utr_number, vs.id))
+                  .map((vs) => {
+                    const vendor = vendors.find(v => v.id === vs.vendor_id);
+                    const wallet = wallets.find(w => w.entity_id === vs.vendor_id && w.entity_type === 'vendor');
+                    return (
+                      <tr 
+                        key={vs.id} 
+                        className="transition-colors duration-200 hover:bg-emerald-50/30 cursor-pointer"
+                      >
+                        <td className="p-3.5 pl-4 font-bold text-slate-900">{vendor?.shop_name || "Unresolved Shop Mappings"}</td>
+                        <td className="p-3.5 text-slate-600">{vendor?.owner_name || "—"}</td>
+                        <td className="p-3.5 text-slate-400 font-mono">{vendor?.phone || "—"}</td>
+                        <td className="p-3.5 text-slate-500">₹{wallet?.balance?.toFixed(2) || '0.00'}</td>
+                        <td className="p-3.5 font-bold text-emerald-600">₹{vs.amount?.toFixed(2)}</td>
+                        <td className="p-3.5 text-slate-400 font-mono">{vs.order_ids?.length || 0}</td>
+                        <td className="p-3.5 font-normal text-slate-400">{new Date(vs.created_at).toLocaleDateString('en-IN', { dateStyle: 'medium' })}</td>
+                        <td className="p-3.5">
+                          <span className={`inline-block px-2 py-0.5 text-[9px] font-bold rounded border tracking-wider uppercase ${
+                            vs.status === 'paid' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                            vs.status === 'rejected' ? 'bg-rose-50 text-rose-700 border-rose-200' :
+                            'bg-amber-50 text-amber-700 border-amber-200'
+                          }`}>
+                            {vs.status === 'pending_request' ? 'Requested' : vs.status}
+                          </span>
+                        </td>
+                        <td className="p-3.5 text-right pr-4 space-x-1 whitespace-nowrap">
+                          <button onClick={() => handleOpenDetailsWorkflow(vs, 'vendor')} className="px-2.5 py-1 text-[10px] font-bold border border-gray-200 rounded text-slate-600 hover:bg-gray-50 cursor-pointer">Details</button>
+                          {vs.status === 'pending_request' && (
+                            <>
+                              <button onClick={() => handleOpenPayWorkflow(vs, 'vendor')} className="px-2.5 py-1 text-[10px] font-bold bg-emerald-600 text-white rounded hover:bg-emerald-700 cursor-pointer shadow-3xs">Pay</button>
+                              <button onClick={() => handleOpenRejectWorkflow(vs, 'vendor')} className="px-2.5 py-1 text-[10px] font-bold bg-rose-600 text-white rounded hover:bg-rose-700 cursor-pointer shadow-3xs">Reject</button>
+                            </>
+                          )}
+                        </td>
                       </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-200 dark:divide-gray-700 text-gray-700 dark:text-gray-300">
-                      {includedOrders.map((order) => (
-                        <tr key={order.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/20">
-                          <td className="px-3 py-1.5 font-mono">{order.order_number || order.id}</td>
-                          <td className="px-3 py-1.5">{order.payment_method || "N/A"}</td>
-                          <td className="px-3 py-1.5 capitalize">{order.status || "N/A"}</td>
-                          <td className="px-3 py-1.5">₹{(order.vendor_earning || 0).toFixed(2)}</td>
-                          <td className="px-3 py-1.5">₹{(order.rider_earning || 0).toFixed(2)}</td>
-                          <td className="px-3 py-1.5">₹{(order.platform_fee || 0).toFixed(2)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                    );
+                  })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================================================= SECTION: RIDER SETTLEMENT */}
+      {activeTab === 'rider' && (
+        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-3xs animate-in fade-in duration-150">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-200 text-[10px] font-bold uppercase text-slate-400 tracking-wider">
+                  <th className="p-3.5 pl-4">Rider Name</th>
+                  <th className="p-3.5">Phone</th>
+                  <th className="p-3.5">Wallet Balance</th>
+                  <th className="p-3.5 text-emerald-600">Amount to Pay This Week</th>
+                  <th className="p-3.5">Deliveries</th>
+                  <th className="p-3.5">Status</th>
+                  <th className="p-3.5 text-right pr-4">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 font-medium text-slate-700">
+                {riderSettlements
+                  .filter(rs => matchesGlobalSearch(rs.rider_id, 'rider', rs.utr_number, rs.id))
+                  .map((rs) => {
+                    const rider = riders.find(r => r.id === rs.rider_id);
+                    const wallet = wallets.find(w => w.entity_id === rs.rider_id && w.entity_type === 'rider');
+                    return (
+                      <tr 
+                        key={rs.id} 
+                        className="transition-colors duration-200 hover:bg-emerald-50/30 cursor-pointer"
+                      >
+                        <td className="p-3.5 pl-4 font-bold text-slate-900">{rider?.rider_name || "Unresolved Rider Account"}</td>
+                        <td className="p-3.5 text-slate-400 font-mono">{rider?.phone || "—"}</td>
+                        <td className="p-3.5 text-slate-500">₹{wallet?.balance?.toFixed(2) || '0.00'}</td>
+                        <td className="p-3.5 font-bold text-emerald-600">₹{rs.amount?.toFixed(2)}</td>
+                        <td className="p-3.5 text-slate-400 font-mono">{rs.order_ids?.length || 0}</td>
+                        <td className="p-3.5">
+                          <span className={`inline-block px-2 py-0.5 text-[9px] font-bold rounded border tracking-wider uppercase ${
+                            rs.status === 'paid' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                            rs.status === 'rejected' ? 'bg-rose-50 text-rose-700 border-rose-200' :
+                            'bg-amber-50 text-amber-700 border-amber-200'
+                          }`}>
+                            {rs.status === 'pending_request' ? 'Requested' : rs.status}
+                          </span>
+                        </td>
+                        <td className="p-3.5 text-right pr-4 space-x-1 whitespace-nowrap">
+                          <button onClick={() => handleOpenDetailsWorkflow(rs, 'rider')} className="px-2.5 py-1 text-[10px] font-bold border border-gray-200 rounded text-slate-600 hover:bg-gray-50 cursor-pointer">Details</button>
+                          {rs.status === 'pending_request' && (
+                            <>
+                              <button onClick={() => handleOpenPayWorkflow(rs, 'rider')} className="px-2.5 py-1 text-[10px] font-bold bg-emerald-600 text-white rounded hover:bg-emerald-700 cursor-pointer shadow-3xs">Pay</button>
+                              <button onClick={() => handleOpenRejectWorkflow(rs, 'rider')} className="px-2.5 py-1 text-[10px] font-bold bg-rose-600 text-white rounded hover:bg-rose-700 cursor-pointer shadow-3xs">Reject</button>
+                            </>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================================================= SECTION: FINANCIAL LEDGER */}
+      {activeTab === 'ledger' && (
+        <div className="space-y-4 animate-in fade-in duration-150">
+          <div className="bg-gray-50 p-4 border border-gray-200 rounded-xl flex items-center gap-3 justify-between">
+            <div className="flex items-center gap-2">
+              <Filter size={14} className="text-emerald-600" />
+              <select
+                value={ledgerFilter}
+                onChange={(e) => setLedgerFilter(e.target.value)}
+                className="text-xs p-1.5 bg-white border border-gray-200 rounded-lg text-slate-700 focus:outline-none"
+              >
+                <option value="all">All Transactions</option>
+                <option value="vendor">Vendor Transfers</option>
+                <option value="rider">Rider Transfers</option>
+              </select>
+            </div>
+            
+            <div className="text-[10px] font-bold text-slate-400 bg-white border border-gray-200 px-3 py-1 rounded-md flex items-center gap-1.5">
+              <ShieldCheck size={12} className="text-emerald-600" /> IMMUTABLE CORE JOURNAL FILES ACTIVE
+            </div>
+          </div>
+
+          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-3xs">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-200 text-[10px] font-bold uppercase text-slate-400 tracking-wider">
+                  <th className="p-3.5 pl-4">Date</th>
+                  <th className="p-3.5">Target Account</th>
+                  <th className="p-3.5">Description</th>
+                  <th className="p-3.5">Credit (+ Inflow)</th>
+                  <th className="p-3.5">Debit (- Outflow)</th>
+                  <th className="p-3.5">Remarks</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 text-slate-700">
+                {ledger
+                  .filter(l => ledgerFilter === 'all' || l.entity_type === ledgerFilter)
+                  .map((item) => (
+                    <tr 
+                      key={item.id} 
+                      className="transition-colors duration-200 hover:bg-emerald-50/30 cursor-pointer font-medium"
+                    >
+                      <td className="p-3.5 pl-4 text-slate-400 font-normal">{new Date(item.created_at).toLocaleString('en-IN')}</td>
+                      <td className="p-3.5 text-slate-900 font-bold uppercase">{item.entity_type}</td>
+                      <td className="p-3.5 text-slate-500">{item.transaction_type}</td>
+                      <td className="p-3.5 text-emerald-600 font-bold">{item.entry_type === 'credit' ? `₹${item.amount.toFixed(2)}` : '—'}</td>
+                      <td className="p-3.5 text-rose-600 font-bold">{item.entry_type === 'debit' ? `₹${item.amount.toFixed(2)}` : '—'}</td>
+                      <td className="p-3.5 text-slate-400 font-normal max-w-sm truncate">{item.remarks}</td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================================================= SECTION: AUDIT LOGS */}
+      {activeTab === 'audit' && (
+        <div className="space-y-4 animate-in fade-in duration-150">
+          <div className="bg-gray-50 p-4 border border-gray-200 rounded-xl flex items-center gap-3">
+            <Filter size={14} className="text-emerald-600" />
+            <select
+              value={auditFilter.entity}
+              onChange={(e) => setAuditFilter({ ...auditFilter, entity: e.target.value })}
+              className="text-xs p-1.5 bg-white border border-gray-200 rounded-lg text-slate-700 focus:outline-none"
+            >
+              <option value="all">All Request Node Profiles</option>
+              <option value="vendor">Vendor Accounts</option>
+              <option value="rider">Rider Accounts</option>
+            </select>
+          </div>
+
+          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-3xs">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-200 text-[10px] font-bold uppercase text-slate-400 tracking-wider">
+                  <th className="p-3.5 pl-4">Timestamp Trace</th>
+                  <th className="p-3.5">Actor Profile</th>
+                  <th className="p-3.5">Action Narrative</th>
+                  <th className="p-3.5">Amount to Pay</th>
+                  <th className="p-3.5">Reference ID Key</th>
+                  <th className="p-3.5 text-right pr-4">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 text-slate-700">
+                {auditLogsTimeline
+                  .filter(a => auditFilter.entity === 'all' || a.type === auditFilter.entity)
+                  .map((log, idx) => (
+                    <tr 
+                      key={idx} 
+                      className="transition-colors duration-200 hover:bg-emerald-50/30 cursor-pointer font-medium"
+                    >
+                      <td className="p-3.5 pl-4 text-slate-400 font-normal">{new Date(log.ts).toLocaleString('en-IN')}</td>
+                      <td className="p-3.5 text-slate-900 font-bold font-sans">{log.actor}</td>
+                      <td className="p-3.5 text-slate-600 font-sans font-semibold">{log.action}</td>
+                      <td className="p-3.5 text-slate-700 font-bold">₹{log.amount?.toFixed(2)}</td>
+                      <td className="p-3.5 text-slate-400 text-[11px] font-mono tracking-tight">{log.targetId}</td>
+                      <td className="p-3.5 text-right pr-4 uppercase text-[10px] font-extrabold text-slate-500">
+                        {log.status === 'pending_request' ? 'Requested' : log.status}
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================================================= DETAILED ANALYSIS MODAL */}
+      {detailsModalOpen && selectedSettlement && resolvedEntity && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
+          <div className="bg-white border border-gray-200 rounded-2xl max-w-2xl w-full shadow-xl p-6 space-y-5 animate-in fade-in zoom-in-95 duration-150 overflow-y-auto max-h-[90vh]">
+            
+            <div className="flex items-center justify-between pb-3 border-b border-gray-100">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider">Business Information Summary</h3>
+                <p className="text-[11px] text-slate-400 font-mono mt-0.5">Reference ID: {selectedSettlement.id}</p>
+              </div>
+              <button onClick={() => setDetailsModalOpen(false)} className="text-slate-400 hover:text-slate-600 cursor-pointer p-0.5 rounded hover:bg-gray-50">
+                <X size={16} />
+              </button>
+            </div>
+
+            {selectedType === 'vendor' ? (
+              <div className="space-y-4 text-xs font-medium">
+                <div className="grid grid-cols-2 gap-4 bg-gray-50 p-4 rounded-xl border border-gray-100">
+                  <div><span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wide">Shop Name</span><p className="text-slate-900 font-bold mt-0.5">{resolvedEntity.vendor?.shop_name || "—"}</p></div>
+                  <div><span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wide">Owner Name</span><p className="text-slate-900 mt-0.5">{resolvedEntity.vendor?.owner_name || "—"}</p></div>
+                  <div><span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wide">Phone</span><p className="text-slate-900 font-mono mt-0.5">{resolvedEntity.vendor?.phone || "—"}</p></div>
+                  <div><span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wide">Email</span><p className="text-slate-900 mt-0.5">{resolvedEntity.vendorProfile?.email || "—"}</p></div>
+                  <div className="col-span-2">
+                    <span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wide">Billing Address</span>
+                    <p className="text-slate-900 mt-0.5">
+                      {resolvedEntity.vendorProfile?.address || resolvedEntity.vendorProfile?.billing_address || `${resolvedEntity.vendorProfile?.address_line1 || ''} ${resolvedEntity.vendorProfile?.address_line2 || ''} ${resolvedEntity.vendorProfile?.city || ''} ${resolvedEntity.vendorProfile?.state || ''} ${resolvedEntity.vendorProfile?.pin_code || ''}`.trim() || "—"}
+                    </p>
+                  </div>
                 </div>
-              )}
-            </div>
 
-            {/* Transaction Metrics Details Fields Rows */}
-            <div className="grid grid-cols-3 gap-2 text-xs border-t border-gray-100 dark:border-gray-700 pt-3">
-              <div>
-                <span className="text-gray-400 block">Request Ingestion Date</span>
-                <p className="font-medium text-gray-900 dark:text-white">{new Date(selectedSettlement.created_at).toLocaleString()}</p>
-              </div>
-              <div>
-                <span className="text-gray-400 block">Settlement Target Amount</span>
-                <p className="text-sm font-bold text-gray-900 dark:text-white flex items-center"><IndianRupee className="h-3.5 w-3.5" />{selectedSettlement.amount.toFixed(2)}</p>
-              </div>
-              <div>
-                <span className="text-gray-400 block">Settlement Status Flag</span>
-                <span className="capitalize font-semibold text-blue-600 dark:text-blue-400">
-                  {selectedSettlement.status === "pending_request" ? "Pending Request" : selectedSettlement.status}
-                </span>
-              </div>
-            </div>
+                <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Bank Details</h4>
+                <div className="grid grid-cols-2 gap-4 bg-gray-50/50 p-4 rounded-xl border border-gray-100 font-mono text-[11px]">
+                  <div><span className="text-[9px] text-slate-400 block font-sans font-bold uppercase">Account Holder</span>{resolvedEntity.vendorProfile?.account_holder_name || "—"}</div>
+                  <div><span className="text-[9px] text-slate-400 block font-sans font-bold uppercase">Bank Name</span>{resolvedEntity.vendorProfile?.bank_name || "—"}</div>
+                  <div>
+                    <span className="text-[9px] text-slate-400 block font-sans font-bold uppercase">Account Number</span>
+                    {resolvedEntity.vendorProfile?.account_number && resolvedEntity.vendorProfile.account_number !== "—" ? `•••• •••• ${resolvedEntity.vendorProfile.account_number.slice(-4)}` : "—"}
+                  </div>
+                  <div><span className="text-[9px] text-slate-400 block font-sans font-bold uppercase">IFSC Code</span>{resolvedEntity.vendorProfile?.ifsc_code || "—"}</div>
+                  <div className="col-span-2"><span className="text-[9px] text-slate-400 block font-sans font-bold uppercase">UPI ID</span>{resolvedEntity.vendorProfile?.upi_id || "—"}</div>
+                </div>
 
-            {/* Administrative Workflow Tracking Remarks Section History */}
-            {selectedSettlement.remarks && (
-              <div className="p-2.5 bg-gray-50 dark:bg-gray-700/30 rounded border border-gray-100 dark:border-gray-700 text-xs italic">
-                <span className="text-[10px] font-bold text-gray-400 uppercase block not-italic mb-1">Previous Internal Audit Logs Narrative Remarks</span>
-                "{selectedSettlement.remarks}"
+                <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Settlement Details</h4>
+                <div className="grid grid-cols-2 gap-4 bg-gray-50 p-4 rounded-xl border border-gray-100 text-xs">
+                  <div><span className="text-[10px] text-slate-400 block font-bold uppercase">Wallet Balance</span>₹{resolvedEntity.wallet?.balance?.toFixed(2) || '0.00'}</div>
+                  <div><span className="text-[10px] text-slate-400 block font-bold uppercase text-emerald-600">Amount to Pay This Week</span><span className="font-bold text-emerald-600">₹{selectedSettlement.amount?.toFixed(2)}</span></div>
+                  <div><span className="text-[10px] text-slate-400 block font-bold uppercase">Request Date</span>{new Date(selectedSettlement.created_at).toLocaleString('en-IN')}</div>
+                  <div><span className="text-[10px] text-slate-400 block font-bold uppercase">UTR / Reference Number</span><span className="font-mono">{selectedSettlement.utr_number || "—"}</span></div>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4 text-xs font-medium">
+                <div className="grid grid-cols-2 gap-4 bg-gray-50 p-4 rounded-xl border border-gray-100">
+                  <div><span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wide">Rider Name</span><p className="text-slate-900 font-bold mt-0.5">{resolvedEntity.rider?.rider_name || "—"}</p></div>
+                  <div><span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wide">Phone</span><p className="text-slate-900 font-mono mt-0.5">{resolvedEntity.rider?.phone || "—"}</p></div>
+                  <div><span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wide">Email</span><p className="text-slate-900 mt-0.5">{resolvedEntity.rider?.email || "—"}</p></div>
+                  <div className="col-span-2"><span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wide">Home Address</span><p className="text-slate-900 mt-0.5">{resolvedEntity.riderProfile?.address || resolvedEntity.riderProfile?.home_address || "—"}</p></div>
+                </div>
+
+                <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Bank Details</h4>
+                <div className="grid grid-cols-2 gap-4 bg-gray-50/50 p-4 rounded-xl border border-gray-100 font-mono text-[11px]">
+                  <div><span className="text-[9px] text-slate-400 block font-sans font-bold uppercase">Account Holder</span>{resolvedEntity.riderProfile?.account_holder_name || resolvedEntity.rider?.account_holder_name || "—"}</div>
+                  <div><span className="text-[9px] text-slate-400 block font-sans font-bold uppercase">Bank Name</span>{resolvedEntity.riderProfile?.bank_name || resolvedEntity.rider?.bank_name || "—"}</div>
+                  <div>
+                    <span className="text-[9px] text-slate-400 block font-sans font-bold uppercase">Account Number</span>
+                    {(() => {
+                      const accNum = resolvedEntity.riderProfile?.account_number || resolvedEntity.rider?.account_number;
+                      return accNum && accNum !== "—" ? `•••• •••• ${accNum.slice(-4)}` : "—";
+                    })()}
+                  </div>
+                  <div><span className="text-[9px] text-slate-400 block font-sans font-bold uppercase">IFSC Code</span>{resolvedEntity.riderProfile?.ifsc_code || resolvedEntity.rider?.ifsc_code || "—"}</div>
+                  <div className="col-span-2"><span className="text-[9px] text-slate-400 block font-sans font-bold uppercase">UPI ID</span>{resolvedEntity.riderProfile?.upi_id || resolvedEntity.rider?.upi_id || "—"}</div>
+                </div>
+
+                <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Settlement Details</h4>
+                <div className="grid grid-cols-2 gap-4 bg-gray-50 p-4 rounded-xl border border-gray-100 text-xs">
+                  <div><span className="text-[10px] text-slate-400 block font-bold uppercase">Wallet Balance</span>₹{resolvedEntity.wallet?.balance?.toFixed(2) || '0.00'}</div>
+                  <div><span className="text-[10px] text-slate-400 block font-bold uppercase text-emerald-600">Amount to Pay This Week</span><span className="font-bold text-emerald-600">₹{selectedSettlement.amount?.toFixed(2)}</span></div>
+                  <div><span className="text-[10px] text-slate-400 block font-bold uppercase">Deliveries Included</span>{selectedSettlement.order_ids?.length || 0} Deliveries</div>
+                  <div><span className="text-[10px] text-slate-400 block font-bold uppercase">UTR / Reference Number</span><span className="font-mono">{selectedSettlement.utr_number || "—"}</span></div>
+                </div>
               </div>
             )}
 
-            <div className="flex justify-end pt-2">
-              <button onClick={closeModal} className="px-4 py-1.5 text-xs font-semibold bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900 rounded-lg">Close View Window</button>
+            <div className="bg-gray-50 p-3 rounded-xl text-slate-400 font-sans border border-gray-100 text-xs leading-relaxed">
+              <strong>Admin Remarks:</strong> {selectedSettlement.remarks || "No supplementary notes appended."}
             </div>
-          </div>
-        )}
-      </Modal>
-
-      {/* View Financial Ledger History Entry Logs Tracking Modal */}
-      <Modal isOpen={activeModal === "ledger"} onClose={closeModal} title="Financial Ledger Registry Trail Trackers">
-        <div className="space-y-4">
-          {loadingLedger ? (
-            <p className="text-sm text-center text-gray-500 py-4">Extracting ledger index listings metrics tables mapping registers...</p>
-          ) : ledgerHistory.length === 0 ? (
-            <p className="text-sm text-center text-gray-500 py-4">No associated audit logs references mapped in the ledger system database.</p>
-          ) : (
-            <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-              {ledgerHistory.map((log) => (
-                <div key={log.id} className="p-3 bg-gray-50 dark:bg-gray-700/40 border border-gray-200 dark:border-gray-700 rounded-lg text-xs space-y-1">
-                  <div className="flex items-center justify-between text-gray-400">
-                    <span>Type: <strong className="text-gray-700 dark:text-gray-200 capitalize">{log.transaction_type}</strong></span>
-                    <span>{new Date(log.created_at).toLocaleString()}</span>
-                  </div>
-                  <div className="flex items-center justify-between font-semibold text-gray-900 dark:text-white text-sm">
-                    <span>Reference Record Token: <span className="font-mono text-xs">{log.reference_id}</span></span>
-                    <span className="flex items-center text-emerald-600 dark:text-emerald-400"><IndianRupee className="h-3.5 w-3.5" />{log.amount.toFixed(2)}</span>
-                  </div>
-                  <p className="text-gray-500 dark:text-gray-400 mt-1 border-t border-gray-200/50 dark:border-gray-600/50 pt-1">
-                    Remarks: <span className="italic">"{log.remarks}"</span>
-                  </p>
-                </div>
-              ))}
-            </div>
-          )}
-          <div className="flex justify-end pt-2">
-            <button onClick={closeModal} className="px-4 py-1.5 text-xs font-semibold bg-gray-200 text-gray-800 dark:bg-gray-700 dark:text-gray-200 rounded-lg">Dismiss</button>
           </div>
         </div>
-      </Modal>
+      )}
 
-      {/* Manual Processing Approve Verification Modal Screen */}
-      <Modal isOpen={activeModal === "approve"} onClose={closeModal} title="Authorize Settlement & Release Funds">
-        {selectedSettlement && (
-          <div className="space-y-4 text-sm">
-            {/* Secure Node Metadata Layout Component Matrices Block */}
-            <div className="bg-gray-50 dark:bg-gray-700/40 p-3 rounded-lg border border-gray-100 dark:border-gray-700 space-y-2 text-xs">
-              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Remittance Profile Data Clearance Summary</span>
-              <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-gray-600 dark:text-gray-300">
-                <div>Holder: <span className="text-gray-900 dark:text-white font-medium">{selectedSettlement.account_holder_name || "N/A"}</span></div>
-                <div>Bank: <span className="text-gray-900 dark:text-white font-medium">{selectedSettlement.bank_name || "N/A"}</span></div>
-                <div>A/C Number: <span className="text-gray-900 dark:text-white font-mono">{selectedSettlement.account_number || "N/A"}</span></div>
-                <div>IFSC Identifier: <span className="text-gray-900 dark:text-white font-mono">{selectedSettlement.ifsc_code || "N/A"}</span></div>
-                <div className="col-span-2 pt-1 border-t border-gray-200/50 dark:border-gray-600/50">
-                  UPI Handle: <span className="text-gray-900 dark:text-white font-mono">{selectedSettlement.upi_id || "No Setup Configured"}</span>
-                </div>
+      {/* ========================================================================================================= CONFIRM PAY ACTIONS MODAL */}
+      {payModalOpen && selectedSettlement && resolvedEntity && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
+          <div className="bg-white border border-gray-200 rounded-xl max-w-3xl w-full shadow-xl p-5 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            
+            <div className="flex items-center justify-between pb-2 border-b border-gray-100">
+              <div>
+                <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Record Payout Transfer</h3>
+                <p className="text-xs font-bold text-emerald-600 mt-0.5">Amount to Pay: ₹{selectedSettlement.amount?.toFixed(2)}</p>
               </div>
+              <button onClick={() => setPayModalOpen(false)} className="text-slate-400 hover:text-slate-600 cursor-pointer">
+                <X size={16} />
+              </button>
+            </div>
 
-              <div className="flex items-center justify-center pt-2">
-                <div className="bg-white p-2 rounded border border-gray-200">
-                  {selectedSettlement.type === "vendor" ? (
-                    selectedSettlement.qr_code_url ? (
+            {/* TWO COLUMN WORKSPACE GRID CONTAINER: LEFT (QR & BANK SPECS) | RIGHT (FORM INPUTS) */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              
+              {/* LEFT COLUMN: DESTINATION VERIFICATION DETAILS */}
+              <div className="flex flex-col p-4 bg-gray-50 rounded-xl border border-gray-200 space-y-4">
+                <div className="flex flex-col items-center text-center">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2 block">Payment Destination QR</span>
+                  {selectedType === 'vendor' && resolvedEntity.vendorProfile?.qr_code_url ? (
+                    <div className="bg-white p-3 rounded-lg border border-gray-100 shadow-3xs max-w-[160px] w-full aspect-square flex items-center justify-center overflow-hidden">
                       <img 
-                        src={selectedSettlement.qr_code_url} 
+                        src={resolvedEntity.vendorProfile.qr_code_url} 
                         alt="Vendor QR" 
-                        className="w-24 h-24 object-contain cursor-pointer" 
-                        onClick={() => window.open(selectedSettlement.qr_code_url, "_blank")}
+                        className="w-full h-full object-contain"
+                        onError={(e) => {
+                          (e.target as HTMLElement).style.display = 'none';
+                          const fallbackSib = (e.target as HTMLElement).nextElementSibling;
+                          if (fallbackSib) fallbackSib.classList.remove('hidden');
+                        }}
                       />
-                    ) : (
-                      <span className="text-xs text-gray-400 font-medium py-4 block">QR Not Uploaded</span>
-                    )
+                      <div className="hidden flex-col items-center text-slate-400 gap-1">
+                        <QrCode size={32} className="stroke-1" />
+                        <span className="text-[9px]">Failed to render QR</span>
+                      </div>
+                    </div>
                   ) : (
-                    <span className="text-xs text-gray-400 font-medium py-4 block">No QR Uploaded</span>
+                    <div className="flex flex-col items-center justify-center text-slate-400 gap-1.5 py-4">
+                      <QrCode size={36} className="stroke-1" />
+                      <span className="text-[10px] font-medium text-slate-400">
+                        {selectedType === 'vendor' ? 'No QR URL on file' : 'QR code not supported for Riders'}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="border-t border-gray-200 pt-3 space-y-2 text-xs font-medium">
+                  <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Target Bank Account Info</span>
+                  {selectedType === 'vendor' ? (
+                    <div className="space-y-1 font-mono text-[11px] text-slate-700">
+                      <div><span className="font-sans text-[9px] uppercase text-slate-400 block">Account Holder:</span> {resolvedEntity.vendorProfile?.account_holder_name || "—"}</div>
+                      <div><span className="font-sans text-[9px] uppercase text-slate-400 block">Bank Name:</span> {resolvedEntity.vendorProfile?.bank_name || "—"}</div>
+                      <div><span className="font-sans text-[9px] uppercase text-slate-400 block">Account Number:</span> {resolvedEntity.vendorProfile?.account_number || "—"}</div>
+                      <div><span className="font-sans text-[9px] uppercase text-slate-400 block">IFSC Code:</span> {resolvedEntity.vendorProfile?.ifsc_code || "—"}</div>
+                      <div><span className="font-sans text-[9px] uppercase text-slate-400 block">UPI ID:</span> {resolvedEntity.vendorProfile?.upi_id || "—"}</div>
+                    </div>
+                  ) : (
+                    <div className="space-y-1 font-mono text-[11px] text-slate-700">
+                      <div><span className="font-sans text-[9px] uppercase text-slate-400 block">Account Holder:</span> {resolvedEntity.riderProfile?.account_holder_name || resolvedEntity.rider?.account_holder_name || "—"}</div>
+                      <div><span className="font-sans text-[9px] uppercase text-slate-400 block">Bank Name:</span> {resolvedEntity.riderProfile?.bank_name || resolvedEntity.rider?.bank_name || "—"}</div>
+                      <div><span className="font-sans text-[9px] uppercase text-slate-400 block">Account Number:</span> {resolvedEntity.riderProfile?.account_number || resolvedEntity.rider?.account_number || "—"}</div>
+                      <div><span className="font-sans text-[9px] uppercase text-slate-400 block">IFSC Code:</span> {resolvedEntity.riderProfile?.ifsc_code || resolvedEntity.rider?.ifsc_code || "—"}</div>
+                      <div><span className="font-sans text-[9px] uppercase text-slate-400 block">UPI ID:</span> {resolvedEntity.riderProfile?.upi_id || resolvedEntity.rider?.upi_id || "—"}</div>
+                    </div>
                   )}
                 </div>
               </div>
+
+              {/* RIGHT COLUMN: PAYMENT DOCUMENTATION ENTRY FORM INPUTS */}
+              <form onSubmit={(e) => { e.preventDefault(); executePayFinalization(); }} className="space-y-4">
+                <div className="space-y-1">
+                  <label className="text-[9px] font-bold text-slate-400 tracking-wider block uppercase">Payment Method</label>
+                  <select 
+                    value={formPaymentMethod} 
+                    onChange={(e) => setFormPaymentMethod(e.target.value)}
+                    className="w-full text-xs p-2 bg-gray-50 border border-gray-200 rounded-lg text-slate-700 focus:outline-none focus:bg-white focus:border-emerald-600 transition-all font-medium"
+                  >
+                    <option value="Bank Transfer">Bank Wire IMPS / NEFT</option>
+                    <option value="UPI">UPI Transfer</option>
+                    <option value="Internal Wallet Transfer">Internal Wallet Adjustment</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[9px] font-bold text-slate-500 tracking-wider block uppercase">Transaction UTR / Reference Key</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Enter the transaction UTR number"
+                    value={formUtr}
+                    onChange={(e) => setFormUtr(e.target.value)}
+                    className="w-full h-9 px-3 border border-gray-200 rounded-lg text-xs bg-gray-50 focus:outline-none focus:bg-white focus:border-emerald-600 transition-all font-mono text-center"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[9px] font-bold text-slate-500 tracking-wider block uppercase">Remarks / Internal Memo</label>
+                  <textarea
+                    placeholder="Add payout documentation notes..."
+                    value={formRemarks}
+                    onChange={(e) => setFormRemarks(e.target.value)}
+                    rows={2}
+                    className="w-full p-2.5 border border-gray-200 rounded-lg text-xs bg-gray-50 focus:outline-none focus:bg-white focus:border-emerald-600 transition-all"
+                  />
+                </div>
+
+                <div className="flex items-center gap-2 pt-2 border-t border-gray-100 text-xs font-bold uppercase tracking-wider">
+                  <button type="button" onClick={() => setPayModalOpen(false)} className="flex-1 h-9 border border-gray-200 rounded-lg text-slate-400 hover:bg-gray-50 cursor-pointer">Cancel</button>
+                  <button type="submit" disabled={actionLoading || !formUtr.trim()} className="flex-1 h-9 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg shadow-3xs flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50">
+                    {actionLoading && <Loader2 size={12} className="animate-spin" />} Confirm Payment
+                  </button>
+                </div>
+              </form>
+
             </div>
 
-            {/* Input Interactive Forms Processing Parameters Configs Elements */}
-            <div className="space-y-3">
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Clearing Channel Mechanism</label>
-                <select
-                  value={paymentMethod}
-                  onChange={(e) => setPaymentMethod(e.target.value)}
-                  className="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="Bank Transfer">Bank Transfer</option>
-                  <option value="UPI">UPI Payout Network</option>
-                  <option value="Card Payout">Card Payout</option>
-                  <option value="Wallet">Digital Wallet Network</option>
-                </select>
-              </div>
+          </div>
+        </div>
+      )}
 
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Unique Bank Transaction Reference (UTR / Reference Number)</label>
-                <input
-                  type="text"
-                  value={utrNumber}
-                  onChange={(e) => setUtrNumber(e.target.value)}
-                  placeholder="Provide sequence confirmation numeric token reference hash string"
-                  className="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
-                />
+      {/* ========================================================================================================= CONSOLIDATED REJECT DENIALS MODAL */}
+      {rejectModalOpen && selectedSettlement && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
+          <div className="bg-white border border-gray-200 rounded-xl max-w-sm w-full shadow-xl p-5 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-2 text-rose-600">
+                <XCircle size={18} className="shrink-0" />
+                <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Confirm Payout Rejection</h3>
               </div>
+              <button onClick={() => setRejectModalOpen(false)} className="text-slate-400 hover:text-slate-600 cursor-pointer">
+                <X size={16} />
+              </button>
+            </div>
+            
+            <p className="text-xs text-slate-500 font-normal leading-relaxed">
+              Are you sure you want to deny this request? Please document the justification parameters below.
+            </p>
 
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Internal Ledger Accounting Audit Remarks / Notes</label>
-                <textarea
-                  value={remarks}
-                  onChange={(e) => setRemarks(e.target.value)}
-                  placeholder="Optional administrative operational oversight notes tracking annotations strings log mapping context."
-                  rows={2}
-                  className="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none text-xs"
-                />
-              </div>
+            <div className="space-y-1">
+              <label className="text-[9px] font-bold text-slate-500 uppercase tracking-wider block">Reason for Rejection</label>
+              <textarea
+                required
+                placeholder="State reason for rejecting the payout..."
+                value={formRemarks}
+                onChange={(e) => setFormRemarks(e.target.value)}
+                rows={3}
+                className="w-full p-2.5 border border-gray-200 rounded-lg text-xs bg-gray-50 focus:outline-none focus:bg-white focus:border-rose-600 transition-all"
+              />
             </div>
 
-            {/* Control Adjustments Dispatches Matrix Triggers */}
-            <div className="flex items-center justify-end gap-3 pt-4 border-t border-gray-100 dark:border-gray-700">
-              <button onClick={closeModal} className="px-4 py-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors">Cancel</button>
-              <button
-                onClick={handleApprove}
-                disabled={!utrNumber.trim()}
-                className="px-4 py-1.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-50 disabled:cursor-not-allowed rounded-lg shadow-sm transition-colors"
-              >
-                Confirm Asset Release & Mark Paid
+            <div className="flex items-center gap-2 pt-2 border-t border-gray-100 text-xs font-bold uppercase tracking-wider">
+              <button type="button" onClick={() => setRejectModalOpen(false)} className="flex-1 h-9 border border-gray-200 rounded-lg text-slate-400 hover:bg-gray-50 cursor-pointer">Cancel</button>
+              <button type="button" onClick={executeRejectFinalization} disabled={actionLoading || !formRemarks.trim()} className="flex-1 h-9 bg-rose-600 hover:bg-rose-700 text-white rounded-lg shadow-3xs flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50">
+                {actionLoading && <Loader2 size={12} className="animate-spin" />} Confirm Reject
               </button>
             </div>
           </div>
-        )}
-      </Modal>
-
-      {/* Rejection State Modal Segment View Panel */}
-      <Modal isOpen={activeModal === "reject"} onClose={closeModal} title="Confirm Transaction Denying Action Request">
-        <div className="space-y-4">
-          <div className="flex items-start gap-2.5 p-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-400 rounded-lg text-xs">
-            <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
-            <p>Denying clearing action requests cancels the target row operational workflow path cycle execution context parameters securely. This state modifier adjust cannot be effortlessly reverted.</p>
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">Reason for Processing Denial Verification Rejection</label>
-            <textarea
-              value={remarks}
-              onChange={(e) => setRemarks(e.target.value)}
-              placeholder="State structural reasoning rationale behind transaction denial processes mapping details."
-              rows={3}
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-xs resize-none"
-            />
-          </div>
-          <div className="flex items-center justify-end gap-3 pt-3 border-t border-gray-100 dark:border-gray-700">
-            <button onClick={closeModal} className="px-4 py-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors">Cancel</button>
-            <button onClick={handleReject} className="px-4 py-1.5 text-xs font-semibold bg-rose-600 hover:bg-rose-700 text-white rounded-lg shadow-sm transition-colors">Confirm Rejection State Assignment</button>
-          </div>
         </div>
-      </Modal>
+      )}
+
     </div>
   );
 }
