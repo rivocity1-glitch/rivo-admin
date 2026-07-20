@@ -21,9 +21,6 @@ import {
 } from "lucide-react";
 import { supabase } from "../../../lib/supabase";
 
-// =========================================================
-// DATA TYPE DEFINITIONS
-// =========================================================
 interface VendorProfile {
   id: string;
   vendor_id: string;
@@ -140,13 +137,11 @@ interface Order {
 }
 
 export function Settlements() {
-  // --- Active Tab State Engine ---
   const [activeTab, setActiveTab] = useState<'overview' | 'vendor' | 'rider' | 'ledger' | 'audit'>('overview');
   const [globalSearch, setGlobalSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [realtimePulse, setRealtimePulse] = useState(false);
 
-  // --- Mapped States Data Models ---
   const [vendorSettlements, setVendorSettlements] = useState<VendorSettlement[]>([]);
   const [riderSettlements, setRiderSettlements] = useState<RiderSettlement[]>([]);
   const [vendors, setVendors] = useState<Vendor[]>([]);
@@ -158,23 +153,19 @@ export function Settlements() {
   const [ledger, setLedger] = useState<FinancialLedger[]>([]);
   const [subscriptionRequests, setSubscriptionRequests] = useState<SubscriptionPaymentRequest[]>([]);
 
-  // NEW: Custom Date Range Pickers States
   const [startDate, setStartDate] = useState<string>("");
   const [endDate, setStartDateEnd] = useState<string>("");
 
-  // --- Operation Control Modals State Matrix ---
   const [detailsModalOpen, setDetailsModalOpen] = useState(false);
   const [payModalOpen, setPayModalOpen] = useState(false);
   const [rejectModalOpen, setRejectModalOpen] = useState(false);
   const [selectedSettlement, setSelectedSettlement] = useState<any>(null);
   const [selectedType, setSelectedType] = useState<'vendor' | 'rider'>('vendor');
 
-  // --- Execution Form Fields Parameters ---
   const [formUtr, setFormUtr] = useState("");
   const [formRemarks, setFormRemarks] = useState("");
   const [formPaymentMethod, setFormPaymentMethod] = useState("Bank Transfer");
 
-  // --- Filter Engines Configuration ---
   const [ledgerFilter, setLedgerFilter] = useState("all");
   const [auditFilter, setAuditFilter] = useState({ entity: "all", status: "all" });
   const [actionLoading, setActionLoading] = useState(false);
@@ -185,10 +176,14 @@ export function Settlements() {
     setTimeout(() => setToast(null), 4000);
   };
 
-  // DATA HYDRATION ENGINE
   const loadDatabaseState = useCallback(async () => {
     try {
       setRealtimePulse(true);
+
+      // Task 3: Verify and log admin session context
+      const { data: { user } } = await supabase.auth.getUser();
+      console.log("Authenticated User:", user);
+
       const [
         resVSet, resRSet, resVendors, resVProf, resRiders, 
         resRProf, resWallets, resOrders, resLedger, resSubs
@@ -204,6 +199,43 @@ export function Settlements() {
         supabase.from("financial_ledger").select("*").order("created_at", { ascending: false }),
         supabase.from("subscription_payment_requests").select("*").eq("status", "approved")
       ]);
+
+      // Task 4 & 5: Log queries and check for Postgres database errors[cite: 6]
+      if (resVSet.error) console.error("vendor_settlements error:", resVSet.error);
+      if (resRSet.error) console.error("rider_settlements error:", resRSet.error);
+      if (resVendors.error) console.error("vendors error:", resVendors.error);
+      if (resVProf.error) console.error("vendor_profiles error:", resVProf.error);
+      if (resRiders.error) console.error("riders error:", resRiders.error);
+      if (resRProf.error) console.error("rider_profiles error:", resRProf.error);
+      if (resWallets.error) console.error("wallets error:", resWallets.error);
+      if (resOrders.error) console.error("orders error:", resOrders.error);
+      if (resLedger.error) console.error("financial_ledger error:", resLedger.error);
+      if (resSubs.error) console.error("subscription_payment_requests error:", resSubs.error);
+
+      console.log("Vendor Settlements response:", resVSet);
+      console.log("Rider Settlements response:", resRSet);
+      console.log("Vendors response:", resVendors);
+      console.log("Riders response:", resRiders);
+      console.log("Vendor Profiles response:", resVProf);
+      console.log("Rider Profiles response:", resRProf);
+
+      // Task 6 & 7: Check mapping identities
+      if (resVSet.data && resVendors.data) {
+        resVSet.data.forEach(vs => {
+          const matchFound = resVendors.data!.some(v => v.id === vs.vendor_id);
+          if (!matchFound) {
+            console.warn(`UUID Mismatch detected: settlement ${vs.id} references vendor_id ${vs.vendor_id} which does not exist in vendors table.`);
+          }
+        });
+      }
+      if (resRSet.data && resRiders.data) {
+        resRSet.data.forEach(rs => {
+          const matchFound = resRiders.data!.some(r => r.id === rs.rider_id);
+          if (!matchFound) {
+            console.warn(`UUID Mismatch detected: settlement ${rs.id} references rider_id ${rs.rider_id} which does not exist in riders table.`);
+          }
+        });
+      }
 
       if (resVSet.data) setVendorSettlements(resVSet.data);
       if (resRSet.data) setRiderSettlements(resRSet.data);
@@ -223,7 +255,6 @@ export function Settlements() {
     }
   }, []);
 
-  // Setup Live Realtime Stream Channels Mappings
   useEffect(() => {
     loadDatabaseState();
     const tables = [
@@ -242,9 +273,6 @@ export function Settlements() {
     };
   }, [loadDatabaseState]);
 
-  // =========================================================================
-  // UNIFIED WORKSPACE RELATED DATA RESOLUTION RESOLVER ENGINE
-  // =========================================================================
   const resolvedEntity = useMemo(() => {
     if (!selectedSettlement) return null;
 
@@ -296,9 +324,6 @@ export function Settlements() {
     }
   }, [selectedSettlement, selectedType, vendors, vendorProfiles, riders, riderProfiles, wallets]);
 
-  // =========================================================
-  // OVERVIEW METRICS TIMEFRAME PARSER MATRIX WITH CUSTOM DATE RANGE
-  // =========================================================
   const metrics = useMemo(() => {
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
@@ -358,9 +383,6 @@ export function Settlements() {
     };
   }, [orders, subscriptionRequests, vendorSettlements, riderSettlements, startDate, endDate]);
 
-  // =========================================================
-  // GLOBAL SEARCH MATRIX FILTER
-  // =========================================================
   const matchesGlobalSearch = useCallback((entityId: string, type: 'vendor' | 'rider', utr: string = "", settlementId: string = "") => {
     if (!globalSearch.trim()) return true;
     const query = globalSearch.toLowerCase();
@@ -382,9 +404,6 @@ export function Settlements() {
     }
   }, [globalSearch, vendors, riders]);
 
-  // =========================================================
-  // OPERATIONS HANDLERS
-  // =========================================================
   const handleOpenPayWorkflow = (settlement: any, type: 'vendor' | 'rider') => {
     setSelectedSettlement(settlement);
     setSelectedType(type);
@@ -425,9 +444,12 @@ export function Settlements() {
         })
         .eq('id', selectedSettlement.id);
 
-      if (patchError) throw patchError;
+      if (patchError) {
+        console.error(`Error updating ${targetTable}:`, patchError);
+        throw patchError;
+      }
 
-      await supabase
+      const { error: ledgerError } = await supabase
         .from('financial_ledger')
         .insert([{
           entity_type: selectedType,
@@ -438,6 +460,8 @@ export function Settlements() {
           reference_id: selectedSettlement.id,
           remarks: `Payout processed. Method: ${formPaymentMethod}. UTR: ${formUtr}. Remarks: ${formRemarks}`
         }]);
+
+      if (ledgerError) console.error("Error writing to financial_ledger:", ledgerError);
 
       setPayModalOpen(false);
       triggerToast("Payment recorded successfully.");
@@ -463,7 +487,10 @@ export function Settlements() {
         })
         .eq('id', selectedSettlement.id);
 
-      if (rejectError) throw rejectError;
+      if (rejectError) {
+        console.error(`Error reflecting rejection on ${targetTable}:`, rejectError);
+        throw rejectError;
+      }
 
       setRejectModalOpen(false);
       triggerToast("Settlement request rejected.");
@@ -1004,10 +1031,8 @@ export function Settlements() {
               </button>
             </div>
 
-            {/* TWO COLUMN WORKSPACE GRID CONTAINER: LEFT (QR & BANK SPECS) | RIGHT (FORM INPUTS) */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               
-              {/* LEFT COLUMN: DESTINATION VERIFICATION DETAILS */}
               <div className="flex flex-col p-4 bg-gray-50 rounded-xl border border-gray-200 space-y-4">
                 <div className="flex flex-col items-center text-center">
                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2 block">Payment Destination QR</span>
@@ -1060,7 +1085,6 @@ export function Settlements() {
                 </div>
               </div>
 
-              {/* RIGHT COLUMN: PAYMENT DOCUMENTATION ENTRY FORM INPUTS */}
               <form onSubmit={(e) => { e.preventDefault(); executePayFinalization(); }} className="space-y-4">
                 <div className="space-y-1">
                   <label className="text-[9px] font-bold text-slate-400 tracking-wider block uppercase">Payment Method</label>
@@ -1076,7 +1100,7 @@ export function Settlements() {
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-[9px] font-bold text-slate-500 tracking-wider block uppercase">Transaction UTR / Reference Key</label>
+                  <label className="text-[9px] font-bold text-slate-505 tracking-wider block uppercase">Transaction UTR / Reference Key</label>
                   <input
                     type="text"
                     required
@@ -1088,7 +1112,7 @@ export function Settlements() {
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-[9px] font-bold text-slate-500 tracking-wider block uppercase">Remarks / Internal Memo</label>
+                  <label className="text-[9px] font-bold text-slate-505 tracking-wider block uppercase">Remarks / Internal Memo</label>
                   <textarea
                     placeholder="Add payout documentation notes..."
                     value={formRemarks}
@@ -1131,7 +1155,7 @@ export function Settlements() {
             </p>
 
             <div className="space-y-1">
-              <label className="text-[9px] font-bold text-slate-500 uppercase tracking-wider block">Reason for Rejection</label>
+              <label className="text-[9px] font-bold text-slate-505 uppercase tracking-wider block">Reason for Rejection</label>
               <textarea
                 required
                 placeholder="State reason for rejecting the payout..."

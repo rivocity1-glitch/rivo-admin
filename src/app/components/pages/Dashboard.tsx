@@ -9,7 +9,6 @@ import {
   Activity,
   Calendar, 
   Clock, 
-  ArrowUpRight, 
   Award, 
   AlertTriangle, 
   FileText 
@@ -17,9 +16,6 @@ import {
 import { cn } from "../../../lib/utils";
 import { supabase } from "../../../lib/supabase";
 
-// ==================================================
-// SKELETON COMPONENT FOR SCANNABILITY & SMOOTH UI
-// ==================================================
 function SkeletonRow({ cols = 3 }: { cols?: number }) {
   return (
     <div className="w-full space-y-2 animate-pulse py-1">
@@ -32,9 +28,6 @@ function SkeletonRow({ cols = 3 }: { cols?: number }) {
   );
 }
 
-// ==================================================
-// PERFORMANCE OPTIMIZED HOVER COUNTER HELPER
-// ==================================================
 function AnimatedCounter({ value, isCurrency = false }: { value: number; isCurrency?: boolean }) {
   const [count, setCount] = useState(0);
 
@@ -67,15 +60,11 @@ function AnimatedCounter({ value, isCurrency = false }: { value: number; isCurre
 }
 
 export function Dashboard() {
-  // ==================================================
-  // APPLICATION LOCAL STATE INITIALIZATIONS
-  // ==================================================
   const [dateRange, setDateRange] = useState("last30");
   const [customDates, setCustomDates] = useState({ start: "", end: "" });
   const [currentTime, setCurrentTime] = useState(new Date()); 
   const [activeTrendTab, setActiveTrendTab] = useState("revenue");
   
-  // Independent Loading States to prevent cascading blocker bugs
   const [kpiLoading, setKpiLoading] = useState(true);
   const [chartLoading, setChartLoading] = useState(true);
   const [vendorsLoading, setVendorsLoading] = useState(true);
@@ -83,7 +72,6 @@ export function Dashboard() {
   const [actionsLoading, setActionsLoading] = useState(true);
   const [activityLoading, setActivityLoading] = useState(true);
 
-  // Tooltip tracking variables state
   const [hoveredPoint, setHoveredPoint] = useState<{ label: string; value: string; index: number } | null>(null);
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
 
@@ -111,21 +99,7 @@ export function Dashboard() {
   const [topRiders, setTopRiders] = useState<any[]>([]);
   const [chartData, setChartData] = useState<{ label: string; value: number }[]>([]);
 
-  // Derived Business Summary values from dynamic state metrics
   const calculatedAOV = metrics.totalOrders > 0 ? Math.round(metrics.gmv / metrics.totalOrders) : 0;
-
-  // Dynamic subtitle dictionary for the updated header
-  const getFilterSubtitle = () => {
-    switch (dateRange) {
-      case "today": return "Today";
-      case "last7": return "Last 7 Days";
-      case "last30": return "Last 30 Days";
-      case "thisMonth": return "This Month";
-      case "lastMonth": return "Last Month";
-      case "custom": return "Custom Range";
-      default: return "Last 30 Days";
-    }
-  };
 
   const getMetricTabLabel = () => {
     switch (activeTrendTab) {
@@ -138,9 +112,6 @@ export function Dashboard() {
     }
   };
 
-  // ==================================================
-  // LIVE TICKING CLOCK TRIGGER
-  // ==================================================
   useEffect(() => {
     const timer = setInterval(() => {
       setCurrentTime(new Date());
@@ -148,9 +119,6 @@ export function Dashboard() {
     return () => clearInterval(timer);
   }, []);
 
-  // ==================================================
-  // AUTOMATIC BACKGROUND REFRESH CYCLE
-  // ==================================================
   useEffect(() => {
     fetchAllSections();
     const autoRefresh = setInterval(() => {
@@ -159,7 +127,6 @@ export function Dashboard() {
     return () => clearInterval(autoRefresh);
   }, [dateRange, customDates]);
 
-  // Re-run chart generation dynamically if the chart data mode changes
   useEffect(() => {
     if (!chartLoading) {
       regenerateChartData();
@@ -183,7 +150,7 @@ export function Dashboard() {
     } else if (dateRange === "custom" && customDates.start) {
       startDate = new Date(customDates.start);
     } else {
-      startDate.setDate(now.getDate() - 30); // Default Fallback
+      startDate.setDate(now.getDate() - 30);
     }
     return startDate;
   };
@@ -196,10 +163,6 @@ export function Dashboard() {
     fetchPendingActions();
     fetchRecentActivity();
   };
-
-  // ==================================================
-  // INDEPENDENT DATA PIPELINES (ERROR ISOLATION)
-  // ==================================================
   
   async function fetchKpisAndMetrics() {
     try {
@@ -230,7 +193,7 @@ export function Dashboard() {
         ordersToday: todayOrdersRes.count || 0
       });
     } catch (err) {
-      console.error("KPI dashboard module loading failure:", err);
+      console.error(err);
     } finally {
       setKpiLoading(false);
     }
@@ -241,7 +204,7 @@ export function Dashboard() {
       setChartLoading(true);
       regenerateChartData();
     } catch (err) {
-      console.error("Chart metrics calculation breakdown:", err);
+      console.error(err);
     } finally {
       setChartLoading(false);
     }
@@ -279,53 +242,33 @@ export function Dashboard() {
       orders.forEach(o => {
         const hr = new Date(o.created_at).getHours();
         const lbl = `${hr.toString().padStart(2, "0")}:00`;
-        if (timeMap[lbl] !== undefined) {
-          timeMap[lbl] += valueExtractor(o);
-        }
+        if (timeMap[lbl] !== undefined) timeMap[lbl] += valueExtractor(o);
       });
-    } else if (dateRange === "last7" || dateRange === "last30") {
-      const daysCount = dateRange === "last7" ? 7 : 30;
-      for (let i = daysCount - 1; i >= 0; i--) {
-        const d = new Date();
-        d.setDate(d.getDate() - i);
-        const lbl = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-        timeMap[lbl] = 0;
-        labelSequence.push(lbl);
-      }
-      orders.forEach(o => {
-        const lbl = new Date(o.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" });
-        if (timeMap[lbl] !== undefined) {
-          timeMap[lbl] += valueExtractor(o);
-        }
-      });
-    } else if (dateRange === "thisMonth" || dateRange === "lastMonth" || dateRange === "custom") {
+    } else {
       const startObj = getDateScope();
       const endObj = dateRange === "custom" && customDates.end ? new Date(customDates.end) : new Date();
       const iterator = new Date(startObj);
+      
       while (iterator <= endObj) {
-        const lbl = iterator.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-        if (!labelSequence.includes(lbl)) {
-          timeMap[lbl] = 0;
-          labelSequence.push(lbl);
-        }
+        const day = String(iterator.getDate()).padStart(2, '0');
+        const month = String(iterator.getMonth() + 1).padStart(2, '0');
+        const year = iterator.getFullYear();
+        const lbl = `${day}/${month}/${year}`;
+        
+        timeMap[lbl] = 0;
+        labelSequence.push(lbl);
         iterator.setDate(iterator.getDate() + 1);
       }
+      
       orders.forEach(o => {
-        const lbl = new Date(o.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+        const dObj = new Date(o.created_at);
+        const day = String(dObj.getDate()).padStart(2, '0');
+        const month = String(dObj.getMonth() + 1).padStart(2, '0');
+        const year = dObj.getFullYear();
+        const lbl = `${day}/${month}/${year}`;
+        
         if (timeMap[lbl] !== undefined) {
           timeMap[lbl] += valueExtractor(o);
-        }
-      });
-    } else {
-      const daysOfWeek = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-      daysOfWeek.forEach(d => {
-        timeMap[d] = 0;
-        labelSequence.push(d);
-      });
-      orders.forEach(o => {
-        const d = new Date(o.created_at).toLocaleDateString("en-US", { weekday: "long" });
-        if (timeMap[d] !== undefined) {
-          timeMap[d] += valueExtractor(o);
         }
       });
     }
@@ -342,7 +285,6 @@ export function Dashboard() {
     try {
       setVendorsLoading(true);
       const isoStart = getDateScope().toISOString();
-
       const { data: orders } = await supabase
         .from("orders")
         .select("vendor_id, total_amount")
@@ -363,7 +305,6 @@ export function Dashboard() {
       });
 
       const uniqueVendorIds = Object.keys(vendorAgg);
-      
       const { data: vendorProfiles } = await supabase
         .from("vendor_profiles")
         .select("vendor_id, store_name")
@@ -372,7 +313,7 @@ export function Dashboard() {
       const combined = uniqueVendorIds.map(vId => {
         const vpInfo = vendorProfiles?.find(vp => vp.vendor_id === vId);
         return {
-          name: vpInfo?.store_name || `Store Profile #${vId.slice(0, 4)}`,
+          name: vpInfo?.store_name || `Store #${vId.slice(0, 4)}`,
           orders: vendorAgg[vId].count,
           revenue: vendorAgg[vId].sum
         };
@@ -380,7 +321,7 @@ export function Dashboard() {
 
       setTopVendors(combined);
     } catch (err) {
-      console.error("Top vendors retrieval pipeline broken:", err);
+      console.error(err);
     } finally {
       setVendorsLoading(false);
     }
@@ -390,8 +331,6 @@ export function Dashboard() {
     try {
       setRidersLoading(true);
       const isoStart = getDateScope().toISOString();
-
-      // Step 1: Fetch all delivered orders within the selected date scope
       const { data: orders } = await supabase
         .from("orders")
         .select("rider_id, rider_earning")
@@ -403,20 +342,15 @@ export function Dashboard() {
         return;
       }
 
-      // Step 2: Group orders by rider_id and calculate metrics
       const riderAgg: Record<string, { count: number; sum: number }> = {};
       orders.forEach(o => {
         if (!o.rider_id) return;
-        if (!riderAgg[o.rider_id]) {
-          riderAgg[o.rider_id] = { count: 0, sum: 0 };
-        }
+        if (!riderAgg[o.rider_id]) riderAgg[o.rider_id] = { count: 0, sum: 0 };
         riderAgg[o.rider_id].count += 1;
         riderAgg[o.rider_id].sum += Number(o.rider_earning || 0);
       });
 
       const uniqueRiderIds = Object.keys(riderAgg);
-
-      // Step 3: Fetch structural rider profiles only
       const { data: riders } = await supabase
         .from("riders")
         .select("id, rider_name, vehicle_type")
@@ -427,9 +361,8 @@ export function Dashboard() {
         return;
       }
 
-      // Step 4: Merge datasets together
       const formatted = riders.map(r => ({
-        name: r.rider_name || `Rider Profile #${r.id.slice(0, 4)}`,
+        name: r.rider_name || `Rider #${r.id.slice(0, 4)}`,
         orders: riderAgg[r.id]?.count || 0,
         earnings: riderAgg[r.id]?.sum || 0,
         vehicleType: r.vehicle_type || "N/A"
@@ -437,7 +370,7 @@ export function Dashboard() {
 
       setTopRiders(formatted);
     } catch (err) {
-      console.error("Top riders ingestion pipeline warning:", err);
+      console.error(err);
     } finally {
       setRidersLoading(false);
     }
@@ -462,7 +395,7 @@ export function Dashboard() {
         openSupport: supTick.count || 0
       });
     } catch (err) {
-      console.error("Action Center counters loading issue:", err);
+      console.error(err);
     } finally {
       setActionsLoading(false);
     }
@@ -500,7 +433,7 @@ export function Dashboard() {
       refundsRes.data?.forEach(r => {
         logStream.push({
           id: r.id,
-          title: `Refund Processing Request #${r.id.slice(0, 5)} flagged: ${r.status}`,
+          title: `Refund Request #${r.id.slice(0, 5)} flagged: ${r.status}`,
           timestamp: new Date(r.created_at)
         });
       });
@@ -510,10 +443,10 @@ export function Dashboard() {
       setRecentActivities(sorted.map(item => ({
         id: item.id,
         title: item.title,
-        time: item.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        time: item.timestamp.toLocaleTimeString("en-IN", { hour: '2-digit', minute: '2-digit' })
       })));
     } catch (err) {
-      console.error("Audit Stream feed integration failure:", err);
+      console.error(err);
     } finally {
       setActivityLoading(false);
     }
@@ -524,9 +457,16 @@ export function Dashboard() {
   };
 
   const getBadgeStyles = (count: number) => {
-    if (count === 0) return "bg-slate-50 text-slate-400 border-slate-200/60";
-    if (count <= 5) return "bg-amber-50 text-amber-600 border-amber-200 animate-pulse";
-    return "bg-rose-50 text-rose-600 border-rose-200 font-bold shadow-sm shadow-rose-100 animate-pulse";
+    if (count === 0) return "bg-slate-50 text-slate-400 border-slate-200";
+    if (count <= 5) return "bg-amber-50 text-amber-600 border-amber-200";
+    return "bg-rose-50 text-rose-600 border-rose-200 font-bold shadow-sm shadow-rose-100";
+  };
+
+  const formatIndianDate = (date: Date) => {
+    const d = String(date.getDate()).padStart(2, '0');
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const y = date.getFullYear();
+    return `${d}/${m}/${y}`;
   };
 
   return (
@@ -538,17 +478,17 @@ export function Dashboard() {
         .animate-fadeIn { animation: fadeIn 200ms cubic-bezier(0.16, 1, 0.3, 1) forwards; }
       `}</style>
 
-      {/* Top Header Controls Row */}
+      {/* Dynamic Header Controls Row */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-5">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Dashboard</h1>
           <div className="flex flex-col sm:flex-row sm:items-center gap-2 mt-1 text-xs text-slate-500">
-            <span className="font-semibold text-blue-600 flex items-center gap-1 bg-blue-50/60 px-2 py-0.5 rounded-md border border-blue-100/40">
+            <span className="font-semibold text-blue-600 flex items-center gap-1 bg-blue-50/60 px-2.5 py-0.5 rounded-md border border-blue-100/40">
               <Clock className="w-3.5 h-3.5 text-blue-500" />
-              {currentTime.toLocaleDateString("en-US", { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })} — {currentTime.toLocaleTimeString()}
+              {formatIndianDate(currentTime)} — {currentTime.toLocaleTimeString("en-IN")}
             </span>
             <span className="hidden sm:inline text-slate-200">|</span>
-            <span>Real-time operational overview of the Rivo platform.</span>
+            <span>Real-time operational overview of the Rivo.City platform network ecosystem.</span>
           </div>
         </div>
 
@@ -570,18 +510,24 @@ export function Dashboard() {
           </div>
 
           {dateRange === "custom" && (
-            <div className="flex items-center gap-1.5 animate-fadeIn">
-              <input 
-                type="date" 
-                className="text-xs border border-slate-200 rounded-lg p-1.5 bg-white text-slate-600 font-medium focus:border-blue-500 focus:outline-none"
-                onChange={(e) => setCustomDates(p => ({ ...p, start: e.target.value }))}
-              />
-              <span className="text-xs font-semibold text-slate-400">to</span>
-              <input 
-                type="date" 
-                className="text-xs border border-slate-200 rounded-lg p-1.5 bg-white text-slate-600 font-medium focus:border-blue-500 focus:outline-none"
-                onChange={(e) => setCustomDates(p => ({ ...p, end: e.target.value }))}
-              />
+            <div className="flex items-center gap-2 bg-slate-50 p-1 border border-slate-200 rounded-lg animate-fadeIn">
+              <div className="flex items-center gap-1 pl-1">
+                <span className="text-[10px] uppercase font-bold text-slate-400">From</span>
+                <input 
+                  type="date" 
+                  className="text-xs border-none bg-transparent text-slate-600 font-semibold focus:outline-none focus:ring-0 p-0.5"
+                  onChange={(e) => setCustomDates(p => ({ ...p, start: e.target.value }))}
+                />
+              </div>
+              <span className="text-xs font-semibold text-slate-300">|</span>
+              <div className="flex items-center gap-1 pr-1">
+                <span className="text-[10px] uppercase font-bold text-slate-400">To</span>
+                <input 
+                  type="date" 
+                  className="text-xs border-none bg-transparent text-slate-600 font-semibold focus:outline-none focus:ring-0 p-0.5"
+                  onChange={(e) => setCustomDates(p => ({ ...p, end: e.target.value }))}
+                />
+              </div>
             </div>
           )}
 
@@ -595,9 +541,224 @@ export function Dashboard() {
         </div>
       </div>
 
-      {/* FIRST KPI ROW */}
+      {/* TWO COLUMN GRID: CHART ON LEFT, PENDING ACTIONS BOX ON RIGHT */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+        
+        {/* RESPONSIVE SMOOTH CURVED PATH CHART AREA CONTAINER */}
+        <div className="lg:col-span-2 bg-white border border-slate-200 rounded-xl p-5 animate-slideUp shadow-xs flex flex-col justify-between gap-5 min-h-[420px]">
+          
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+            <div className="flex items-start gap-2.5">
+              <div className="w-8 h-8 bg-blue-50 rounded-lg border border-blue-100 flex items-center justify-center text-blue-600 shrink-0 mt-0.5">
+                <Activity className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 tracking-tight">Sales Analytics</h3>
+                <p className="text-xs text-slate-400 mt-0.5 font-medium">
+                  Smooth curved trend telemetry visualization parameter matrix
+                </p>
+              </div>
+            </div>
+            
+            <div className="flex flex-wrap items-center bg-slate-50 p-1 border border-slate-200 rounded-xl gap-1 w-full sm:w-auto">
+              {[
+                { id: "revenue", label: "Revenue" },
+                { id: "orders", label: "Orders" },
+                { id: "commission", label: "Commission" },
+                { id: "delivery", label: "Delivery Margin" }
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => {
+                    setHoveredPoint(null);
+                    setActiveTrendTab(tab.id);
+                  }}
+                  className={cn(
+                    "text-xs px-3.5 py-1.5 font-bold rounded-lg transition-all flex-1 sm:flex-none text-center whitespace-nowrap cursor-pointer",
+                    activeTrendTab === tab.id || (tab.id === "delivery" && activeTrendTab === "deliveryRevenue")
+                      ? "bg-white text-blue-600 shadow-2xs border border-slate-200/80" 
+                      : "text-slate-500 hover:text-slate-900 hover:bg-slate-100/60"
+                  )}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Dynamic & Centered Fully Responsive Curved Line SVG Grid */}
+          <div 
+            className="relative w-full flex-1 min-h-[220px] flex items-center justify-center select-none"
+            onMouseMove={(e) => {
+              const rect = e.currentTarget.getBoundingClientRect();
+              setMousePos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+            }}
+          >
+            {hoveredPoint && (
+              <div 
+                className="absolute z-50 pointer-events-none bg-slate-950 text-white px-3 py-2 rounded-xl shadow-xl transition-all duration-150 ease-out flex flex-col animate-fadeIn border border-slate-800"
+                style={{ 
+                  left: `${mousePos.x + 16}px`, 
+                  top: `${mousePos.y - 24}px`,
+                  transform: 'translate3d(0, 0, 0)'
+                }}
+              >
+                <span className="text-[9px] uppercase font-bold tracking-wider text-slate-400">{hoveredPoint.label}</span>
+                <span className="text-[10px] font-semibold text-slate-300 mt-0.5">{getMetricTabLabel()}</span>
+                <span className="text-sm font-black mt-0.5 text-[#2ECC71]">{hoveredPoint.value}</span>
+              </div>
+            )}
+
+            {chartLoading ? (
+              <div className="w-full flex flex-col items-center justify-center space-y-2 py-4">
+                <div className="h-32 w-full bg-slate-50 animate-pulse rounded-xl border border-slate-100"/>
+              </div>
+            ) : chartData.length === 0 ? (
+              <div className="text-xs text-slate-400 font-medium tracking-wide flex flex-col items-center gap-1.5 py-8 animate-fadeIn">
+                <Activity className="w-5 h-5 text-slate-300" />
+                <span>No telemetry metrics calculated for this period</span>
+              </div>
+            ) : (() => {
+              const colorConfig = {
+                revenue: "#2ECC71",
+                commission: "#7C3AED",
+                delivery: "#EA580C",
+                deliveryRevenue: "#EA580C",
+                orders: "#2563EB"
+              }[activeTrendTab] || "#2ECC71";
+
+              const w = 800, h = 200, p = 32;
+              const maxVal = Math.max(...chartData.map(d => d.value)) || 1;
+              
+              const coords = chartData.map((d, i) => ({
+                x: p + (i / (chartData.length - 1 || 1)) * (w - p * 2),
+                y: h - p - (d.value / maxVal) * (h - p * 2.5),
+                label: d.label,
+                value: activeTrendTab === "orders" ? `${d.value} Orders` : `₹${Math.round(d.value).toLocaleString("en-IN")}`
+              }));
+
+              let pathD = `M ${coords[0].x} ${coords[0].y}`;
+              for (let i = 0; i < coords.length - 1; i++) {
+                const cpX1 = coords[i].x + (coords[i+1].x - coords[i].x) / 2;
+                const cpX2 = coords[i].x + (coords[i+1].x - coords[i].x) / 2;
+                pathD += ` C ${cpX1} ${coords[i].y}, ${cpX2} ${coords[i+1].y}, ${coords[i+1].x} ${coords[i+1].y}`;
+              }
+              const areaD = `${pathD} L ${coords[coords.length - 1].x} ${h - p} L ${coords[0].x} ${h - p} Z`;
+
+              const labelSkipInterval = Math.ceil(chartData.length / 8);
+
+              return (
+                <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="xMidYMid meet" className="w-full h-full overflow-visible">
+                  <defs>
+                    <linearGradient id="smoothAreaGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={colorConfig} stopOpacity="0.12" />
+                      <stop offset="100%" stopColor={colorConfig} stopOpacity="0.00" />
+                    </linearGradient>
+                  </defs>
+                  
+                  {/* Grid Guidelines */}
+                  <line x1={p} y1={p} x2={w - p} y2={p} stroke="#F8FAFC" strokeWidth="1" />
+                  <line x1={p} y1={(h - p * 2) / 2 + p / 2} x2={w - p} y2={(h - p * 2) / 2 + p / 2} stroke="#F8FAFC" strokeWidth="1" />
+                  <line x1={p} y1={h - p} x2={w - p} y2={h - p} stroke="#F1F5F9" strokeWidth="1.5" />
+                  
+                  {/* Area fill and curved path stroke configurations */}
+                  <path d={areaD} fill="url(#smoothAreaGradient)" className="transition-all duration-300 ease-in-out" />
+                  <path d={pathD} fill="none" stroke={colorConfig} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="transition-all duration-300 ease-in-out" />
+                  
+                  {coords.map((pt, idx) => {
+                    const isHovered = hoveredPoint?.index === idx;
+                    const showLabel = idx % labelSkipInterval === 0 || idx === coords.length - 1;
+                    return (
+                      <g key={idx} className="cursor-pointer">
+                        <circle 
+                          cx={pt.x} cy={pt.y} r="24" fill="transparent"
+                          onMouseEnter={() => setHoveredPoint({ label: pt.label, value: pt.value, index: idx })}
+                          onMouseLeave={() => setHoveredPoint(null)}
+                        />
+                        <circle 
+                          cx={pt.x} cy={pt.y} r={isHovered ? "6" : "3.5"} 
+                          fill={isHovered ? colorConfig : "#FFFFFF"} stroke={colorConfig} strokeWidth={isHovered ? "2.5" : "1.5"}
+                          style={{ transformOrigin: `${pt.x}px ${pt.y}px`, transition: 'all 150ms ease-out' }}
+                        />
+                        {showLabel && (
+                          <text x={pt.x} y={h - 10} textAnchor="middle" className="text-[9px] font-bold fill-slate-400 pointer-events-none tracking-tight">
+                            {pt.label}
+                          </text>
+                        )}
+                      </g>
+                    );
+                  })}
+                </svg>
+              );
+            })()}
+          </div>
+
+          {/* Business Summary Bottom Strip Row */}
+          <div className="border-t border-slate-100 pt-4 grid grid-cols-2 sm:grid-cols-4 gap-4 shrink-0">
+            <div className="bg-slate-50/60 rounded-xl p-3 border border-slate-100 hover:bg-slate-50 transition-colors">
+              <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Gross Volume Totals</p>
+              <p className="text-sm font-extrabold text-slate-800 mt-0.5">
+                {kpiLoading ? "—" : `₹${metrics.gmv.toLocaleString("en-IN")}`}
+              </p>
+            </div>
+            <div className="bg-slate-50/60 rounded-xl p-3 border border-slate-100 hover:bg-slate-50 transition-colors">
+              <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Orders Count</p>
+              <p className="text-sm font-extrabold text-slate-800 mt-0.5">
+                {kpiLoading ? "—" : metrics.totalOrders.toLocaleString("en-IN")}
+              </p>
+            </div>
+            <div className="bg-slate-50/60 rounded-xl p-3 border border-slate-100 hover:bg-slate-50 transition-colors">
+              <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Average Order Metric</p>
+              <p className="text-sm font-extrabold text-slate-800 mt-0.5">
+                {kpiLoading ? "—" : `₹${calculatedAOV.toLocaleString("en-IN")}`}
+              </p>
+            </div>
+            <div className="bg-slate-50/60 rounded-xl p-3 border border-slate-100 hover:bg-slate-50 transition-colors">
+              <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Delivery Margin</p>
+              <p className="text-sm font-extrabold text-slate-800 mt-0.5">
+                {kpiLoading ? "—" : `₹${metrics.deliveryRevenue.toLocaleString("en-IN")}`}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* PENDING ACTIONS COUNTERS SIDEBOARD */}
+        <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs min-h-[420px] flex flex-col justify-between">
+          <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider mb-4 flex items-center gap-1.5 border-b border-slate-100 pb-3">
+            <AlertTriangle className="w-4 h-4 text-amber-500" /> Pending Actions Matrix
+          </h3>
+          <div className="space-y-1.5 flex-1 flex flex-col justify-center">
+            {actionsLoading ? <SkeletonRow cols={2}/> : (
+              [
+                { label: "Vendor Approvals", count: pendingActions.vendorApprovals, path: "/vendors" },
+                { label: "Subscription Requests", count: pendingActions.subscriptionRequests, path: "/requests" },
+                { label: "Settlement Requests", count: pendingActions.settlementRequests, path: "/settlements" },
+                { label: "Refund Requests", count: pendingActions.refundRequests, path: "/refunds" },
+                { label: "Support Tickets", count: pendingActions.openSupport, path: "/support" }
+              ].map((act, index) => (
+                <button 
+                  key={index}
+                  onClick={() => handleActionNavigation(act.path)}
+                  className="w-full flex items-center justify-between p-3 rounded-xl border border-transparent hover:border-slate-200 hover:bg-slate-50/60 active:scale-[0.99] transition-all duration-200 cursor-pointer text-left group"
+                >
+                  <span className="text-xs font-semibold text-slate-600 group-hover:text-slate-900 transition-colors">{act.label}</span>
+                  <span className={cn(
+                    "text-[10px] font-semibold px-2.5 py-0.5 rounded-md border transition-all duration-200",
+                    getBadgeStyles(act.count)
+                  )}>
+                    {act.count}
+                  </span>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+
+      </div>
+
+      {/* CORE FINANCIAL OVERVIEW HOVER CARD BLOCKS GRID */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 animate-slideUp">
-        <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-col justify-between transition-all duration-300 hover:scale-[1.01] hover:shadow-sm">
+        <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-col justify-between hover:shadow-sm transition-shadow">
           <div className="flex items-start justify-between">
             <div>
               <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Total Orders</p>
@@ -609,10 +770,10 @@ export function Dashboard() {
               <ShoppingBag className="w-4 h-4" />
             </div>
           </div>
-          <p className="text-[11px] text-slate-400 mt-3 font-medium">Completed Orders</p>
+          <p className="text-[11px] text-slate-400 mt-3 font-medium">Completed Quantities</p>
         </div>
 
-        <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-col justify-between transition-all duration-300 hover:scale-[1.01] hover:shadow-sm">
+        <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-col justify-between hover:shadow-sm transition-shadow">
           <div className="flex items-start justify-between">
             <div>
               <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">GMV</p>
@@ -627,7 +788,7 @@ export function Dashboard() {
           <p className="text-[11px] text-slate-400 mt-3 font-medium">Gross Merchandise Value</p>
         </div>
 
-        <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-col justify-between transition-all duration-300 hover:scale-[1.01] hover:shadow-sm">
+        <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-col justify-between hover:shadow-sm transition-shadow">
           <div className="flex items-start justify-between">
             <div>
               <p className="text-[10px] font-bold text-violet-500 uppercase tracking-wider">Platform Commission</p>
@@ -639,10 +800,10 @@ export function Dashboard() {
               <IndianRupee className="w-4 h-4" />
             </div>
           </div>
-          <p className="text-[11px] text-slate-400 mt-3 font-medium">Commission Earned</p>
+          <p className="text-[11px] text-slate-400 mt-3 font-medium">Fee Revenues Accumulation</p>
         </div>
 
-        <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-col justify-between transition-all duration-300 hover:scale-[1.01] hover:shadow-sm">
+        <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-col justify-between hover:shadow-sm transition-shadow">
           <div className="flex items-start justify-between">
             <div>
               <p className="text-[10px] font-bold text-amber-500 uppercase tracking-wider">Delivery Margin</p>
@@ -654,389 +815,68 @@ export function Dashboard() {
               <IndianRupee className="w-4 h-4" />
             </div>
           </div>
-          <p className="text-[11px] text-slate-400 mt-3 font-medium">Delivery Profit</p>
+          <p className="text-[11px] text-slate-400 mt-3 font-medium">Logistical Service Yields</p>
         </div>
       </div>
 
-      {/* SECOND KPI ROW */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 animate-slideUp">
-        <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-col justify-between transition-all duration-300 hover:scale-[1.01] hover:shadow-sm">
-          <div className="flex items-start justify-between">
-            <div>
-              <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">🟢 Active Vendors</p>
-              <h3 className="text-2xl font-extrabold text-slate-900 mt-1 tracking-tight">
-                {kpiLoading ? <div className="h-6 w-16 bg-slate-100 animate-pulse rounded mt-1"/> : <AnimatedCounter value={metrics.activeVendors} />}
-              </h3>
-            </div>
-            <div className="w-8 h-8 bg-emerald-50 rounded-lg flex items-center justify-center text-emerald-600 border border-emerald-100/50">
-              <Store className="w-4 h-4" />
-            </div>
+      {/* SPLIT INFRASTRUCTURE RECENT LISTINGS MATRIX FLOW ROW */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-slideUp">
+        
+        <div className="lg:col-span-2 bg-white border border-slate-200 rounded-xl p-4 shadow-xs">
+          <div className="flex items-center justify-between pb-2 border-b border-slate-100 mb-3">
+            <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+              <Store className="w-3.5 h-3.5 text-violet-500"/> Top Performing Stores
+            </h3>
           </div>
-          <p className="text-[11px] text-slate-400 mt-3 font-medium">Count vendors where status='approved'</p>
+          <div className="overflow-x-auto">
+            {vendorsLoading ? <SkeletonRow cols={3}/> : (
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="text-slate-400 border-b border-slate-100">
+                    <th className="pb-2.5 font-semibold">Store Name</th>
+                    <th className="pb-2.5 font-semibold text-center">Orders Completed</th>
+                    <th className="pb-2.5 font-semibold text-right">Vendor Earnings</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {topVendors.length === 0 ? (
+                    <tr><td colSpan={3} className="text-center py-4 text-slate-400">No data inside chosen range template</td></tr>
+                  ) : topVendors.map((v, idx) => (
+                    <tr key={idx} className="border-b border-slate-50/80 last:border-none hover:bg-slate-50/80 transition-colors group">
+                      <td className="py-3 font-medium text-slate-700">
+                        <span className="inline-block w-6 text-slate-400 font-bold group-hover:text-blue-500 transition-colors">#{idx + 1}</span>
+                        {v.name}
+                      </td>
+                      <td className="py-3 text-center text-slate-600 font-semibold">{v.orders}</td>
+                      <td className="py-3 text-right font-bold text-emerald-600">₹{v.revenue.toLocaleString("en-IN")}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
         </div>
 
-        <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-col justify-between transition-all duration-300 hover:scale-[1.01] hover:shadow-sm">
-          <div className="flex items-start justify-between">
-            <div>
-              <p className="text-[10px] font-bold text-blue-600 uppercase tracking-wider">🛵 Active Riders</p>
-              <h3 className="text-2xl font-extrabold text-slate-900 mt-1 tracking-tight">
-                {kpiLoading ? <div className="h-6 w-16 bg-slate-100 animate-pulse rounded mt-1"/> : <AnimatedCounter value={metrics.activeRiders} />}
-              </h3>
-            </div>
-            <div className="w-8 h-8 bg-blue-50 rounded-lg flex items-center justify-center text-blue-600 border border-blue-100/50">
-              <Bike className="w-4 h-4" />
-            </div>
-          </div>
-          <p className="text-[11px] text-slate-400 mt-3 font-medium">Count riders where status='active'</p>
-        </div>
-
-        <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-col justify-between transition-all duration-300 hover:scale-[1.01] hover:shadow-sm">
-          <div className="flex items-start justify-between">
-            <div>
-              <p className="text-[10px] font-bold text-violet-600 uppercase tracking-wider">👤 Active Customers</p>
-              <h3 className="text-2xl font-extrabold text-slate-900 mt-1 tracking-tight">
-                {kpiLoading ? <div className="h-6 w-16 bg-slate-100 animate-pulse rounded mt-1"/> : <AnimatedCounter value={metrics.customers} />}
-              </h3>
-            </div>
-            <div className="w-8 h-8 bg-violet-50 rounded-lg flex items-center justify-center text-violet-600 border border-violet-100/50">
-              <Users className="w-4 h-4" />
-            </div>
-          </div>
-          <p className="text-[11px] text-slate-400 mt-3 font-medium">Total customers</p>
-        </div>
-
-        <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-col justify-between transition-all duration-300 hover:scale-[1.01] hover:shadow-sm">
-          <div className="flex items-start justify-between">
-            <div>
-              <p className="text-[10px] font-bold text-amber-500 uppercase tracking-wider">📦 Orders Today</p>
-              <h3 className="text-2xl font-extrabold text-slate-900 mt-1 tracking-tight">
-                {kpiLoading ? <div className="h-6 w-16 bg-slate-100 animate-pulse rounded mt-1"/> : <AnimatedCounter value={metrics.ordersToday} />}
-              </h3>
-            </div>
-            <div className="w-8 h-8 bg-amber-50 rounded-lg flex items-center justify-center text-amber-600 border border-amber-100/50">
-              <ShoppingBag className="w-4 h-4" />
-            </div>
-          </div>
-          <p className="text-[11px] text-slate-400 mt-3 font-medium">Orders created today</p>
-        </div>
-      </div>
-
-      {/* REDESIGNED BUSINESS PERFORMANCE CHIPS AND SUMMARY CONTAINER */}
-      <div className="bg-white border border-slate-200 rounded-xl p-5 animate-slideUp shadow-xs flex flex-col justify-between gap-5 relative min-h-[360px]">
-        {/* Header and Filter Pill Row */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
-          <div className="flex items-start gap-2.5">
-            <div className="w-8 h-8 bg-blue-50 rounded-lg border border-blue-100 flex items-center justify-center text-blue-600 shrink-0 mt-0.5">
-              <Activity className="w-4 h-4" />
-            </div>
-            <div>
-              <h3 className="text-sm font-bold text-slate-900 tracking-tight">Business Performance</h3>
-              <p className="text-xs text-slate-400 mt-0.5 font-medium">
-                Showing {getMetricTabLabel()} metrics grouped dynamically by time intervals
-              </p>
-            </div>
-          </div>
-          
-          <div className="flex flex-wrap items-center bg-slate-50 p-1 border border-slate-200 rounded-xl gap-1 w-full sm:w-auto">
-            {[
-              { id: "revenue", label: "Revenue" },
-              { id: "orders", label: "Orders" },
-              { id: "commission", label: "Commission" },
-              { id: "delivery", label: "Delivery Margin" }
-            ].map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => {
-                  setHoveredPoint(null);
-                  setActiveTrendTab(tab.id);
-                }}
-                className={cn(
-                  "text-xs px-3.5 py-1.5 font-semibold rounded-lg transition-all flex-1 sm:flex-none text-center whitespace-nowrap",
-                  activeTrendTab === tab.id || (tab.id === "delivery" && activeTrendTab === "deliveryRevenue")
-                    ? "bg-white text-blue-600 shadow-xs border border-slate-200/80" 
-                    : "text-slate-500 hover:text-slate-900 hover:bg-slate-100/60"
-                )}
-              >
-                {tab.label}
-              </button>
+        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs">
+          <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider mb-3 flex items-center gap-1.5 border-b border-slate-100 pb-2">
+            <FileText className="w-3.5 h-3.5 text-slate-400" /> Recent Activity System Log
+          </h3>
+          <div className="space-y-3 max-h-[220px] overflow-y-auto pr-1">
+            {activityLoading ? <SkeletonRow cols={1}/> : recentActivities.length === 0 ? (
+              <p className="text-xs text-slate-400 text-center py-4">Awaiting metrics telemetry streams...</p>
+            ) : recentActivities.map((log) => (
+              <div key={log.id} className="flex items-start gap-3 text-xs border-l-2 border-slate-200 pl-3 py-0.5 hover:border-blue-500 transition-colors group">
+                <div className="w-1.5 h-1.5 rounded-full bg-slate-300 group-hover:bg-blue-500 mt-1.5 transition-colors shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-slate-700 text-[11px] leading-tight break-words">{log.title}</p>
+                  <span className="text-[9px] font-bold text-slate-400 mt-0.5 block">{log.time}</span>
+                </div>
+              </div>
             ))}
           </div>
         </div>
-
-        {/* Dynamic & Centered Responsive Graph Box */}
-        <div 
-          className="relative w-full flex-1 min-h-[180px] flex items-center justify-center select-none"
-          onMouseMove={(e) => {
-            const rect = e.currentTarget.getBoundingClientRect();
-            setMousePos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
-          }}
-        >
-          {hoveredPoint && (
-            <div 
-              className="absolute z-50 pointer-events-none bg-white/95 backdrop-blur-xs px-3 py-2 rounded-xl shadow-lg border border-slate-200/80 transition-all duration-150 ease-out flex flex-col animate-fadeIn"
-              style={{ 
-                left: `${mousePos.x + 16}px`, 
-                top: `${mousePos.y - 20}px`,
-                transform: 'translate3d(0, 0, 0)'
-              }}
-            >
-              <span className="text-[9px] uppercase font-bold tracking-wider text-slate-400">{hoveredPoint.label}</span>
-              <span className="text-[10px] font-semibold text-slate-500 mt-0.5">
-                {getMetricTabLabel()}
-              </span>
-              <span className="text-sm font-black text-slate-900 mt-0.5">{hoveredPoint.value}</span>
-            </div>
-          )}
-
-          {chartLoading ? (
-            <div className="w-full flex flex-col items-center justify-center space-y-2 py-4">
-              <div className="h-32 w-full bg-slate-50 animate-pulse rounded-xl border border-slate-100"/>
-            </div>
-          ) : chartData.length === 0 ? (
-            <div className="text-xs text-slate-400 font-medium tracking-wide flex flex-col items-center gap-1.5 py-8 animate-fadeIn">
-              <Activity className="w-5 h-5 text-slate-300" />
-              <span>No telemetry metrics calculated for this period</span>
-            </div>
-          ) : (() => {
-            const colorConfig = {
-              revenue: "#16A34A",
-              commission: "#7C3AED",
-              delivery: "#EA580C",
-              deliveryRevenue: "#EA580C",
-              orders: "#2563EB"
-            }[activeTrendTab] || "#16A34A";
-
-            const w = 800, h = 180, p = 32;
-            const maxVal = Math.max(...chartData.map(d => d.value)) || 1;
-            
-            const coords = chartData.map((d, i) => ({
-              x: p + (i / (chartData.length - 1 || 1)) * (w - p * 2),
-              y: h - p - (d.value / maxVal) * (h - p * 2.5),
-              label: d.label,
-              value: activeTrendTab === "orders" ? `${d.value}` : `₹${Math.round(d.value).toLocaleString("en-IN")}`
-            }));
-
-            let pathD = `M ${coords[0].x} ${coords[0].y}`;
-            for (let i = 0; i < coords.length - 1; i++) {
-              const cpX1 = coords[i].x + (coords[i+1].x - coords[i].x) / 2;
-              const cpX2 = coords[i].x + (coords[i+1].x - coords[i].x) / 2;
-              pathD += ` C ${cpX1} ${coords[i].y}, ${cpX2} ${coords[i+1].y}, ${coords[i+1].x} ${coords[i+1].y}`;
-            }
-            const areaD = `${pathD} L ${coords[coords.length - 1].x} ${h - p} L ${coords[0].x} ${h - p} Z`;
-
-            // Decimate label points if array density blocks readability
-            const labelSkipInterval = Math.ceil(chartData.length / 10);
-
-            return (
-              <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="xMidYMid meet" className="w-full h-full overflow-visible">
-                <defs>
-                  <linearGradient id="businessGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={colorConfig} stopOpacity="0.12" />
-                    <stop offset="100%" stopColor={colorConfig} stopOpacity="0.00" />
-                  </linearGradient>
-                </defs>
-                {/* Horizontal Guide Rules */}
-                <line x1={p} y1={p} x2={w - p} y2={p} stroke="#F8FAFC" strokeWidth="1" />
-                <line x1={p} y1={(h - p * 2) / 2 + p / 2} x2={w - p} y2={(h - p * 2) / 2 + p / 2} stroke="#F8FAFC" strokeWidth="1" />
-                <line x1={p} y1={h - p} x2={w - p} y2={h - p} stroke="#F1F5F9" strokeWidth="1.5" />
-                
-                {/* Chart Vectors */}
-                <path d={areaD} fill="url(#businessGradient)" className="transition-all duration-300 ease-in-out" />
-                <path d={pathD} fill="none" stroke={colorConfig} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="transition-all duration-300 ease-in-out" />
-                
-                {coords.map((pt, idx) => {
-                  const isHovered = hoveredPoint?.index === idx;
-                  const showLabel = idx % labelSkipInterval === 0 || idx === coords.length - 1;
-                  return (
-                    <g key={idx} className="cursor-pointer">
-                      <circle 
-                        cx={pt.x} cy={pt.y} r="20" fill="transparent"
-                        onMouseEnter={() => setHoveredPoint({ label: pt.label, value: pt.value, index: idx })}
-                        onMouseLeave={() => setHoveredPoint(null)}
-                      />
-                      <circle 
-                        cx={pt.x} cy={pt.y} r={isHovered ? "6" : "3.5"} 
-                        fill={isHovered ? colorConfig : "#FFFFFF"} stroke={colorConfig} strokeWidth={isHovered ? "2.5" : "1.5"}
-                        style={{ transformOrigin: `${pt.x}px ${pt.y}px`, transition: 'all 150ms ease-out' }}
-                      />
-                      {showLabel && (
-                        <text x={pt.x} y={h - 12} textAnchor="middle" className="text-[9px] font-bold fill-slate-400 pointer-events-none tracking-tight">
-                          {pt.label}
-                        </text>
-                      )}
-                    </g>
-                  );
-                })}
-              </svg>
-            );
-          })()}
-        </div>
-
-        {/* Business Summary Row Row Section */}
-        <div className="border-t border-slate-100 pt-4 grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <div className="bg-slate-50/60 rounded-xl p-3 border border-slate-100 hover:bg-slate-50 transition-colors">
-            <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Revenue</p>
-            <p className="text-sm font-extrabold text-slate-800 mt-0.5">
-              {kpiLoading ? "—" : `₹${metrics.gmv.toLocaleString("en-IN")}`}
-            </p>
-          </div>
-          <div className="bg-slate-50/60 rounded-xl p-3 border border-slate-100 hover:bg-slate-50 transition-colors">
-            <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Orders</p>
-            <p className="text-sm font-extrabold text-slate-800 mt-0.5">
-              {kpiLoading ? "—" : metrics.totalOrders.toLocaleString("en-IN")}
-            </p>
-          </div>
-          <div className="bg-slate-50/60 rounded-xl p-3 border border-slate-100 hover:bg-slate-50 transition-colors">
-            <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Average Order Value</p>
-            <p className="text-sm font-extrabold text-slate-800 mt-0.5">
-              {kpiLoading ? "—" : `₹${calculatedAOV.toLocaleString("en-IN")}`}
-            </p>
-          </div>
-          <div className="bg-slate-50/60 rounded-xl p-3 border border-slate-100 hover:bg-slate-50 transition-colors">
-            <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Delivery Margin</p>
-            <p className="text-sm font-extrabold text-slate-800 mt-0.5">
-              {kpiLoading ? "—" : `₹${metrics.deliveryRevenue.toLocaleString("en-IN")}`}
-            </p>
-          </div>
-        </div>
       </div>
 
-      {/* Split Widget Content Panels Layout Area */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-slideUp">
-        
-        {/* Left Column Layout: Tables */}
-        <div className="lg:col-span-2 space-y-6">
-          <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-100 mb-3">
-              <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
-                <Store className="w-3.5 h-3.5 text-violet-500"/> Top Performing Stores
-              </h3>
-            </div>
-            <div className="overflow-x-auto">
-              {vendorsLoading ? <SkeletonRow cols={3}/> : (
-                <table className="w-full text-left text-xs">
-                  <thead>
-                    <tr className="text-slate-400 border-b border-slate-100">
-                      <th className="pb-2.5 font-semibold">Store Name</th>
-                      <th className="pb-2.5 font-semibold text-center">Orders Completed</th>
-                      <th className="pb-2.5 font-semibold text-right">Vendor Earnings</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {topVendors.length === 0 ? (
-                      <tr><td colSpan={3} className="text-center py-4 text-slate-400">No data populated within selected timeframe</td></tr>
-                    ) : topVendors.map((v, idx) => (
-                      <tr key={idx} className="border-b border-slate-50/80 last:border-none hover:bg-slate-50/80 transition-colors group">
-                        <td className="py-3 font-medium text-slate-700">
-                          <span className="inline-block w-6 text-slate-400 font-bold group-hover:text-blue-500 transition-colors">
-                            #{idx + 1}
-                          </span>
-                          {v.name}
-                        </td>
-                        <td className="py-3 text-center text-slate-600 font-semibold">{v.orders}</td>
-                        <td className="py-3 text-right font-bold text-emerald-600">₹{v.revenue.toLocaleString("en-IN")}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-          </div>
-
-          <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-100 mb-3">
-              <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
-                <Award className="w-3.5 h-3.5 text-amber-500"/> Top Riders
-              </h3>
-            </div>
-            <div className="overflow-x-auto">
-              {ridersLoading ? <SkeletonRow cols={4}/> : (
-                <table className="w-full text-left text-xs">
-                  <thead>
-                    <tr className="text-slate-400 border-b border-slate-100">
-                      <th className="pb-2.5 font-semibold">Rider Name</th>
-                      <th className="pb-2.5 font-semibold text-center">Completed Deliveries</th>
-                      <th className="pb-2.5 font-semibold text-center">Total Earnings</th>
-                      <th className="pb-2.5 font-semibold text-right">Vehicle Type</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {topRiders.length === 0 ? (
-                      <tr><td colSpan={4} className="text-center py-4 text-slate-400">No operational telemetry reported</td></tr>
-                    ) : topRiders.map((r, idx) => (
-                      <tr key={idx} className="border-b border-slate-50/80 last:border-none hover:bg-slate-50/80 transition-colors group">
-                        <td className="py-3 font-medium text-slate-700">
-                          <span className="inline-block w-6 text-slate-400 font-bold group-hover:text-amber-500 transition-colors">
-                            #{idx + 1}
-                          </span>
-                          {r.name}
-                        </td>
-                        <td className="py-3 text-center text-slate-600 font-bold">{r.orders}</td>
-                        <td className="py-3 text-center text-emerald-600 font-bold">₹{r.earnings.toLocaleString("en-IN")}</td>
-                        <td className="py-3 text-right text-slate-500 font-medium">{r.vehicleType}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Right Side Column Layout: Action Center Workspace Desk */}
-        <div className="space-y-6">
-          <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs">
-            <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider mb-3 flex items-center gap-1.5">
-              <AlertTriangle className="w-4 h-4 text-amber-500" /> Pending Actions
-            </h3>
-            <div className="space-y-1.5">
-              {actionsLoading ? <SkeletonRow cols={2}/> : (
-                [
-                  { label: "Vendor Approvals", count: pendingActions.vendorApprovals, path: "/vendors" },
-                  { label: "Subscription Requests", count: pendingActions.subscriptionRequests, path: "/requests" },
-                  { label: "Settlement Requests", count: pendingActions.settlementRequests, path: "/settlements" },
-                  { label: "Refund Requests", count: pendingActions.refundRequests, path: "/refunds" },
-                  { label: "Support Tickets", count: pendingActions.openSupport, path: "/support" }
-                ].map((act, index) => (
-                  <button 
-                    key={index}
-                    onClick={() => handleActionNavigation(act.path)}
-                    className="w-full flex items-center justify-between p-2.5 rounded-lg border border-transparent hover:border-slate-200 hover:bg-slate-50/60 active:scale-[0.99] transition-all duration-200 cursor-pointer text-left group"
-                  >
-                    <span className="text-xs font-semibold text-slate-600 group-hover:text-slate-900 transition-colors">{act.label}</span>
-                    <span className={cn(
-                      "text-[10px] font-semibold px-2.5 py-0.5 rounded-md border transition-all duration-200",
-                      getBadgeStyles(act.count)
-                    )}>
-                      {act.count}
-                    </span>
-                  </button>
-                ))
-              )}
-            </div>
-          </div>
-
-          <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs">
-            <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider mb-3 flex items-center gap-1.5">
-              <FileText className="w-3.5 h-3.5 text-slate-400" /> Recent Activity
-            </h3>
-            <div className="space-y-3 max-h-[240px] overflow-y-auto pr-1">
-              {activityLoading ? <SkeletonRow cols={1}/> : recentActivities.length === 0 ? (
-                <p className="text-xs text-slate-400 text-center py-4">Awaiting state updates from incoming actions...</p>
-              ) : recentActivities.map((log) => (
-                <div key={log.id} className="flex items-start gap-3 text-xs border-l-2 border-slate-200 pl-3 py-0.5 hover:border-blue-500 transition-colors group">
-                  <div className="w-1.5 h-1.5 rounded-full bg-slate-300 group-hover:bg-blue-500 mt-1.5 transition-colors shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-slate-700 text-[11px] leading-tight break-words">{log.title}</p>
-                    <span className="text-[9px] font-bold text-slate-400 mt-0.5 block">{log.time}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-      </div>
     </div>
   );
 }

@@ -1,7 +1,9 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { Bell, Search, ChevronDown } from "lucide-react";
 import { PageId } from "./Sidebar";
-
+import { NotificationService } from "../../../services/notificationService";
+import { BrowserNotification } from "../../../services/browserNotification";
+import { supabase } from "../../../lib/supabase";
 const pageTitles: Record<PageId, string> = {
   dashboard: "Dashboard",
   vendors: "Vendors",
@@ -22,12 +24,48 @@ interface HeaderProps {
 }
 
 export function Header({ activePage }: HeaderProps) {
+  const [unreadCount, setUnreadCount] = useState(0);
   const today = new Date().toLocaleDateString("en-IN", {
     weekday: "short",
     day: "numeric",
     month: "short",
     year: "numeric",
   });
+  useEffect(() => {
+  let unsubscribe: (() => void) | undefined;
+
+  const initializeNotifications = async () => {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) return;
+
+    const { count } = await NotificationService.getUnreadCount(user.id);
+    setUnreadCount(count ?? 0);
+
+    unsubscribe = NotificationService.subscribe(user.id, async (payload) => {
+      const { count } = await NotificationService.getUnreadCount(user.id);
+      setUnreadCount(count ?? 0);
+
+      if (payload.eventType === "INSERT") {
+        const notification = payload.new;
+
+        BrowserNotification.show(notification.title, {
+          body: notification.message,
+        });
+      }
+    });
+  };
+
+  initializeNotifications();
+
+  return () => {
+    if (unsubscribe) {
+      unsubscribe();
+    }
+  };
+}, []);
 
   return (
     <header className="fixed top-0 left-[220px] right-0 h-14 bg-white border-b border-[#E2E8F0] flex items-center px-6 gap-4 z-10">
@@ -59,9 +97,14 @@ export function Header({ activePage }: HeaderProps) {
 
         {/* Notification bell */}
         <button className="relative h-8 w-8 flex items-center justify-center rounded-lg text-[#64748B] hover:bg-[#F8FAFC] hover:text-[#0F172A] transition-colors">
-          <Bell className="w-4 h-4" />
-          <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 bg-[#22C55E] rounded-full" />
-        </button>
+  <Bell className="w-4 h-4" />
+
+  {unreadCount > 0 && (
+    <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-semibold flex items-center justify-center leading-none">
+      {unreadCount > 99 ? "99+" : unreadCount}
+    </span>
+  )}
+</button>
 
         {/* Avatar */}
         <button className="flex items-center gap-2 h-8 pl-1 pr-2 rounded-lg hover:bg-[#F8FAFC] transition-colors">

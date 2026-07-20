@@ -15,7 +15,8 @@ import {
   X,
   UserCheck,
   Loader2,
-  ShieldCheck
+  ShieldCheck,
+  ExternalLink
 } from "lucide-react";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
@@ -232,6 +233,13 @@ export function Riders() {
 
       if (ridersError) throw ridersError;
 
+      // FETCH RIDER PROFILES DATA TO JOIN KYC DOCUMENTS
+      const { data: profilesData, error: profilesError } = await supabase
+        .from("rider_profiles")
+        .select("*");
+
+      if (profilesError) console.error("Error fetching rider profiles:", profilesError);
+
       const { data: assignmentsData, error: assignmentsError } = await supabase
         .from("rider_vendor_assignments")
         .select(`
@@ -251,6 +259,9 @@ export function Riders() {
             id: a.vendor_id,
             name: a.vendors.shop_name || "Unnamed Shop"
           }));
+
+        // Find associated profile record for KYC documents & bank info
+        const prof = (profilesData || []).find((p) => p.rider_id === row.id) || {};
 
         return {
           id: row.id,
@@ -274,20 +285,20 @@ export function Riders() {
               })
             : "—",
           kyc_status: (row.kyc_status as KycStatus) || "not_submitted",
-          verification_notes: row.verification_notes || "",
-          documents_updated_at: row.documents_updated_at || "",
-          aadhaar_number: row.aadhaar_number || "",
-          aadhaar_document_url: row.aadhaar_document_url || "",
-          pan_number: row.pan_number || "",
-          pan_document_url: row.pan_document_url || "",
-          driving_license_number: row.driving_license_number || "",
-          driving_license_document_url: row.driving_license_document_url || "",
+          verification_notes: prof.rejection_reason || row.verification_notes || "",
+          documents_updated_at: prof.updated_at || row.documents_updated_at || "",
+          aadhaar_number: prof.aadhaar_number || row.aadhaar_number || "",
+          aadhaar_document_url: prof.aadhaar_front_url || row.aadhaar_document_url || "",
+          pan_number: prof.pan_number || row.pan_number || "",
+          pan_document_url: prof.pan_card_url || row.pan_document_url || "",
+          driving_license_number: prof.driving_license_number || row.driving_license_number || "",
+          driving_license_document_url: prof.driving_license_url || row.driving_license_document_url || "",
           profile_photo_url: row.profile_photo_url || "",
-          bank_name: row.bank_name || "",
-          account_holder_name: row.account_holder_name || "",
-          account_number: row.account_number || "",
-          ifsc_code: row.ifsc_code || "",
-          upi_id: row.upi_id || "",
+          bank_name: prof.bank_name || row.bank_name || "",
+          account_holder_name: prof.account_holder_name || row.account_holder_name || "",
+          account_number: prof.account_number || row.account_number || "",
+          ifsc_code: prof.ifsc_code || row.ifsc_code || "",
+          upi_id: prof.upi_id || row.upi_id || "",
         };
       });
 
@@ -344,7 +355,6 @@ export function Riders() {
   }
 
   function handleOpenEdit(rider: Rider) {
-    console.log("[DEBUG] Opening Edit Modal for Rider ID:", rider.id);
     setFormName(rider.name);
     setFormEmail(rider.email === "—" ? "" : rider.email);
     setFormPhone(rider.phone === "—" ? "" : rider.phone);
@@ -357,7 +367,6 @@ export function Riders() {
   }
 
   function handleOpenStoreAssignment(rider: Rider) {
-    console.log("[DEBUG] Opening Store Assignment for Rider ID:", rider.id);
     setViewRider(rider);
     setFormVendors(rider.assigned_vendors);
     setAssignmentOpen(true);
@@ -372,13 +381,11 @@ export function Riders() {
   }
 
   async function syncVendorAssignments(riderId: string, vendorsList: { id: string; name: string }[]) {
-    console.log("[DEBUG] Syncing Vendor Assignments. Rider ID:", riderId, "Vendors List:", vendorsList);
-    
     const { error: deleteJunctionError } = await supabase
       .from("rider_vendor_assignments")
       .delete()
       .eq("rider_id", riderId);
-    if (deleteJunctionError) console.error("[DEBUG] Error clearing old junction rows:", deleteJunctionError);
+    if (deleteJunctionError) console.error("Error clearing old junction rows:", deleteJunctionError);
 
     if (vendorsList.length > 0) {
       const batchJunctionPayload = vendorsList.map(v => ({
@@ -390,12 +397,8 @@ export function Riders() {
         .from("rider_vendor_assignments")
         .insert(batchJunctionPayload);
 
-      if (junctionError) {
-        console.log("[DEBUG] Error inserting new junction rows:", junctionError);
-        throw junctionError;
-      }
+      if (junctionError) throw junctionError;
     }
-    console.log("[DEBUG] Sync Vendor Assignments successfully completed.");
   }
 
   async function handleAddRider() {
@@ -419,13 +422,10 @@ export function Riders() {
         rating: 5.0,
       };
 
-      console.log("[DEBUG] Onboarding new rider with payload:", payload);
-
       const { data, error } = await supabase.from("riders").insert([payload]).select().single();
       if (error) throw error;
 
       if (data) {
-        console.log("[DEBUG] Onboarded rider object returned:", data);
         await syncVendorAssignments(data.id, formVendors);
       }
 
@@ -460,8 +460,6 @@ export function Riders() {
         status: formStatus
       };
 
-      console.log("[DEBUG] Updating rider record ID:", viewRider.id, "with payload:", payload);
-
       const { error: riderError } = await supabase.from("riders").update(payload).eq("id", viewRider.id);
       if (riderError) throw riderError;
 
@@ -481,7 +479,6 @@ export function Riders() {
     if (!viewRider) return;
     try {
       setIsSubmitting(true);
-      console.log("[DEBUG] Saving quick store assignments for rider ID:", viewRider.id);
       await syncVendorAssignments(viewRider.id, formVendors);
       setAssignmentOpen(false);
       setViewRider(null);
@@ -495,8 +492,6 @@ export function Riders() {
   }
 
   async function mutateStatusDirectly(id: string, updates: Partial<Pick<Rider, "status" | "availability_status">>) {
-    console.log("[DEBUG] mutateStatusDirectly invocation initiated.", id, updates);
-
     setRiderList(prev => prev.map(r => r.id === id ? { ...r, ...updates } : r));
     if (viewRider && viewRider.id === id) {
       setViewRider(prev => prev ? { ...prev, ...updates } : null);
@@ -508,13 +503,10 @@ export function Riders() {
         .update(updates)
         .eq("id", id);
 
-      if (updateError) {
-        throw updateError;
-      }
-
+      if (updateError) throw updateError;
       await fetchRiders();
     } catch (err) {
-      console.error("[DEBUG] Status mutation sequence crashed with context:", err);
+      console.error("Status mutation sequence crashed:", err);
       await fetchRiders(); 
     }
   }
@@ -523,21 +515,12 @@ export function Riders() {
     const check = window.confirm(`Permanently delete "${name}"? This will wipe out all assignments.`);
     if (!check) return;
 
-    console.log("[DEBUG] Destructive delete cycle targeted for Rider ID:", id, "Name:", name);
-
     try {
       setIsSubmitting(true);
       
-      const { error: assError } = await supabase.from("rider_vendor_assignments").delete().eq("rider_id", id);
-      if (assError) console.error("[DEBUG] Error destroying rider assignments link entries:", assError);
-      
-      const { data: delResult, error: deleteRiderError } = await supabase.from("riders").delete().eq("id", id).select();
-      if (deleteRiderError) {
-        console.error("[DEBUG] Error executing rider row deletion query statement wrapper:", deleteRiderError);
-        throw deleteRiderError;
-      }
-      
-      console.log("[DEBUG] Permanent delete payload result summary confirmation logs:", delResult);
+      await supabase.from("rider_vendor_assignments").delete().eq("rider_id", id);
+      const { error: deleteRiderError } = await supabase.from("riders").delete().eq("id", id);
+      if (deleteRiderError) throw deleteRiderError;
       
       setEditOpen(false);
       setAssignmentOpen(false);
@@ -551,12 +534,20 @@ export function Riders() {
   }
 
   // --- Core Administrative KYC Status Engine Hooks ---
+  const isEvOrNonMotorized = (vehicleType?: string) => {
+    return ["ev", "electric", "bicycle", "cycle", "electric_scooter"].some(t => (vehicleType || "").toLowerCase().includes(t));
+  };
+
   const checkDocumentsComplete = (rider: Rider | null): boolean => {
     if (!rider) return false;
+    const dlRequired = !isEvOrNonMotorized(rider.vehicle_type);
+    
     return !!(
       rider.aadhaar_number &&
+      rider.aadhaar_document_url &&
       rider.pan_number &&
-      rider.driving_license_number &&
+      rider.pan_document_url &&
+      (!dlRequired || (rider.driving_license_number && rider.driving_license_document_url)) &&
       rider.bank_name &&
       rider.account_holder_name &&
       rider.account_number &&
@@ -579,6 +570,7 @@ export function Riders() {
         .from("riders")
         .update({
           kyc_status: "verified",
+          status: "active",
           verification_notes: "Verified by Admin"
         })
         .eq("id", kycRider.id);
@@ -586,7 +578,7 @@ export function Riders() {
       if (updateError) throw updateError;
 
       if (kycRider.auth_user_id) {
-        const { error: notificationError } = await supabase
+        await supabase
           .from("notifications")
           .insert({
             recipient_id: kycRider.auth_user_id,
@@ -596,8 +588,6 @@ export function Riders() {
             type: "kyc",
             metadata: {}
           });
-
-        if (notificationError) console.error("KYC notification fault:", notificationError);
       }
 
       setKycOpen(false);
@@ -614,7 +604,7 @@ export function Riders() {
   async function handleRejectKyc() {
     if (!kycRider) return;
     if (!rejectReason.trim()) {
-      alert("A clarification reason note note is explicitly mandatory.");
+      alert("A reason note is explicitly mandatory.");
       return;
     }
 
@@ -625,14 +615,21 @@ export function Riders() {
         .from("riders")
         .update({
           kyc_status: "rejected",
+          status: "inactive",
           verification_notes: rejectReason
         })
         .eq("id", kycRider.id);
 
       if (updateError) throw updateError;
 
+      // Also record rejection reason in rider_profiles
+      await supabase
+        .from("rider_profiles")
+        .update({ rejection_reason: rejectReason })
+        .eq("rider_id", kycRider.id);
+
       if (kycRider.auth_user_id) {
-        const { error: notificationError } = await supabase
+        await supabase
           .from("notifications")
           .insert({
             recipient_id: kycRider.auth_user_id,
@@ -642,8 +639,6 @@ export function Riders() {
             type: "kyc",
             metadata: {}
           });
-
-        if (notificationError) console.error("KYC rejection notification fault:", notificationError);
       }
 
       setRejectConfirmOpen(false);
@@ -668,9 +663,9 @@ export function Riders() {
     let matchStatus = false;
     if (statusFilter === "all") {
       matchStatus = true;
-    } else if (statusFilter === "available" || statusFilter === "approved") {
+    } else if (statusFilter === "approved") {
       matchStatus = r.status === "active";
-    } else if (statusFilter === "pending" || statusFilter === "paused") {
+    } else if (statusFilter === "pending") {
       matchStatus = r.status === "inactive";
     } else if (statusFilter === "suspended") {
       matchStatus = r.status === "suspended";
@@ -771,11 +766,15 @@ export function Riders() {
                     <tr key={rider.id} className="hover:bg-muted/30 transition-colors group">
                       <td className="px-4 py-3.5">
                         <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 bg-[#EFF6FF] border border-[#DBEAFE] rounded-lg flex items-center justify-center flex-shrink-0">
-                            <span className="text-sm font-semibold text-[#2563EB]">{rider.name[0].toUpperCase()}</span>
+                          <div className="w-8 h-8 rounded-lg border border-border overflow-hidden bg-muted flex items-center justify-center flex-shrink-0">
+                            {rider.profile_photo_url ? (
+                              <img src={rider.profile_photo_url} alt={rider.name} className="w-full h-full object-cover" />
+                            ) : (
+                              <span className="text-sm font-semibold text-[#2563EB]">{rider.name[0]?.toUpperCase()}</span>
+                            )}
                           </div>
                           <div>
-                            <button onClick={() => { console.log("[DEBUG] Text Click Rider ID:", rider.id, "Status:", rider.status); setViewRider(rider); }} className="text-sm font-medium text-foreground hover:text-[#22C55E] text-left transition-colors">
+                            <button onClick={() => setViewRider(rider)} className="text-sm font-medium text-foreground hover:text-[#22C55E] text-left transition-colors">
                               {rider.name}
                             </button>
                             <div className="flex items-center gap-1 mt-0.5 text-xs text-muted-foreground">
@@ -804,7 +803,6 @@ export function Riders() {
                                   title={`Unassign ${v.name}`}
                                   onClick={async (e) => {
                                     e.stopPropagation();
-                                    console.log("[DEBUG] Badge 'X' Click Target Rider ID:", rider.id, "Target Store ID:", v.id);
                                     const updatedVendors = rider.assigned_vendors.filter(item => item.id !== v.id);
                                     try {
                                       await syncVendorAssignments(rider.id, updatedVendors);
@@ -856,44 +854,41 @@ export function Riders() {
                       <td className="px-4 py-3.5 text-center relative z-10 group-hover:z-30">
                         <PortalDropdown
                           trigger={
-                            <button 
-                              onClick={() => console.log("[DEBUG] Triggering PortalDropdown Action Matrix Hook for Rider ID:", rider.id, "Current Status:", rider.status)}
-                              className="h-7 w-7 inline-flex items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-all"
-                            >
+                            <button className="h-7 w-7 inline-flex items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-all">
                               <MoreHorizontal className="w-4 h-4" />
                             </button>
                           }
                           items={[
-                            { label: "View Details", icon: <Edit className="w-3.5 h-3.5" />, onClick: () => { console.log("[DEBUG] Clicked Action: View Details. Rider ID:", rider.id); setViewRider(rider); } },
-                            { label: "View KYC", icon: <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />, onClick: () => { console.log("[DEBUG] Clicked Action: View KYC. Rider ID:", rider.id); setKycRider(rider); setKycOpen(true); } },
-                            { label: "Manage Stores", icon: <Store className="w-3.5 h-3.5 text-emerald-500" />, onClick: () => { console.log("[DEBUG] Clicked Action: Manage Stores. Rider ID:", rider.id); handleOpenStoreAssignment(rider); } },
+                            { label: "View Details", icon: <Edit className="w-3.5 h-3.5" />, onClick: () => setViewRider(rider) },
+                            { label: "View KYC", icon: <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />, onClick: () => { setKycRider(rider); setKycOpen(true); } },
+                            { label: "Manage Stores", icon: <Store className="w-3.5 h-3.5 text-emerald-500" />, onClick: () => handleOpenStoreAssignment(rider) },
                             ...(rider.status === "inactive" ? [{ 
                               label: "Approve Rider", 
                               icon: <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />, 
-                              onClick: () => { console.log("[DEBUG] Clicked Action: Approve Rider. Rider ID:", rider.id); mutateStatusDirectly(rider.id, { status: "active" }); } 
+                              onClick: () => mutateStatusDirectly(rider.id, { status: "active" }) 
                             }] : []),
                             ...(rider.availability_status !== "available" ? [{ 
                               label: "Mark Available", 
                               icon: <UserCheck className="w-3.5 h-3.5 text-sky-500" />, 
-                              onClick: () => { console.log("[DEBUG] Clicked Action: Mark Available. Rider ID:", rider.id); mutateStatusDirectly(rider.id, { availability_status: "available" }); } 
+                              onClick: () => mutateStatusDirectly(rider.id, { availability_status: "available" }) 
                             }] : []),
                             ...(rider.status !== "active" && rider.status !== "inactive" ? [{ 
                               label: "Set Active", 
                               icon: <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />, 
-                              onClick: () => { console.log("[DEBUG] Clicked Action: Set Active. Rider ID:", rider.id); mutateStatusDirectly(rider.id, { status: "active" }); } 
+                              onClick: () => mutateStatusDirectly(rider.id, { status: "active" }) 
                             }] : []),
                             ...(rider.availability_status === "available" ? [{ 
                               label: "Put Offline", 
                               icon: <PauseCircle className="w-3.5 h-3.5 text-amber-500" />, 
-                              onClick: () => { console.log("[DEBUG] Clicked Action: Put Offline. Rider ID:", rider.id); mutateStatusDirectly(rider.id, { availability_status: "offline" }); } 
+                              onClick: () => mutateStatusDirectly(rider.id, { availability_status: "offline" }) 
                             }] : []),
                             ...(rider.status !== "suspended" ? [{ 
                               label: "Suspend Rider", 
                               icon: <XCircle className="w-3.5 h-3.5 text-rose-500" />, 
-                              onClick: () => { console.log("[DEBUG] Clicked Action: Suspend Rider. Rider ID:", rider.id); mutateStatusDirectly(rider.id, { status: "suspended" }); }, 
+                              onClick: () => mutateStatusDirectly(rider.id, { status: "suspended" }), 
                               variant: "danger" as const 
                             }] : []),
-                            { label: "Delete Permanent", icon: <Trash2 className="w-3.5 h-3.5" />, onClick: () => { console.log("[DEBUG] Clicked Action: Delete Permanent. Rider ID:", rider.id); handleDeleteRider(rider.id, rider.name); }, variant: "danger" as const }
+                            { label: "Delete Permanent", icon: <Trash2 className="w-3.5 h-3.5" />, onClick: () => handleDeleteRider(rider.id, rider.name), variant: "danger" as const }
                           ]}
                         />
                       </td>
@@ -919,7 +914,7 @@ export function Riders() {
           open={kycOpen}
           onClose={() => { setKycOpen(false); setKycRider(null); }}
           title={`KYC Verification Profile: ${kycRider.name}`}
-          description="Review operational credentials, verification records, and document files."
+          description="Review operational credentials, verification records, and uploaded document files."
           size="md"
           footer={
             <div className="flex gap-2 justify-end w-full items-center">
@@ -955,45 +950,96 @@ export function Riders() {
         >
           <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1 pt-2">
             {/* Profile Photo Section */}
-            <div className="bg-muted/30 border border-border p-3 rounded-lg flex items-center justify-between">
-              <div>
-                <p className="text-xs text-muted-foreground mb-1 font-medium">Profile Photo</p>
-                {kycRider.profile_photo_url ? (
-                  <div className="w-16 h-16 rounded-lg border border-border overflow-hidden bg-card mt-1">
-                    <img src={kycRider.profile_photo_url} alt="Rider Profile" className="w-full h-full object-cover" />
-                  </div>
-                ) : (
-                  <span className="text-xs font-semibold text-amber-600 italic block mt-1 bg-amber-50 px-2 py-1 rounded border border-amber-100">Document Not Uploaded</span>
-                )}
-              </div>
-              <span className="text-xs text-muted-foreground font-medium italic">Document Upload Coming in V2</span>
+            <div className="bg-muted/30 border border-border p-3 rounded-lg flex flex-col gap-2">
+              <p className="text-xs text-muted-foreground font-medium">Profile Photo (Selfie)</p>
+              {kycRider.profile_photo_url ? (
+                <div className="relative group w-32 h-32 rounded-lg border border-border overflow-hidden bg-card">
+                  <img src={kycRider.profile_photo_url} alt="Selfie" className="w-full h-full object-cover" />
+                  <a 
+                    href={kycRider.profile_photo_url} 
+                    target="_blank" 
+                    rel="noreferrer" 
+                    className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition-opacity text-xs font-semibold gap-1"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" /> View Full
+                  </a>
+                </div>
+              ) : (
+                <span className="text-xs font-semibold text-amber-600 italic bg-amber-50 px-2 py-1.5 rounded border border-amber-100 w-fit">Selfie Not Uploaded</span>
+              )}
             </div>
 
             {/* Aadhaar Section */}
-            <div className="bg-muted/30 border border-border p-3 rounded-lg flex items-center justify-between">
-              <div>
-                <p className="text-xs text-muted-foreground mb-1 font-medium">Aadhaar Number</p>
-                <p className="text-sm font-semibold text-foreground tracking-wide">{kycRider.aadhaar_number ? "[Aadhaar Redacted]" : "—"}</p>
+            <div className="bg-muted/30 border border-border p-3 rounded-lg flex flex-col gap-2">
+              <div className="flex justify-between items-center">
+                <p className="text-xs text-muted-foreground font-medium">Aadhaar Card Details</p>
+                <p className="text-xs font-bold text-foreground tracking-wide">{kycRider.aadhaar_number ? "[Aadhaar Redacted]" : "No Number Entered"}</p>
               </div>
-              <span className="text-xs text-muted-foreground font-medium italic">Document Upload Coming in V2</span>
+              {kycRider.aadhaar_document_url ? (
+                <div className="relative group w-full h-40 rounded-lg border border-border overflow-hidden bg-card">
+                  <img src={kycRider.aadhaar_document_url} alt="Aadhaar Front" className="w-full h-full object-cover" />
+                  <a 
+                    href={kycRider.aadhaar_document_url} 
+                    target="_blank" 
+                    rel="noreferrer" 
+                    className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition-opacity text-xs font-semibold gap-1"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" /> Open Document
+                  </a>
+                </div>
+              ) : (
+                <span className="text-xs font-semibold text-amber-600 italic bg-amber-50 px-2 py-1.5 rounded border border-amber-100 w-fit">Aadhaar Photo Not Uploaded</span>
+              )}
             </div>
 
             {/* PAN Section */}
-            <div className="bg-muted/30 border border-border p-3 rounded-lg flex items-center justify-between">
-              <div>
-                <p className="text-xs text-muted-foreground mb-1 font-medium">PAN Number</p>
-                <p className="text-sm font-semibold text-foreground tracking-wide uppercase">{kycRider.pan_number || "—"}</p>
+            <div className="bg-muted/30 border border-border p-3 rounded-lg flex flex-col gap-2">
+              <div className="flex justify-between items-center">
+                <p className="text-xs text-muted-foreground font-medium">PAN Card Details</p>
+                <p className="text-xs font-bold text-foreground tracking-wide uppercase">{kycRider.pan_number || "No Number Entered"}</p>
               </div>
-              <span className="text-xs text-muted-foreground font-medium italic">Document Upload Coming in V2</span>
+              {kycRider.pan_document_url ? (
+                <div className="relative group w-full h-40 rounded-lg border border-border overflow-hidden bg-card">
+                  <img src={kycRider.pan_document_url} alt="PAN Card" className="w-full h-full object-cover" />
+                  <a 
+                    href={kycRider.pan_document_url} 
+                    target="_blank" 
+                    rel="noreferrer" 
+                    className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition-opacity text-xs font-semibold gap-1"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" /> Open Document
+                  </a>
+                </div>
+              ) : (
+                <span className="text-xs font-semibold text-amber-600 italic bg-amber-50 px-2 py-1.5 rounded border border-amber-100 w-fit">PAN Photo Not Uploaded</span>
+              )}
             </div>
 
             {/* Driving License Section */}
-            <div className="bg-muted/30 border border-border p-3 rounded-lg flex items-center justify-between">
-              <div>
-                <p className="text-xs text-muted-foreground mb-1 font-medium">Driving Licence Number</p>
-                <p className="text-sm font-semibold text-foreground tracking-wide uppercase">{kycRider.driving_license_number || "—"}</p>
+            <div className="bg-muted/30 border border-border p-3 rounded-lg flex flex-col gap-2">
+              <div className="flex justify-between items-center">
+                <p className="text-xs text-muted-foreground font-medium">
+                  Driving Licence {isEvOrNonMotorized(kycRider.vehicle_type) ? "(Optional for EV / Cycle)" : ""}
+                </p>
+                <p className="text-xs font-bold text-foreground tracking-wide uppercase">{kycRider.driving_license_number || "—"}</p>
               </div>
-              <span className="text-xs text-muted-foreground font-medium italic">Document Upload Coming in V2</span>
+              {kycRider.driving_license_document_url ? (
+                <div className="relative group w-full h-40 rounded-lg border border-border overflow-hidden bg-card">
+                  <img src={kycRider.driving_license_document_url} alt="Driving License" className="w-full h-full object-cover" />
+                  <a 
+                    href={kycRider.driving_license_document_url} 
+                    target="_blank" 
+                    rel="noreferrer" 
+                    className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition-opacity text-xs font-semibold gap-1"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" /> Open Document
+                  </a>
+                </div>
+              ) : (
+                <span className="text-xs font-semibold text-amber-600 italic bg-amber-50 px-2 py-1.5 rounded border border-amber-100 w-fit">
+                  {isEvOrNonMotorized(kycRider.vehicle_type) ? "DL Not Uploaded (Optional for EV)" : "DL Photo Not Uploaded"}
+                </span>
+              )}
             </div>
 
             {/* Bank Details Section */}

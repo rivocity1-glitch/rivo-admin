@@ -29,6 +29,8 @@ import { Analytics } from "./components/pages/Analytics";
 import { Settings } from "./components/pages/Settings"; 
 import { supabase } from "../lib/supabase";
 import RequestsCenter from "./components/pages/RequestsCenter";
+import { NotificationService } from "../services/notificationService";
+import { BrowserNotification } from "../services/browserNotification";
 
 export type ThemeType = "light" | "dark" | "system";
 
@@ -41,15 +43,16 @@ export default function App() {
   });
 
   const [supportBadge, setSupportBadge] = useState<{ count: number; bgClass: string } | null>(null);
+  const [unreadNotificationCount, setUnreadNotificationCount] = useState<number>(0);
 
-  // 🟢 Fixed Sidebar Badges State (Notifications completely removed)
+  // 泙 Fixed Sidebar Badges State (Notifications completely removed)
   const [sidebarCounts, setSidebarCounts] = useState({
     requests: 0,
     settlements: 0,
     refunds: 0
   });
 
-  // 🟢 Theme side effect engine
+  // 泙 Theme side effect engine
   useEffect(() => {
     const root = window.document.documentElement;
     
@@ -73,6 +76,47 @@ export default function App() {
       return () => mediaQuery.removeEventListener("change", listener);
     }
   }, [theme]);
+
+  // Realtime notification initialization and listener engine
+  useEffect(() => {
+    if (!session) return;
+
+    let unsubscribe: (() => void) | undefined;
+
+    async function initNotifications() {
+      try {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+
+        if (!user) return;
+
+        const count = await NotificationService.getUnreadCount(user.id);
+        setUnreadNotificationCount(count);
+
+        unsubscribe = NotificationService.subscribe(user.id, async (notification: any) => {
+          const updatedCount = await NotificationService.getUnreadCount(user.id);
+          setUnreadNotificationCount(updatedCount);
+          
+          if (notification?.title && notification?.message) {
+            BrowserNotification.show(notification.title, notification.message);
+          } else {
+            BrowserNotification.show("New Notification", "You have a new notification.");
+          }
+        });
+      } catch (err) {
+        console.error("Failed to initialize notification system:", err);
+      }
+    }
+
+    initNotifications();
+
+    return () => {
+      if (unsubscribe) {
+        unsubscribe();
+      }
+    };
+  }, [session]);
 
   async function syncSupportBadgeCount() {
     try {
@@ -98,7 +142,7 @@ export default function App() {
     }
   }
 
-  // 🟢 Updated Counter Sync Engine (No outgoing broadcast scanning)
+  // 泙 Updated Counter Sync Engine (No outgoing broadcast scanning)
   async function syncSidebarCounts() {
     try {
       // 1. Request Center Count
@@ -153,7 +197,7 @@ export default function App() {
     }
   }, [session]);
 
-  // 🟢 30-Second Refresh Cycle for operational approvals
+  // 泙 30-Second Refresh Cycle for operational approvals
   useEffect(() => {
     if (session) {
       syncSidebarCounts();
@@ -240,7 +284,7 @@ export default function App() {
                     </span>
                   )}
 
-                  {/* 🟢 Render Engine Matrix for targeted approval badges */}
+                  {/* 泙 Render Engine Matrix for targeted approval badges */}
                   {(() => {
                     const badgeConfigs: Record<string, { count: number; classes: string }> = {
                       requests: { count: sidebarCounts.requests, classes: "bg-red-500 text-white animate-pulse" },
@@ -294,8 +338,23 @@ export default function App() {
             <span className="text-[#475569] dark:text-slate-300 capitalize font-semibold">{currentTab}</span>
           </div>
           
-          <div className="text-right text-xs text-[#64748B] dark:text-slate-400 font-medium bg-[#F8FAFC] dark:bg-slate-800 border border-[#E2E8F0] dark:border-slate-700 px-3 py-1.5 rounded-lg transition-colors duration-200">
-            {new Date().toLocaleDateString("en-US", { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => setCurrentTab("notifications")}
+              className="relative p-2 text-[#64748B] dark:text-slate-400 hover:text-[#0F172A] dark:hover:text-slate-200 transition-colors duration-200 focus:outline-none"
+              aria-label="Notifications"
+            >
+              <Bell className="w-5 h-5" />
+              {unreadNotificationCount > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 bg-red-500 text-white text-[10px] font-bold h-4 min-w-[16px] px-1 rounded-full flex items-center justify-center leading-none border-2 border-white dark:border-slate-900 shadow-sm">
+                  {unreadNotificationCount > 99 ? "99+" : unreadNotificationCount}
+                </span>
+              )}
+            </button>
+
+            <div className="text-right text-xs text-[#64748B] dark:text-slate-400 font-medium bg-[#F8FAFC] dark:bg-slate-800 border border-[#E2E8F0] dark:border-slate-700 px-3 py-1.5 rounded-lg transition-colors duration-200">
+              {new Date().toLocaleDateString("en-US", { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
+            </div>
           </div>
         </header>
 
