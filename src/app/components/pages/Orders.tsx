@@ -59,6 +59,7 @@ interface Order {
   customer_pin_code: string;
   vendor_id: string;
   store_name: string;
+  vendor_name: string;
   vendor_phone: string;
   vendor_address_complete: string;
   vendor_status: string;
@@ -176,8 +177,10 @@ export function Orders() {
             pin_code
           ),
           vendors (
-            phone,
-            vendor_profiles (
+  phone,
+ shop_name,
+  owner_name,
+  vendor_profiles (
               store_name,
               address_line1,
               address_line2,
@@ -187,7 +190,7 @@ export function Orders() {
               store_status
             )
           ),
-          riders (
+          assigned_rider:riders!orders_rider_fk (
             id,
             rider_name,
             phone,
@@ -255,16 +258,17 @@ export function Orders() {
           customer_state: row.customer_addresses?.state || "—",
           customer_pin_code: row.customer_addresses?.pin_code || "—",
           vendor_id: row.vendor_id || "",
-          store_name: vp?.store_name || "—",
+          store_name: vp?.store_name || "",
+          vendor_name: row.vendors?.vendor_name || "",
           vendor_phone: row.vendors?.phone || "—",
           vendor_address_complete: vendorAddressStr || "—",
           vendor_status: vp?.store_status || "—",
-          rider_id: row.riders?.id || "",
-          rider_name: row.riders?.rider_name || "Not Assigned",
-          rider_phone: row.riders?.phone || "—",
-          rider_vehicle_type: row.riders?.vehicle_type || "—",
-          rider_vehicle_number: row.riders?.vehicle_number || "—",
-          rider_availability_status: row.riders?.availability_status || "—",
+          rider_id: row.assigned_rider?.id || "",
+          rider_name: row.assigned_rider?.rider_name || "Not Assigned",
+          rider_phone: row.assigned_rider?.phone || "—",
+          rider_vehicle_type: row.assigned_rider?.vehicle_type || "—",
+          rider_vehicle_number: row.assigned_rider?.vehicle_number || "—",
+          rider_availability_status: row.assigned_rider?.availability_status || "—",
           subtotal: row.subtotal || 0,
           delivery_fee: row.delivery_fee || 0,
           platform_fee: row.platform_fee || 0,
@@ -329,7 +333,24 @@ export function Orders() {
     }
   }, [selectedOrder?.id]);
 
-  const uniqueVendors = Array.from(new Set(orderList.map((o) => o.store_name))).filter((v) => v && v !== "—");
+  const uniqueVendorOptions = Array.from(
+    new Map(
+      orderList
+        .filter((o) => o.vendor_id)
+        .map((o) => {
+          let label = "—";
+          if (o.store_name && o.vendor_name) {
+            label = `${o.store_name} — ${o.vendor_name}`;
+          } else if (o.store_name) {
+            label = o.store_name;
+          } else if (o.vendor_name) {
+            label = o.vendor_name;
+          }
+          return [o.vendor_id, { id: o.vendor_id, label }];
+        })
+    ).values()
+  ).filter((v) => v.label !== "—");
+
   const uniqueRiders = Array.from(new Set(orderList.map((o) => o.rider_name))).filter((r) => r && r !== "Not Assigned");
 
   const filtered = orderList.filter((o) => {
@@ -337,6 +358,7 @@ export function Orders() {
       o.order_number.toLowerCase().includes(search.toLowerCase()) ||
       o.customer_name.toLowerCase().includes(search.toLowerCase()) ||
       o.store_name.toLowerCase().includes(search.toLowerCase()) ||
+      o.vendor_name.toLowerCase().includes(search.toLowerCase()) ||
       o.rider_name.toLowerCase().includes(search.toLowerCase()) ||
       o.customer_phone.includes(search) ||
       o.vendor_phone.includes(search) ||
@@ -345,7 +367,7 @@ export function Orders() {
     const matchStatus = statusFilter === "all" || o.order_status === statusFilter;
     const matchPayMethod = paymentMethodFilter === "all" || o.payment_method.toLowerCase() === paymentMethodFilter.toLowerCase();
     const matchPayStatus = paymentStatusFilter === "all" || o.payment_status.toLowerCase() === paymentStatusFilter.toLowerCase();
-    const matchVendor = vendorFilter === "all" || o.store_name === vendorFilter;
+    const matchVendor = vendorFilter === "all" || o.vendor_id === vendorFilter;
     const matchRider = riderFilter === "all" || o.rider_name === riderFilter;
 
     let matchDate = true;
@@ -364,8 +386,8 @@ export function Orders() {
   const paginated = filtered.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
   const handleExportCSV = () => {
-    const headers = ["Order ID,Customer,Vendor,Rider,Amount,Status,Payment Method,Payment Status,Placed Time"];
-    const rows = filtered.map(o => `"${o.order_number}","${o.customer_name}","${o.store_name}","${o.rider_name}",${o.total_amount},"${o.order_status}","${o.payment_method}","${o.payment_status}","${o.created_at}"`);
+    const headers = ["Order ID,Customer,Store,Vendor Business,Rider,Amount,Status,Payment Method,Payment Status,Placed Time"];
+    const rows = filtered.map(o => `"${o.order_number}","${o.customer_name}","${o.store_name}","${o.vendor_name}","${o.rider_name}",${o.total_amount},"${o.order_status}","${o.payment_method}","${o.payment_status}","${o.created_at}"`);
     const blob = new Blob([headers.concat(rows).join("\n")], { type: "text/csv;charset=utf-8;" });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
@@ -374,9 +396,9 @@ export function Orders() {
   };
 
   const handleExportExcel = () => {
-    let html = "<table><tr><th>Order ID</th><th>Customer</th><th>Vendor</th><th>Rider</th><th>Amount</th><th>Status</th><th>Payment Method</th><th>Payment Status</th><th>Placed Time</th></tr>";
+    let html = "<table><tr><th>Order ID</th><th>Customer</th><th>Store Name</th><th>Vendor Name</th><th>Rider</th><th>Amount</th><th>Status</th><th>Payment Method</th><th>Payment Status</th><th>Placed Time</th></tr>";
     filtered.forEach(o => {
-      html += `<tr><td>${o.order_number}</td><td>${o.customer_name}</td><td>${o.store_name}</td><td>${o.rider_name}</td><td>${o.total_amount}</td><td>${o.order_status}</td><td>${o.payment_method}</td><td>${o.payment_status}</td><td>${o.created_at}</td></tr>`;
+      html += `<tr><td>${o.order_number}</td><td>${o.customer_name}</td><td>${o.store_name}</td><td>${o.vendor_name}</td><td>${o.rider_name}</td><td>${o.total_amount}</td><td>${o.order_status}</td><td>${o.payment_method}</td><td>${o.payment_status}</td><td>${o.created_at}</td></tr>`;
     });
     html += "</table>";
     const blob = new Blob([html], { type: "application/vnd.ms-excel" });
@@ -389,9 +411,10 @@ export function Orders() {
   const handleExportPDF = () => {
     const win = window.open("", "_blank");
     if (!win) return;
-    let table = "<style>table{width:100%;border-collapse:collapse;}th,td{border:1px solid #E2E8F0;padding:8px;font-size:12px;text-align:left;}</style><h3>Operational Order Logs Manifest</h3><table><tr><th>Order Number</th><th>Customer</th><th>Vendor</th><th>Rider</th><th>Total Amount</th><th>Status</th><th>Placed At</th></tr>";
+    let table = "<style>table{width:100%;border-collapse:collapse;}th,td{border:1px solid #E2E8F0;padding:8px;font-size:12px;text-align:left;}</style><h3>Operational Order Logs Manifest</h3><table><tr><th>Order Number</th><th>Customer</th><th>Store / Vendor</th><th>Rider</th><th>Total Amount</th><th>Status</th><th>Placed At</th></tr>";
     filtered.forEach(o => {
-      table += `<tr><td>#${o.order_number}</td><td>${o.customer_name}</td><td>${o.store_name}</td><td>${o.rider_name}</td><td>₹${o.total_amount}</td><td>${o.order_status}</td><td>${o.created_at}</td></tr>`;
+      const storeVendorStr = o.store_name && o.vendor_name ? `${o.store_name} (${o.vendor_name})` : o.store_name || o.vendor_name || "—";
+      table += `<tr><td>#${o.order_number}</td><td>${o.customer_name}</td><td>${storeVendorStr}</td><td>${o.rider_name}</td><td>₹${o.total_amount}</td><td>${o.order_status}</td><td>${o.created_at}</td></tr>`;
     });
     table += "</table>";
     win.document.write(table);
@@ -491,7 +514,11 @@ export function Orders() {
           <label className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider block mb-1.5">Filter Vendor Store</label>
           <select value={vendorFilter} onChange={(e) => setVendorFilter(e.target.value)} className="w-full h-8 px-2 bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg text-xs font-medium text-[#0F172A] outline-none focus:border-[#22C55E]">
             <option value="all">All Vendors</option>
-            {uniqueVendors.map((v) => <option key={v} value={v}>{v}</option>)}
+            {uniqueVendorOptions.map((v) => (
+              <option key={v.id} value={v.id}>
+                {v.label}
+              </option>
+            ))}
           </select>
         </div>
         <div>
@@ -545,7 +572,7 @@ export function Orders() {
             <tr className="border-b border-[#E2E8F0] bg-[#F8FAFC]">
               <th className="text-left px-4 py-3 text-xs font-medium text-[#64748B] uppercase tracking-wide">Order Number</th>
               <th className="text-left px-4 py-3 text-xs font-medium text-[#64748B] uppercase tracking-wide">Customer Name</th>
-              <th className="text-left px-4 py-3 text-xs font-medium text-[#64748B] uppercase tracking-wide">Store Node</th>
+              <th className="text-left px-4 py-3 text-xs font-medium text-[#64748B] uppercase tracking-wide">Store / Vendor</th>
               <th className="text-left px-4 py-3 text-xs font-medium text-[#64748B] uppercase tracking-wide">Logistics Courier</th>
               <th className="text-right px-4 py-3 text-xs font-medium text-[#64748B] uppercase tracking-wide">Amount</th>
               <th className="text-left px-4 py-3 text-xs font-medium text-[#64748B] uppercase tracking-wide">Fulfillment Status</th>
@@ -559,7 +586,7 @@ export function Orders() {
                 <tr key={idx} className="animate-pulse">
                   <td className="px-4 py-4"><div className="h-4 bg-slate-200 rounded w-16" /></td>
                   <td className="px-4 py-4"><div className="h-4 bg-slate-200 rounded w-24 mb-1" /><div className="h-3 bg-slate-200 rounded w-20" /></td>
-                  <td className="px-4 py-4"><div className="h-4 bg-slate-200 rounded w-28" /></td>
+                  <td className="px-4 py-4"><div className="h-4 bg-slate-200 rounded w-28 mb-1" /><div className="h-3 bg-slate-200 rounded w-20" /></td>
                   <td className="px-4 py-4"><div className="h-4 bg-slate-200 rounded w-24" /></td>
                   <td className="px-4 py-4 text-right"><div className="h-4 bg-slate-200 rounded w-12 ml-auto" /></td>
                   <td className="px-4 py-4"><div className="h-5 bg-slate-200 rounded w-16" /></td>
@@ -572,6 +599,10 @@ export function Orders() {
             ) : (
               paginated.map((order) => {
                 const conf = statusConfig[order.order_status] || { variant: "neutral", label: order.order_status };
+                
+                const storeText = order.store_name || order.vendor_name || "—";
+                const showVendorText = order.store_name && order.vendor_name;
+
                 return (
                   <tr key={order.id} className="hover:bg-[#FAFAFA] transition-colors cursor-pointer" onClick={() => setSelectedOrder(order)}>
                     <td className="px-4 py-3.5">
@@ -581,7 +612,12 @@ export function Orders() {
                       <p className="text-sm font-medium text-[#0F172A]">{order.customer_name}</p>
                       <p className="text-xs text-[#64748B]">{order.customer_phone}</p>
                     </td>
-                    <td className="px-4 py-3.5 text-sm text-[#64748B]">{order.store_name}</td>
+                    <td className="px-4 py-3.5">
+                      <p className="text-sm font-medium text-[#0F172A]">{storeText}</p>
+                      {showVendorText && (
+                        <p className="text-xs text-[#64748B]">{order.vendor_name}</p>
+                      )}
+                    </td>
                     <td className="px-4 py-3.5 text-sm text-[#64748B]">{order.rider_name}</td>
                     <td className="px-4 py-3.5 text-right"><span className="text-sm font-medium text-[#0F172A]">₹{order.total_amount.toLocaleString("en-IN")}</span></td>
                     <td className="px-4 py-3.5"><Badge variant={conf.variant} label={conf.label} dot /></td>
@@ -795,8 +831,16 @@ export function Orders() {
                 <div className="flex gap-3">
                   <div className="w-8 h-8 rounded-lg bg-[#F5F3FF] text-[#7C3AED] flex items-center justify-center shrink-0"><Store className="w-4 h-4" /></div>
                   <div>
-                    <span className="text-[10px] font-bold text-[#64748B] uppercase tracking-wider block">Merchant Vendor Node</span>
-                    <p className="text-sm font-bold text-[#0F172A] mt-0.5">{selectedOrder.store_name} <span className="text-[10px] font-normal border border-[#E2E8F0] bg-[#F8FAFC] px-1.5 py-0.5 rounded text-[#475569] ml-1.5 capitalize">{selectedOrder.vendor_status}</span></p>
+                    <span className="text-[10px] font-bold text-[#64748B] uppercase tracking-wider block">Merchant</span>
+                    <p className="text-sm font-bold text-[#0F172A] mt-0.5">
+                      {selectedOrder.store_name || selectedOrder.vendor_name || "—"} 
+                      <span className="text-[10px] font-normal border border-[#E2E8F0] bg-[#F8FAFC] px-1.5 py-0.5 rounded text-[#475569] ml-1.5 capitalize">{selectedOrder.vendor_status}</span>
+                    </p>
+                    {selectedOrder.vendor_name && (
+                      <p className="text-xs text-[#64748B] font-medium mt-0.5">
+                        <span className="font-semibold text-[#475569]">Vendor:</span> {selectedOrder.vendor_name}
+                      </p>
+                    )}
                     <p className="text-xs text-[#64748B] font-medium mt-1 flex items-center gap-1"><MapPin className="w-3 h-3 text-[#94A3B8]" />{selectedOrder.vendor_address_complete}</p>
                   </div>
                 </div>

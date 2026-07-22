@@ -30,7 +30,7 @@ type PriorityType = "high" | "medium" | "low";
 interface SupportTicket {
   id: string;
   user_type: UserType;
-  user_id: string; // Keeps general string profile tracing
+  user_id: string; // Profiles ID (vendor_id, customer_id, or rider_id)
   vendor_id?: string;
   customer_id?: string;
   rider_id?: string;
@@ -58,10 +58,9 @@ const userTypeConfig: Record<UserType, { label: string; icon: React.ElementType;
   rider: { label: "Rider", icon: Truck, color: "text-purple-600", bg: "bg-purple-50 border-purple-100" },
 };
 
-// Fixed Priority configuration mappings exactly to specifications
-const priorityConfig: Record<PriorityType, { variant: "danger" | "warning" | "neutral"; label: string; customClasses?: string }> = {
-  high: { variant: "danger", label: "High", customClasses: "bg-red-100 text-red-700 border-red-200" },
-  medium: { variant: "warning", label: "Medium" }, // Keeps yellow/orange default styling unchanged
+const priorityConfig: Record<PriorityType, { variant: "error" | "warning" | "neutral"; label: string; customClasses?: string }> = {
+  high: { variant: "error", label: "High", customClasses: "bg-red-100 text-red-700 border-red-200" },
+  medium: { variant: "warning", label: "Medium" },
   low: { variant: "neutral", label: "Low", customClasses: "bg-purple-100 text-purple-700 border-purple-200" },
 };
 
@@ -77,7 +76,6 @@ export function Supports() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [previewScreenshot, setPreviewScreenshot] = useState(false);
   
-  // Confirmation state for delete action
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [successToast, setSuccessToast] = useState<string | null>(null);
 
@@ -112,7 +110,6 @@ export function Supports() {
     return "Cross-examine user configuration metrics, review transactional records for matching data conflicts, or request supplementary system diagnostics from the user.";
   }
 
-  // Silent background housekeeping for closed tickets older than 7 days
   async function autoDeleteOldClosedTickets() {
     try {
       const cutoffDate = new Date();
@@ -260,11 +257,10 @@ export function Supports() {
   }
 
   useEffect(() => {
-    autoDeleteOldClosedTickets(); // Run silent cleanup workflow on init
+    autoDeleteOldClosedTickets();
     fetchTickets();
   }, []);
 
-  // Manual explicit deletion handler
   async function handleTicketDeletion() {
     if (!selectedTicket) return;
 
@@ -311,59 +307,39 @@ export function Supports() {
 
       if (error) throw error;
 
-      // Map dynamic message contextual strings based on current structural status update targets
+      // Map notification messages cleanly
       let notificationMessage = "";
-      if (nextStatus === "open") notificationMessage = "Your support ticket has been reopened.";
-      if (nextStatus === "in_progress") notificationMessage = "Your support ticket is currently being reviewed by the Rivo support team.";
-      if (nextStatus === "resolved") notificationMessage = "Your support ticket has been resolved.";
-      if (nextStatus === "closed") notificationMessage = "Your support ticket has been closed.";
+      if (nextStatus === "open") {
+        notificationMessage = "Your support ticket has been reopened.";
+      } else if (nextStatus === "in_progress") {
+        notificationMessage = "Your support ticket is now being reviewed by the Rivo Support Team.";
+      } else if (nextStatus === "resolved") {
+        notificationMessage = "Your support ticket has been resolved.";
+      } else if (nextStatus === "closed") {
+        notificationMessage = "Your support ticket has been closed.";
+      }
 
-      // Resolve operational auth_user_id cleanly using specified schema tables lookup paths
-      let resolvedAuthUserId: string | null = null;
+      // Directly resolve profile recipient ID
+      const recipientId = selectedTicket.vendor_id || selectedTicket.customer_id || selectedTicket.rider_id || selectedTicket.user_id;
+      const recipientType = selectedTicket.user_type;
 
-      try {
-        if (selectedTicket.user_type === "vendor" && selectedTicket.vendor_id) {
-          const { data: vData } = await supabase
-            .from("vendors")
-            .select("auth_user_id")
-            .eq("id", selectedTicket.vendor_id)
-            .single();
-          if (vData) resolvedAuthUserId = vData.auth_user_id;
-        } else if (selectedTicket.user_type === "customer" && selectedTicket.customer_id) {
-          const { data: cData } = await supabase
-            .from("customers")
-            .select("auth_user_id")
-            .eq("id", selectedTicket.customer_id)
-            .single();
-          if (cData) resolvedAuthUserId = cData.auth_user_id;
-        } else if (selectedTicket.user_type === "rider" && selectedTicket.rider_id) {
-          const { data: rData } = await supabase
-            .from("riders")
-            .select("auth_user_id")
-            .eq("id", selectedTicket.rider_id)
-            .single();
-          if (rData) resolvedAuthUserId = rData.auth_user_id;
+      if (recipientId && recipientType) {
+        const { error: notifError } = await supabase
+          .from("notifications")
+          .insert({
+            recipient_id: recipientId,
+            recipient_type: recipientType,
+            title: "Support Ticket Update",
+            message: notificationMessage,
+            is_read: false,
+            created_at: new Date().toISOString()
+          });
+
+        if (notifError) {
+          console.error("Notification creation failed:", notifError);
+        } else {
+          console.log(`Notification sent to ${recipientType} (${recipientId})`);
         }
-
-        if (resolvedAuthUserId) {
-          const { error: notifError } = await supabase
-            .from("notifications")
-            .insert({
-              auth_user_id: resolvedAuthUserId,
-              title: "Support Ticket Update",
-              message: notificationMessage,
-              is_read: false,
-              created_at: new Date().toISOString()
-            });
-
-          if (notifError) {
-            console.error("Notification creation failed", notifError);
-          } else {
-            console.log("Notification sent", resolvedAuthUserId);
-          }
-        }
-      } catch (notifErr) {
-        console.error("Notification creation failed", notifErr);
       }
 
       await fetchTickets();
@@ -397,7 +373,6 @@ export function Supports() {
         description="Unified hub to manage and resolve platform customer, vendor, and rider helpdesk ticket queues."
       />
 
-      {/* Success Notification Banner Custom Layout */}
       {successToast && (
         <div className="fixed top-4 right-4 z-50 bg-emerald-600 border border-emerald-500 text-white text-xs font-bold px-4 py-3 rounded-xl shadow-xl flex items-center gap-2 animate-in fade-in slide-in-from-top-4 duration-300">
           <CheckCircle className="w-4 h-4" />
@@ -561,7 +536,6 @@ export function Supports() {
                         </div>
                       </td>
                       <td className="px-4 py-3.5">
-                        {/* Styled priority badge mapping using custom input definitions safely */}
                         <Badge 
                           variant={priority.variant} 
                           label={priority.label} 
@@ -678,7 +652,6 @@ export function Supports() {
               </div>
             </div>
 
-            {/* Inline Confirmation Action Dialog for Deletion */}
             {showDeleteConfirm && (
               <div className="bg-red-50 border border-red-200 rounded-xl p-4 space-y-3 animate-in fade-in zoom-in-95 duration-150">
                 <p className="text-xs font-bold text-red-800">Delete this support ticket?</p>

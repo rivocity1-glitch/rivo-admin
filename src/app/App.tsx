@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { 
+  AlertTriangle,
   BarChart3, 
   Bell, 
   Bike, 
@@ -23,6 +24,7 @@ import { Orders } from "./components/pages/Orders";
 import { Settlements } from "./components/pages/Settlements"; 
 import { Refunds } from "./components/pages/Refunds"; 
 import { Supports } from "./components/pages/Support"; 
+import { SOS } from "./components/pages/sos";
 import { Subscriptions } from "./components/pages/Subscriptions"; 
 import { Notifications } from "./components/pages/Notifications"; 
 import { Analytics } from "./components/pages/Analytics"; 
@@ -45,14 +47,14 @@ export default function App() {
   const [supportBadge, setSupportBadge] = useState<{ count: number; bgClass: string } | null>(null);
   const [unreadNotificationCount, setUnreadNotificationCount] = useState<number>(0);
 
-  // 泙 Fixed Sidebar Badges State (Notifications completely removed)
+  // Fixed Sidebar Badges State (Notifications completely removed)
   const [sidebarCounts, setSidebarCounts] = useState({
     requests: 0,
     settlements: 0,
     refunds: 0
   });
 
-  // 泙 Theme side effect engine
+  // Theme side effect engine
   useEffect(() => {
     const root = window.document.documentElement;
     
@@ -91,17 +93,23 @@ export default function App() {
 
         if (!user) return;
 
-        const count = await NotificationService.getUnreadCount(user.id);
-        setUnreadNotificationCount(count);
+        const initialUnread = await NotificationService.getUnreadCount(user.id);
+        const initialCount = Array.isArray(initialUnread?.data) ? initialUnread.data.length : 0;
+        setUnreadNotificationCount(initialCount);
 
         unsubscribe = NotificationService.subscribe(user.id, async (notification: any) => {
-          const updatedCount = await NotificationService.getUnreadCount(user.id);
+          const updatedUnread = await NotificationService.getUnreadCount(user.id);
+          const updatedCount = Array.isArray(updatedUnread?.data) ? updatedUnread.data.length : 0;
           setUnreadNotificationCount(updatedCount);
           
           if (notification?.title && notification?.message) {
-            BrowserNotification.show(notification.title, notification.message);
+            BrowserNotification.show(notification.title, {
+              body: notification.message,
+            });
           } else {
-            BrowserNotification.show("New Notification", "You have a new notification.");
+            BrowserNotification.show("New Notification", {
+              body: "You have a new notification.",
+            });
           }
         });
       } catch (err) {
@@ -142,7 +150,7 @@ export default function App() {
     }
   }
 
-  // 泙 Updated Counter Sync Engine (No outgoing broadcast scanning)
+  // Updated Counter Sync Engine
   async function syncSidebarCounts() {
     try {
       // 1. Request Center Count
@@ -197,7 +205,7 @@ export default function App() {
     }
   }, [session]);
 
-  // 泙 30-Second Refresh Cycle for operational approvals
+  // 30-Second Refresh Cycle for operational approvals
   useEffect(() => {
     if (session) {
       syncSidebarCounts();
@@ -236,6 +244,7 @@ export default function App() {
     { id: "settlements", label: "Settlements", icon: <CreditCard className="w-4 h-4" /> },
     { id: "refunds", label: "Refunds", icon: <RotateCcw className="w-4 h-4" /> },
     { id: "support", label: "Support", icon: <HelpCircle className="w-4 h-4" /> }, 
+    { id: "sos", label: "Emergency SOS", icon: <AlertTriangle className="w-4 h-4" /> },
     { id: "requests", label: "Request Center", icon: <Bell className="w-4 h-4" /> },
     { id: "subscriptions", label: "Subscriptions", icon: <Crown className="w-4 h-4" /> },
     { id: "notifications", label: "Notifications", icon: <Bell className="w-4 h-4" /> },
@@ -284,7 +293,6 @@ export default function App() {
                     </span>
                   )}
 
-                  {/* 泙 Render Engine Matrix for targeted approval badges */}
                   {(() => {
                     const badgeConfigs: Record<string, { count: number; classes: string }> = {
                       requests: { count: sidebarCounts.requests, classes: "bg-red-500 text-white animate-pulse" },
@@ -367,13 +375,14 @@ export default function App() {
           {currentTab === "settlements" && <Settlements />} 
           {currentTab === "refunds" && <Refunds />} 
           {currentTab === "support" && <Supports />} 
+          {currentTab === "sos" && <SOS />}
           {currentTab === "requests" && <RequestsCenter />} 
           {currentTab === "subscriptions" && <Subscriptions />} 
           {currentTab === "notifications" && <Notifications />} 
           {currentTab === "analytics" && <Analytics />} 
           {currentTab === "settings" && <Settings />} 
 
-          {currentTab !== "dashboard" && currentTab !== "vendors" && currentTab !== "riders" && currentTab !== "customers" && currentTab !== "orders" && currentTab !== "settlements" && currentTab !== "refunds" && currentTab !== "support" && currentTab !== "requests" && currentTab !== "subscriptions" && currentTab !== "notifications" && currentTab !== "analytics" && currentTab !== "settings" && (
+          {currentTab !== "dashboard" && currentTab !== "vendors" && currentTab !== "riders" && currentTab !== "customers" && currentTab !== "orders" && currentTab !== "settlements" && currentTab !== "refunds" && currentTab !== "support" && currentTab !== "sos" && currentTab !== "requests" && currentTab !== "subscriptions" && currentTab !== "notifications" && currentTab !== "analytics" && currentTab !== "settings" && (
             <div className="bg-white dark:bg-slate-900 border border-[#E2E8F0] dark:border-slate-800 rounded-xl p-16 text-center text-xs font-medium text-[#94A3B8] dark:text-slate-500 transition-colors duration-200">
               The <span className="capitalize text-[#475569] dark:text-slate-300 font-semibold">"{currentTab}"</span> panel is connected and preparing for production initialization.
             </div>
