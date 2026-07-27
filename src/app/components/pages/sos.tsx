@@ -12,6 +12,10 @@ import {
   ShieldAlert,
   User,
   X,
+  ImageOff,
+  Copy,
+  Check,
+  FileText,
 } from "lucide-react";
 import { supabase } from "../../../lib/supabase";
 
@@ -30,10 +34,17 @@ interface EmergencyReport {
   acknowledged_at: string | null;
   resolved_at: string | null;
   resolved_by: string | null;
+  resolution_notes?: string | null;
   vendor_id: string | null;
   vendor_name: string | null;
   order_id: string | null;
   order_number: string | null;
+  // Dynamic fields
+  accident_target?: string | null;
+  fuel_type?: string | null;
+  breakdown_type?: string | null;
+  assistance_type?: string | null;
+  custom_description?: string | null;
   // Augmented details
   rider?: {
     rider_name: string;
@@ -69,7 +80,14 @@ export function SOS() {
   // Selected Report for Drawer Details
   const [selectedReport, setSelectedReport] = useState<EmergencyReport | null>(null);
   const [signedPhotoUrl, setSignedPhotoUrl] = useState<string | null>(null);
+  const [photoError, setPhotoError] = useState<string | null>(null);
+  const [copiedPath, setCopiedPath] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
+
+  // Resolve Modal States
+  const [resolveModalOpen, setResolveModalOpen] = useState(false);
+  const [reportToResolve, setReportToResolve] = useState<EmergencyReport | null>(null);
+  const [resolutionNotesInput, setResolutionNotesInput] = useState("");
 
   // Fetch SOS Reports and enrich them safely without failing on missing foreign key constraints
   const fetchReports = async () => {
@@ -135,6 +153,14 @@ export function SOS() {
       );
 
       setReports(enriched);
+
+      // Keep drawer in sync if open
+      if (selectedReport) {
+        const updatedSelected = enriched.find((item) => item.id === selectedReport.id);
+        if (updatedSelected) {
+          setSelectedReport(updatedSelected);
+        }
+      }
     } catch (err: any) {
       console.error("Error fetching emergency reports:", err);
       setError(err.message || "Failed to load emergency reports.");
@@ -167,37 +193,69 @@ export function SOS() {
     };
   }, []);
 
-  // Fetch signed private image URL if photo_url is in private bucket
+  // Fetch signed private image URL with logging and error handling
   useEffect(() => {
     async function resolvePhotoUrl() {
+      setPhotoError(null);
+      setCopiedPath(false);
+
       if (!selectedReport?.photo_url) {
         setSignedPhotoUrl(null);
         return;
       }
 
-      const rawUrl = selectedReport.photo_url;
+      const rawUrl = selectedReport.photo_url.trim();
+
       if (rawUrl.startsWith("http://") || rawUrl.startsWith("https://")) {
+        console.log("[SOS Storage] Photo URL is already a public HTTP URL:", rawUrl);
         setSignedPhotoUrl(rawUrl);
         return;
       }
 
+      const cleanPath = rawUrl
+        .replace(/^rider-sos\//, "")
+        .replace(/^\/+/, "");
+
+      console.log("[SOS Storage] Requesting signed URL for bucket: rider-sos");
+      console.log("[SOS Storage] Cleaned Object Path:", cleanPath);
+
       try {
-        const { data } = await supabase.storage
+        const { data, error: storageErr } = await supabase.storage
           .from("rider-sos")
-          .createSignedUrl(rawUrl, 3600);
+          .createSignedUrl(cleanPath, 3600);
+
+        console.log("[SOS Storage] Signed URL Response:", data);
+
+        if (storageErr) {
+          console.error("[SOS Storage Error] Failed to create signed URL:", storageErr);
+          setPhotoError(storageErr.message || "Failed to generate signed URL");
+          setSignedPhotoUrl(null);
+          return;
+        }
 
         if (data?.signedUrl) {
+          console.log("[SOS Storage Success] Generated Signed URL:", data.signedUrl);
           setSignedPhotoUrl(data.signedUrl);
         } else {
-          setSignedPhotoUrl(rawUrl);
+          console.error("[SOS Storage Error] No signedUrl returned in data object:", data);
+          setPhotoError("No signed URL returned from Supabase storage");
+          setSignedPhotoUrl(null);
         }
-      } catch (err) {
-        setSignedPhotoUrl(rawUrl);
+      } catch (err: any) {
+        console.error("[SOS Storage Exception] Exception while generating signed URL:", err);
+        setPhotoError(err.message || "Unexpected exception during signed URL generation");
+        setSignedPhotoUrl(null);
       }
     }
 
     resolvePhotoUrl();
   }, [selectedReport]);
+
+  const copyPathToClipboard = (path: string) => {
+    navigator.clipboard.writeText(path);
+    setCopiedPath(true);
+    setTimeout(() => setCopiedPath(false), 2000);
+  };
 
   // Calculations for Stat Cards
   const activeCount = reports.filter((r) => r.status?.toLowerCase() !== "resolved").length;
@@ -268,12 +326,13 @@ export function SOS() {
     return true;
   });
 
-  // Action: Acknowledge SOS
-  const handleAcknowledge = async (id: string) => {
+  // Action: Acknowledge SOS + Send Rider Notification
+  const handleAcknowledge = async (report: EmergencyReport) => {
     try {
       setActionLoading(true);
       const nowIso = new Date().toISOString();
 
+      // 1. Update status in rider_emergency_reports
       const { error: updateErr } = await supabase
         .from("rider_emergency_reports")
         .update({
@@ -281,12 +340,24 @@ export function SOS() {
           acknowledged_at: nowIso,
           updated_at: nowIso,
         })
-        .eq("id", id);
+        .eq("id", report.id);
 
       if (updateErr) throw updateErr;
 
+      // 2. Insert Notification for Rider
+      if (report.rider_id) {
+        await supabase.from("notifications").insert({
+          user_id: report.rider_id,
+          user_type: "rider",
+          title: "SOS Acknowledged",
+          body: "Our support team is reviewing your emergency request.",
+          is_read: false,
+          created_at: nowIso,
+        });
+      }
+
       await fetchReports();
-      if (selectedReport?.id === id) {
+      if (selectedReport?.id === report.id) {
         setSelectedReport((prev) =>
           prev ? { ...prev, status: "acknowledged", acknowledged_at: nowIso } : null
         );
@@ -298,8 +369,21 @@ export function SOS() {
     }
   };
 
-  // Action: Resolve SOS
-  const handleResolve = async (id: string) => {
+  // Open Resolve Modal
+  const openResolveModal = (report: EmergencyReport) => {
+    setReportToResolve(report);
+    setResolutionNotesInput("");
+    setResolveModalOpen(true);
+  };
+
+  // Action: Confirm Resolve SOS + Send Rider Notification
+  const handleConfirmResolve = async () => {
+    if (!reportToResolve) return;
+    if (!resolutionNotesInput.trim()) {
+      alert("Please enter resolution notes before resolving.");
+      return;
+    }
+
     try {
       setActionLoading(true);
       const nowIso = new Date().toISOString();
@@ -315,6 +399,7 @@ export function SOS() {
         console.error(e);
       }
 
+      // 1. Update status and notes in database
       const { error: updateErr } = await supabase
         .from("rider_emergency_reports")
         .update({
@@ -322,13 +407,29 @@ export function SOS() {
           resolved_at: nowIso,
           resolved_by: adminId,
           updated_at: nowIso,
+          resolution_notes: resolutionNotesInput.trim(),
         })
-        .eq("id", id);
+        .eq("id", reportToResolve.id);
 
       if (updateErr) throw updateErr;
 
+      // 2. Insert Notification for Rider
+      if (reportToResolve.rider_id) {
+        await supabase.from("notifications").insert({
+          user_id: reportToResolve.rider_id,
+          user_type: "rider",
+          title: "SOS Resolved",
+          body: "Your emergency has been resolved. Tap to view the details.",
+          is_read: false,
+          created_at: nowIso,
+        });
+      }
+
+      setResolveModalOpen(false);
+      setReportToResolve(null);
+      setResolutionNotesInput("");
+
       await fetchReports();
-      setSelectedReport(null);
     } catch (err: any) {
       alert("Failed to resolve emergency: " + err.message);
     } finally {
@@ -358,6 +459,16 @@ export function SOS() {
         Resolved
       </span>
     );
+  };
+
+  const formatTimestamp = (isoString: string | null) => {
+    if (!isoString) return "Pending";
+    return new Date(isoString).toLocaleString("en-GB", {
+      hour: "2-digit",
+      minute: "2-digit",
+      day: "2-digit",
+      month: "short",
+    });
   };
 
   return (
@@ -580,7 +691,7 @@ export function SOS() {
                     </p>
                   ) : null}
                   <p className="text-[11px] text-[#94A3B8] dark:text-slate-500 pt-1">
-                    Submitted: {new Date(report.created_at).toLocaleString("en-GB", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "short" })}
+                    Submitted: {formatTimestamp(report.created_at)}
                   </p>
                 </div>
               </div>
@@ -616,6 +727,7 @@ export function SOS() {
                 </button>
               </div>
 
+              {/* RIDER INFO */}
               <div className="space-y-2 bg-[#F8FAFC] dark:bg-slate-800/50 p-4 rounded-xl border border-[#F1F5F9] dark:border-slate-800">
                 <h3 className="text-xs font-bold text-[#64748B] dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
                   <User className="w-3.5 h-3.5" /> Rider Information
@@ -628,6 +740,7 @@ export function SOS() {
                 </div>
               </div>
 
+              {/* EMERGENCY DESCRIPTION */}
               <div className="space-y-2 bg-red-50/50 dark:bg-red-950/20 p-4 rounded-xl border border-red-100 dark:border-red-900/30">
                 <div className="flex items-center justify-between">
                   <h3 className="text-xs font-bold text-red-600 dark:text-red-400 uppercase tracking-wider">
@@ -642,22 +755,146 @@ export function SOS() {
                   {selectedReport.description || "No description provided."}
                 </p>
                 <p className="text-[11px] text-[#94A3B8] dark:text-slate-500 pt-1">
-                  Reported: {new Date(selectedReport.created_at).toLocaleString("en-GB")}
+                  Reported: {formatTimestamp(selectedReport.created_at)}
                 </p>
               </div>
 
+              {/* NEW SECTION: RESOLUTION STATUS */}
+              <div className="space-y-2 bg-[#F8FAFC] dark:bg-slate-800/50 p-4 rounded-xl border border-[#F1F5F9] dark:border-slate-800">
+                <h3 className="text-xs font-bold text-[#64748B] dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                  <FileText className="w-3.5 h-3.5" /> Resolution
+                </h3>
+                {selectedReport.status?.toLowerCase() === "pending" && (
+                  <p className="text-xs text-[#64748B] dark:text-slate-400 italic">Waiting for support...</p>
+                )}
+                {selectedReport.status?.toLowerCase() === "acknowledged" && (
+                  <p className="text-xs text-orange-600 dark:text-orange-400 font-medium">
+                    Support team is reviewing this emergency.
+                  </p>
+                )}
+                {selectedReport.status?.toLowerCase() === "resolved" && (
+                  <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900/40 rounded-lg text-xs space-y-1">
+                    <p className="font-bold text-[#16A34A] dark:text-[#22C55E]">Resolution Notes:</p>
+                    <p className="text-[#0F172A] dark:text-slate-200 leading-relaxed">
+                      {selectedReport.resolution_notes || "Emergency case has been resolved."}
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* NEW SECTION: TIMELINE */}
+              <div className="space-y-3 bg-[#F8FAFC] dark:bg-slate-800/50 p-4 rounded-xl border border-[#F1F5F9] dark:border-slate-800">
+                <h3 className="text-xs font-bold text-[#64748B] dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5" /> Emergency Timeline
+                </h3>
+                
+                <div className="space-y-3 pl-2 text-xs">
+                  {/* Step 1: Submitted */}
+                  <div className="flex items-start gap-3">
+                    <div className="w-5 h-5 rounded-full bg-emerald-500 text-white flex items-center justify-center text-[10px] font-bold flex-shrink-0 mt-0.5">
+                      ✓
+                    </div>
+                    <div>
+                      <p className="font-bold text-[#0F172A] dark:text-slate-100">Submitted</p>
+                      <p className="text-[11px] text-[#64748B] dark:text-slate-400">{formatTimestamp(selectedReport.created_at)}</p>
+                    </div>
+                  </div>
+
+                  {/* Step 2: Acknowledged */}
+                  <div className="flex items-start gap-3">
+                    <div
+                      className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0 mt-0.5 ${
+                        selectedReport.acknowledged_at || selectedReport.status?.toLowerCase() === "resolved"
+                          ? "bg-emerald-500 text-white"
+                          : "bg-slate-200 dark:bg-slate-700 text-slate-500"
+                      }`}
+                    >
+                      {selectedReport.acknowledged_at || selectedReport.status?.toLowerCase() === "resolved" ? "✓" : "2"}
+                    </div>
+                    <div>
+                      <p className="font-bold text-[#0F172A] dark:text-slate-100">Acknowledged</p>
+                      <p className="text-[11px] text-[#64748B] dark:text-slate-400">
+                        {formatTimestamp(selectedReport.acknowledged_at)}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Step 3: Resolved */}
+                  <div className="flex items-start gap-3">
+                    <div
+                      className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0 mt-0.5 ${
+                        selectedReport.status?.toLowerCase() === "resolved"
+                          ? "bg-emerald-500 text-white"
+                          : "bg-slate-200 dark:bg-slate-700 text-slate-500"
+                      }`}
+                    >
+                      {selectedReport.status?.toLowerCase() === "resolved" ? "✓" : "3"}
+                    </div>
+                    <div>
+                      <p className="font-bold text-[#0F172A] dark:text-slate-100">Resolved</p>
+                      <p className="text-[11px] text-[#64748B] dark:text-slate-400">
+                        {formatTimestamp(selectedReport.resolved_at)}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* EVIDENCE ATTACHMENT */}
               <div className="space-y-2">
                 <h3 className="text-xs font-bold text-[#64748B] dark:text-slate-400 uppercase tracking-wider">
                   Evidence Attachment
                 </h3>
-                {signedPhotoUrl ? (
-                  <div className="rounded-xl overflow-hidden border border-[#E2E8F0] dark:border-slate-800 max-h-56 bg-black flex items-center justify-center">
-                    <img
-                      src={signedPhotoUrl}
-                      alt="Emergency Evidence"
-                      className="object-contain max-h-56 w-full"
-                    />
-                  </div>
+
+                {selectedReport.photo_url ? (
+                  signedPhotoUrl ? (
+                    <div className="rounded-xl overflow-hidden border border-[#E2E8F0] dark:border-slate-800 max-h-56 bg-black flex items-center justify-center relative">
+                      <img
+                        src={signedPhotoUrl}
+                        alt="Emergency Evidence"
+                        className="object-contain max-h-56 w-full"
+                        onError={() => {
+                          console.error("[SOS Image Load Error] Failed to render image element:", signedPhotoUrl);
+                          setPhotoError("Image rendering failed. Check storage permissions or bucket object accessibility.");
+                          setSignedPhotoUrl(null);
+                        }}
+                      />
+                    </div>
+                  ) : (
+                    <div className="p-4 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/40 rounded-xl space-y-3">
+                      <div className="flex items-center gap-2 text-amber-800 dark:text-amber-400">
+                        <ImageOff className="w-5 h-5 flex-shrink-0" />
+                        <div>
+                          <p className="text-xs font-bold">Image Unavailable</p>
+                          <p className="text-[11px] text-amber-700 dark:text-amber-500">
+                            {photoError || "Signed URL could not be generated."}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="bg-white/80 dark:bg-slate-900/80 p-2.5 rounded-lg border border-amber-200/60 dark:border-amber-900/30 text-[11px] font-mono break-all text-[#334155] dark:text-slate-300 space-y-1">
+                        <p className="font-semibold text-[#64748B]">Object Path:</p>
+                        <p>{selectedReport.photo_url}</p>
+                      </div>
+
+                      <div className="flex items-center gap-2 pt-1">
+                        <button
+                          onClick={() => copyPathToClipboard(selectedReport.photo_url!)}
+                          className="px-2.5 py-1 bg-white dark:bg-slate-800 border border-amber-200 dark:border-amber-900/40 rounded-md text-[11px] font-semibold text-amber-900 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-950/50 transition-colors flex items-center gap-1"
+                        >
+                          {copiedPath ? (
+                            <>
+                              <Check className="w-3 h-3 text-emerald-600" /> Copied Path
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-3 h-3" /> Copy Path
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  )
                 ) : (
                   <div className="p-4 bg-[#F8FAFC] dark:bg-slate-800/50 rounded-xl text-center text-xs text-[#94A3B8]">
                     No evidence photo uploaded.
@@ -665,6 +902,7 @@ export function SOS() {
                 )}
               </div>
 
+              {/* GPS COORDINATES */}
               <div className="space-y-2 bg-[#F8FAFC] dark:bg-slate-800/50 p-4 rounded-xl border border-[#F1F5F9] dark:border-slate-800">
                 <h3 className="text-xs font-bold text-[#64748B] dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
                   <MapPin className="w-3.5 h-3.5" /> GPS Coordinates
@@ -693,6 +931,7 @@ export function SOS() {
                 )}
               </div>
 
+              {/* STORE CONTEXT */}
               {(selectedReport.vendor || selectedReport.vendor_name) && (
                 <div className="space-y-1 bg-[#F8FAFC] dark:bg-slate-800/50 p-4 rounded-xl border border-[#F1F5F9] dark:border-slate-800 text-xs">
                   <h3 className="text-xs font-bold text-[#64748B] dark:text-slate-400 uppercase tracking-wider mb-2">
@@ -708,6 +947,7 @@ export function SOS() {
               )}
             </div>
 
+            {/* ACTION BUTTONS BASED ON STATE */}
             <div className="pt-4 border-t border-[#F1F5F9] dark:border-slate-800 space-y-2">
               <div className="grid grid-cols-2 gap-2">
                 {selectedReport.rider?.phone && (
@@ -731,27 +971,88 @@ export function SOS() {
                 )}
               </div>
 
-              <div className="grid grid-cols-2 gap-2 pt-1">
-                {selectedReport.status?.toLowerCase() === "pending" && (
+              {selectedReport.status?.toLowerCase() === "pending" && (
+                <div className="grid grid-cols-2 gap-2 pt-1">
                   <button
                     disabled={actionLoading}
-                    onClick={() => handleAcknowledge(selectedReport.id)}
+                    onClick={() => handleAcknowledge(selectedReport)}
                     className="h-10 px-4 bg-orange-500 text-white rounded-lg text-xs font-bold hover:bg-orange-600 transition-colors flex items-center justify-center gap-1"
                   >
                     Acknowledge
                   </button>
-                )}
-
-                {selectedReport.status?.toLowerCase() !== "resolved" && (
                   <button
                     disabled={actionLoading}
-                    onClick={() => handleResolve(selectedReport.id)}
-                    className="h-10 px-4 bg-[#22C55E] text-white rounded-lg text-xs font-bold hover:bg-emerald-600 transition-colors flex items-center justify-center gap-1 col-span-2"
+                    onClick={() => openResolveModal(selectedReport)}
+                    className="h-10 px-4 bg-[#22C55E] text-white rounded-lg text-xs font-bold hover:bg-emerald-600 transition-colors flex items-center justify-center gap-1"
+                  >
+                    Resolve
+                  </button>
+                </div>
+              )}
+
+              {selectedReport.status?.toLowerCase() === "acknowledged" && (
+                <div className="pt-1">
+                  <button
+                    disabled={actionLoading}
+                    onClick={() => openResolveModal(selectedReport)}
+                    className="w-full h-10 px-4 bg-[#22C55E] text-white rounded-lg text-xs font-bold hover:bg-emerald-600 transition-colors flex items-center justify-center gap-1"
                   >
                     Resolve Emergency
                   </button>
-                )}
-              </div>
+                </div>
+              )}
+
+              {selectedReport.status?.toLowerCase() === "resolved" && null}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* RESOLUTION MODAL */}
+      {resolveModalOpen && reportToResolve && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-[#E2E8F0] dark:border-slate-800 rounded-2xl p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-[#F1F5F9] dark:border-slate-800">
+              <h3 className="text-base font-bold text-[#0F172A] dark:text-slate-100 flex items-center gap-2">
+                <CheckCircle2 className="w-5 h-5 text-[#22C55E]" />
+                Resolve Emergency
+              </h3>
+              <button
+                onClick={() => setResolveModalOpen(false)}
+                className="p-1 text-[#94A3B8] hover:text-[#0F172A] dark:hover:text-slate-200 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-[#0F172A] dark:text-slate-200">
+                Resolution Notes <span className="text-red-500">*</span>
+              </label>
+              <textarea
+                rows={4}
+                value={resolutionNotesInput}
+                onChange={(e) => setResolutionNotesInput(e.target.value)}
+                placeholder={"Example:\n• Ambulance contacted\n• Vendor informed\n• Replacement rider assigned\n• Fuel delivered\n• Police informed"}
+                className="w-full p-3 bg-[#F8FAFC] dark:bg-slate-800 border border-[#E2E8F0] dark:border-slate-700 rounded-xl text-xs text-[#0F172A] dark:text-slate-100 focus:outline-none focus:border-[#22C55E] resize-none"
+              />
+            </div>
+
+            <div className="flex items-center gap-3 pt-2">
+              <button
+                onClick={() => setResolveModalOpen(false)}
+                className="flex-1 h-10 bg-slate-100 dark:bg-slate-800 text-[#0F172A] dark:text-slate-200 rounded-xl text-xs font-bold hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+              >
+                Cancel
+              </button>
+
+              <button
+                disabled={actionLoading || !resolutionNotesInput.trim()}
+                onClick={handleConfirmResolve}
+                className="flex-1 h-10 bg-[#22C55E] text-white rounded-xl text-xs font-bold hover:bg-emerald-600 disabled:opacity-50 transition-colors flex items-center justify-center gap-1.5"
+              >
+                {actionLoading ? "Resolving..." : "Resolve Emergency"}
+              </button>
             </div>
           </div>
         </div>
