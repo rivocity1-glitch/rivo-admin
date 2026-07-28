@@ -13,6 +13,7 @@ import {
   FileText,
   Clock,
   ExternalLink,
+  Printer,
 } from "lucide-react";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
@@ -177,10 +178,10 @@ export function Orders() {
             pin_code
           ),
           vendors (
-  phone,
- shop_name,
-  owner_name,
-  vendor_profiles (
+            phone,
+            shop_name,
+            owner_name,
+            vendor_profiles (
               store_name,
               address_line1,
               address_line2,
@@ -259,7 +260,7 @@ export function Orders() {
           customer_pin_code: row.customer_addresses?.pin_code || "—",
           vendor_id: row.vendor_id || "",
           store_name: vp?.store_name || "",
-          vendor_name: row.vendors?.vendor_name || "",
+          vendor_name: row.vendors?.owner_name || "",
           vendor_phone: row.vendors?.phone || "—",
           vendor_address_complete: vendorAddressStr || "—",
           vendor_status: vp?.store_status || "—",
@@ -332,6 +333,128 @@ export function Orders() {
       setAdminNote(selectedOrder.remarks);
     }
   }, [selectedOrder?.id]);
+
+  const handlePrintInvoice = (order: Order) => {
+    const win = window.open("", "_blank");
+    if (!win) return;
+
+    const itemsHtml = order.order_items
+      .map(
+        (item) => `
+        <tr>
+          <td style="padding: 10px; border-bottom: 1px solid #E2E8F0;">${item.product_name}</td>
+          <td style="padding: 10px; border-bottom: 1px solid #E2E8F0; text-align: center;">${item.quantity}</td>
+          <td style="padding: 10px; border-bottom: 1px solid #E2E8F0; text-align: right;">₹${item.unit_price}</td>
+          <td style="padding: 10px; border-bottom: 1px solid #E2E8F0; text-align: right; font-weight: bold;">₹${item.total_price}</td>
+        </tr>
+      `
+      )
+      .join("");
+
+    const orderDateStr = order.created_at
+      ? new Date(order.created_at).toLocaleString("en-IN")
+      : "—";
+    const deliveredDateStr = order.delivered_at
+      ? new Date(order.delivered_at).toLocaleString("en-IN")
+      : "—";
+
+    const invoiceContent = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Invoice #${order.order_number}</title>
+          <style>
+            body { font-family: system-ui, -apple-system, sans-serif; color: #0F172A; padding: 40px; margin: 0; background: #fff; }
+            .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #E2E8F0; padding-bottom: 20px; margin-bottom: 20px; }
+            .title { font-size: 28px; font-weight: bold; margin: 0; color: #0F172A; }
+            .meta { font-size: 14px; color: #64748B; text-align: right; }
+            .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
+            .card { background: #F8FAFC; border: 1px solid #E2E8F0; padding: 16px; border-radius: 8px; font-size: 13px; }
+            .card h3 { margin-top: 0; font-size: 14px; text-transform: uppercase; color: #64748B; margin-bottom: 8px; }
+            table { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 13px; }
+            th { text-align: left; padding: 10px; background: #F1F5F9; color: #475569; font-weight: 600; border-bottom: 1px solid #E2E8F0; }
+            .totals { width: 300px; margin-left: auto; font-size: 13px; }
+            .totals div { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #F1F5F9; }
+            .totals .grand-total { font-weight: bold; font-size: 16px; color: #2563EB; border-top: 2px solid #E2E8F0; border-bottom: none; padding-top: 10px; }
+            .status-badge { display: inline-block; padding: 4px 8px; border-radius: 4px; font-weight: bold; text-transform: uppercase; font-size: 11px; background: #DCFCE7; color: #16A34A; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <div>
+              <h1 class="title">INVOICE</h1>
+              <p style="margin: 4px 0 0 0; color: #64748B; font-size: 14px;">Order #${order.order_number}</p>
+            </div>
+            <div class="meta">
+              <p style="margin:0;"><strong>Order Date:</strong> ${orderDateStr}</p>
+              <p style="margin:4px 0 0 0;"><strong>Delivered Date:</strong> ${deliveredDateStr}</p>
+            </div>
+          </div>
+
+          <div class="grid">
+            <div class="card">
+              <h3>Customer Details</h3>
+              <p style="margin: 0; font-weight: bold;">${order.customer_name}</p>
+              <p style="margin: 4px 0;">Phone: ${order.customer_phone}</p>
+              <p style="margin: 0;">${order.customer_address_complete}, ${order.customer_city}, ${order.customer_state} - ${order.customer_pin_code}</p>
+            </div>
+            <div class="card">
+              <h3>Vendor Details</h3>
+              <p style="margin: 0; font-weight: bold;">${order.store_name || order.vendor_name}</p>
+              ${order.vendor_name ? `<p style="margin: 4px 0;">Owner: ${order.vendor_name}</p>` : ""}
+              <p style="margin: 4px 0;">Phone: ${order.vendor_phone}</p>
+              <p style="margin: 0;">${order.vendor_address_complete}</p>
+            </div>
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th style="text-align: center;">Qty</th>
+                <th style="text-align: right;">Unit Price</th>
+                <th style="text-align: right;">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${itemsHtml}
+            </tbody>
+          </table>
+
+          <div class="totals">
+            <div>
+              <span>Subtotal</span>
+              <span>₹${order.subtotal}</span>
+            </div>
+            <div>
+              <span>Delivery Fee</span>
+              <span>₹${order.delivery_fee}</span>
+            </div>
+            <div>
+              <span>Platform Fee</span>
+              <span>₹${order.platform_fee}</span>
+            </div>
+            <div class="grand-total">
+              <span>Grand Total</span>
+              <span>₹${order.total_amount.toLocaleString("en-IN")}</span>
+            </div>
+          </div>
+
+          <div style="margin-top: 30px; border-top: 1px solid #E2E8F0; padding-top: 16px; font-size: 13px; display: flex; justify-content: space-between;">
+            <div>
+              <strong>Payment Method:</strong> <span style="text-transform: uppercase;">${order.payment_method}</span>
+            </div>
+            <div>
+              <strong>Payment Status:</strong> <span class="status-badge">${order.payment_status}</span>
+            </div>
+          </div>
+        </body>
+      </html>
+    `;
+
+    win.document.write(invoiceContent);
+    win.document.close();
+  };
 
   const uniqueVendorOptions = Array.from(
     new Map(
@@ -640,7 +763,7 @@ export function Orders() {
 
       {/* Operations Room Deep Inspection Slide Panel */}
       {selectedOrder && (
-        <SlideOver open={!!selectedOrder} onClose={() => setSelectedOrder(null)} title={`Operations Support View Matrix — #${selectedOrder.order_number}`} width="max-w-2xl">
+        <SlideOver open={!!selectedOrder} onClose={() => setSelectedOrder(null)} title={`Order Details • #${selectedOrder.order_number}`} width="max-w-2xl">
           <div className="p-6 space-y-6 max-h-[88vh] overflow-y-auto bg-[#F8FAFC]/40">
             
             {/* 3. ORDER HEADER CARD PANEL */}
@@ -650,7 +773,16 @@ export function Orders() {
                   <span className="text-[10px] font-bold text-[#64748B] uppercase tracking-wider block">System Order Number</span>
                   <h4 className="text-base font-mono font-black text-[#0F172A]">#{selectedOrder.order_number}</h4>
                 </div>
-                <div>
+                <div className="flex items-center gap-2">
+                  {selectedOrder.order_status === "delivered" && (
+                    <button
+                      onClick={() => handlePrintInvoice(selectedOrder)}
+                      className="h-7 px-2.5 flex items-center gap-1.5 border border-[#E2E8F0] bg-white hover:bg-[#F8FAFC] text-[#334155] rounded-md text-xs font-semibold transition-colors shadow-sm"
+                    >
+                      <Printer className="w-3.5 h-3.5 text-[#64748B]" />
+                      <span>Print Invoice</span>
+                    </button>
+                  )}
                   <Badge 
                     variant={(statusConfig[selectedOrder.order_status] || { variant: "neutral" }).variant} 
                     label={(statusConfig[selectedOrder.order_status] || { label: selectedOrder.order_status }).label.toUpperCase()} 
@@ -903,7 +1035,7 @@ export function Orders() {
                         <span className="font-bold text-[#334155] block capitalize">{log.status}</span>
                         {log.remarks && <p className="text-[#64748B] mt-0.5 text-[11px] font-medium">{log.remarks}</p>}
                       </div>
-                      <span className="text-[10px] font-mono font-bold text-[#94A3B8] whitespace-nowrap bg-white px-1.5 py-0.5 rounded shadow-sm border border-[#E2E8F0]/40">
+                      <span className="text-[10px] font-mono font-bold text-[#94A3B8] whitespace-nowrap bg-[#fff] px-1.5 py-0.5 rounded shadow-sm border border-[#E2E8F0]/40">
                         {new Date(log.created_at).toLocaleString("en-GB", { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                       </span>
                     </div>

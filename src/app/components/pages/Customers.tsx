@@ -84,16 +84,16 @@ export function Customers() {
   useEffect(() => {
     const customersChannel = supabase
       .channel("customers-realtime-changes")
-      .on(("postgres_changes" as any), { event: "*", scheme: "public", table: "customers" }, () => {
+      .on(("postgres_changes" as any), { event: "*", schema: "public", table: "customers" }, () => {
         fetchCustomers();
       })
-      .on(("postgres_changes" as any), { event: "*", scheme: "public", table: "orders" }, () => {
+      .on(("postgres_changes" as any), { event: "*", schema: "public", table: "orders" }, () => {
         fetchCustomers();
         if (viewCustomer) {
           fetchCustomerModalDetails(viewCustomer.id);
         }
       })
-      .on(("postgres_changes" as any), { event: "*", scheme: "public", table: "refunds" }, () => {
+      .on(("postgres_changes" as any), { event: "*", schema: "public", table: "refunds" }, () => {
         if (viewCustomer) {
           fetchCustomerModalDetails(viewCustomer.id);
         }
@@ -205,6 +205,7 @@ export function Customers() {
   async function fetchCustomerModalDetails(customerId: string) {
     try {
       // 1. Fetch Orders Telemetry mapped to precise database columns
+      // Note: Removed embedded riders join to avoid PGRST201 multiple relationship error
       const { data: orders, error: ordersErr } = await supabase
         .from("orders")
         .select(`
@@ -222,8 +223,7 @@ export function Customers() {
           customer_address_id,
           payment_method,
           platform_fee,
-          vendors ( shop_name ),
-          riders ( rider_name )
+          vendors ( shop_name )
         `)
         .eq("customer_id", customerId)
         .order("created_at", { ascending: false });
@@ -284,7 +284,22 @@ export function Customers() {
         }
       }
 
-      // 2. Map items and addresses back to orders
+      // Batch lookup for riders to prevent PGRST201 relationship ambiguity
+      const riderIds = safeOrders.map(o => o.rider_id).filter(Boolean);
+      let riderMap: Record<string, string> = {};
+      if (riderIds.length > 0) {
+        const { data: ridersData } = await supabase
+          .from("riders")
+          .select("id, rider_name")
+          .in("id", riderIds);
+        if (ridersData) {
+          ridersData.forEach(r => {
+            riderMap[r.id] = r.rider_name || "Assigned Rider";
+          });
+        }
+      }
+
+      // 2. Map items, addresses, and riders back to orders
       const ordersWithItems = safeOrders.map((o: any) => {
         const matchingItems = allItems.filter(i => i.order_id === o.id);
         const formattedItems = matchingItems.map((i: any) => ({
@@ -295,8 +310,14 @@ export function Customers() {
         }));
         
         const orderAddressStr = o.customer_address_id ? (addressMap[o.customer_address_id] || "No address provided") : "No address provided";
+        const riderNameStr = o.rider_id ? (riderMap[o.rider_id] || "Not Assigned") : "Not Assigned";
 
-        return { ...o, items: formattedItems, delivery_address_computed: orderAddressStr };
+        return { 
+          ...o, 
+          items: formattedItems, 
+          delivery_address_computed: orderAddressStr,
+          rider_name_computed: riderNameStr
+        };
       });
       setCustomerOrders(ordersWithItems);
 
@@ -763,7 +784,7 @@ export function Customers() {
                             </div>
                           </div>
                           <div className="pt-2 border-t border-[#E2E8F0] space-y-1">
-                            <div>Rider Name: <span className="font-medium text-[#0F172A]">{order.riders?.rider_name || "Not Assigned"}</span></div>
+                            <div>Rider Name: <span className="font-medium text-[#0F172A]">{order.rider_name_computed}</span></div>
                             <div className="break-words">Delivery Address: <span className="font-medium text-[#0F172A]">{order.delivery_address_computed || "—"}</span></div>
                           </div>
                         </div>
