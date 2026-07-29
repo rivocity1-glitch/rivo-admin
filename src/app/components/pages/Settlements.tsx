@@ -5,18 +5,14 @@ import {
   XCircle,
   Clock,
   Eye,
-  IndianRupee,
   Calendar,
   History,
-  Download,
   Filter,
   ShieldCheck,
   User,
   Store,
-  FileText,
   X,
   Loader2,
-  TrendingUp,
   QrCode
 } from "lucide-react";
 import { supabase } from "../../../lib/supabase";
@@ -88,12 +84,16 @@ interface VendorSettlement {
   vendor_id: string;
   amount: number;
   order_ids: string[];
-  status: 'pending_request' | 'paid' | 'rejected';
+  order_count?: number;
+  status: 'pending' | 'paid' | 'rejected' | 'pending_request';
   created_at: string;
   paid_at?: string;
   payment_method?: string;
   utr_number?: string;
   remarks?: string;
+  settlement_type?: string;
+  requested_by?: string;
+  request_date?: string;
 }
 
 interface RiderSettlement {
@@ -101,7 +101,8 @@ interface RiderSettlement {
   rider_id: string;
   amount: number;
   order_ids: string[];
-  status: 'pending_request' | 'paid' | 'rejected';
+  delivery_count?: number;
+  status: 'pending' | 'paid' | 'rejected' | 'pending_request';
   created_at: string;
   paid_at?: string;
   payment_method?: string;
@@ -130,9 +131,17 @@ interface SubscriptionPaymentRequest {
 
 interface Order {
   id: string;
-  total_amount: number;
-  platform_fee: number;
-  commission_amount?: number;
+  vendor_id?: string;
+  rider_id?: string;
+  vendor_earning?: number;
+  rider_earning?: number;
+  vendor_commission?: number;
+  platform_fee?: number;
+  rivo_delivery_margin?: number;
+  order_status?: string;
+  delivered_at?: string;
+  settled_vendor?: boolean;
+  settled_rider?: boolean;
   created_at: string;
 }
 
@@ -180,10 +189,6 @@ export function Settlements() {
     try {
       setRealtimePulse(true);
 
-      // Task 3: Verify and log admin session context
-      const { data: { user } } = await supabase.auth.getUser();
-      console.log("Authenticated User:", user);
-
       const [
         resVSet, resRSet, resVendors, resVProf, resRiders, 
         resRProf, resWallets, resOrders, resLedger, resSubs
@@ -200,51 +205,112 @@ export function Settlements() {
         supabase.from("subscription_payment_requests").select("*").eq("status", "approved")
       ]);
 
-      // Task 4 & 5: Log queries and check for Postgres database errors[cite: 6]
-      if (resVSet.error) console.error("vendor_settlements error:", resVSet.error);
-      if (resRSet.error) console.error("rider_settlements error:", resRSet.error);
-      if (resVendors.error) console.error("vendors error:", resVendors.error);
-      if (resVProf.error) console.error("vendor_profiles error:", resVProf.error);
-      if (resRiders.error) console.error("riders error:", resRiders.error);
-      if (resRProf.error) console.error("rider_profiles error:", resRProf.error);
-      if (resWallets.error) console.error("wallets error:", resWallets.error);
-      if (resOrders.error) console.error("orders error:", resOrders.error);
-      if (resLedger.error) console.error("financial_ledger error:", resLedger.error);
-      if (resSubs.error) console.error("subscription_payment_requests error:", resSubs.error);
+      const fetchedOrders: Order[] = resOrders.data || [];
+      const fetchedVSets: VendorSettlement[] = resVSet.data || [];
+      const fetchedRSets: RiderSettlement[] = resRSet.data || [];
 
-      console.log("Vendor Settlements response:", resVSet);
-      console.log("Rider Settlements response:", resRSet);
-      console.log("Vendors response:", resVendors);
-      console.log("Riders response:", resRiders);
-      console.log("Vendor Profiles response:", resVProf);
-      console.log("Rider Profiles response:", resRProf);
+      // AUTOMATIC PENDING SETTLEMENT CALCULATION FOR VENDORS
+      const vendorUnsettledOrders = fetchedOrders.filter(
+        o => o.order_status === 'delivered' && o.settled_vendor === false && o.vendor_id
+      );
 
-      // Task 6 & 7: Check mapping identities
-      if (resVSet.data && resVendors.data) {
-        resVSet.data.forEach(vs => {
-          const matchFound = resVendors.data!.some(v => v.id === vs.vendor_id);
-          if (!matchFound) {
-            console.warn(`UUID Mismatch detected: settlement ${vs.id} references vendor_id ${vs.vendor_id} which does not exist in vendors table.`);
+      const vendorGroups: { [vendorId: string]: Order[] } = {};
+      vendorUnsettledOrders.forEach(o => {
+        if (o.vendor_id) {
+          if (!vendorGroups[o.vendor_id]) vendorGroups[o.vendor_id] = [];
+          vendorGroups[o.vendor_id].push(o);
+        }
+      });
+
+      const newVendorSettlementInserts = [];
+      for (const [vId, vOrders] of Object.entries(vendorGroups)) {
+        const orderIds = vOrders.map(o => o.id).sort();
+        const totalAmount = vOrders.reduce((acc, o) => acc + (Number(o.vendor_earning) || 0), 0);
+
+        const exists = fetchedVSets.some(vs => {
+          if (vs.status === 'pending' || vs.status === 'pending_request') {
+            const existingIds = (vs.order_ids || []).slice().sort();
+            return JSON.stringify(existingIds) === JSON.stringify(orderIds);
           }
+          return false;
         });
-      }
-      if (resRSet.data && resRiders.data) {
-        resRSet.data.forEach(rs => {
-          const matchFound = resRiders.data!.some(r => r.id === rs.rider_id);
-          if (!matchFound) {
-            console.warn(`UUID Mismatch detected: settlement ${rs.id} references rider_id ${rs.rider_id} which does not exist in riders table.`);
-          }
-        });
+
+        if (!exists && orderIds.length > 0) {
+          newVendorSettlementInserts.push({
+            vendor_id: vId,
+            amount: totalAmount,
+            order_ids: orderIds,
+            order_count: orderIds.length,
+            status: 'pending'
+          });
+        }
       }
 
-      if (resVSet.data) setVendorSettlements(resVSet.data);
-      if (resRSet.data) setRiderSettlements(resRSet.data);
+      if (newVendorSettlementInserts.length > 0) {
+        await supabase.from("vendor_settlements").insert(newVendorSettlementInserts);
+      }
+
+      // AUTOMATIC PENDING SETTLEMENT CALCULATION FOR RIDERS
+      const riderUnsettledOrders = fetchedOrders.filter(
+        o => o.order_status === 'delivered' && o.settled_rider === false && o.rider_id
+      );
+
+      const riderGroups: { [riderId: string]: Order[] } = {};
+      riderUnsettledOrders.forEach(o => {
+        if (o.rider_id) {
+          if (!riderGroups[o.rider_id]) riderGroups[o.rider_id] = [];
+          riderGroups[o.rider_id].push(o);
+        }
+      });
+
+      const newRiderSettlementInserts = [];
+      for (const [rId, rOrders] of Object.entries(riderGroups)) {
+        const orderIds = rOrders.map(o => o.id).sort();
+        const totalAmount = rOrders.reduce((acc, o) => acc + (Number(o.rider_earning) || 0), 0);
+
+        const exists = fetchedRSets.some(rs => {
+          if (rs.status === 'pending' || rs.status === 'pending_request') {
+            const existingIds = (rs.order_ids || []).slice().sort();
+            return JSON.stringify(existingIds) === JSON.stringify(orderIds);
+          }
+          return false;
+        });
+
+        if (!exists && orderIds.length > 0) {
+          newRiderSettlementInserts.push({
+            rider_id: rId,
+            amount: totalAmount,
+            order_ids: orderIds,
+            delivery_count: orderIds.length,
+            status: 'pending'
+          });
+        }
+      }
+
+      if (newRiderSettlementInserts.length > 0) {
+        await supabase.from("rider_settlements").insert(newRiderSettlementInserts);
+      }
+
+      // RE-FETCH REFRESHED SETTLEMENTS IF NEW INSERTS OCCURRED
+      let finalVSets = fetchedVSets;
+      let finalRSets = fetchedRSets;
+      if (newVendorSettlementInserts.length > 0 || newRiderSettlementInserts.length > 0) {
+        const [rfV, rfR] = await Promise.all([
+          supabase.from("vendor_settlements").select("*").order("created_at", { ascending: false }),
+          supabase.from("rider_settlements").select("*").order("created_at", { ascending: false })
+        ]);
+        if (rfV.data) finalVSets = rfV.data;
+        if (rfR.data) finalRSets = rfR.data;
+      }
+
+      setVendorSettlements(finalVSets);
+      setRiderSettlements(finalRSets);
       if (resVendors.data) setVendors(resVendors.data);
       if (resVProf.data) setVendorProfiles(resVProf.data);
       if (resRiders.data) setRiders(resRiders.data);
       if (resRProf.data) setRiderProfiles(resRProf.data);
       if (resWallets.data) setWallets(resWallets.data);
-      if (resOrders.data) setOrders(resOrders.data);
+      setOrders(fetchedOrders);
       if (resLedger.data) setLedger(resLedger.data);
       if (resSubs.data) setSubscriptionRequests(resSubs.data);
     } catch (e) {
@@ -347,7 +413,7 @@ export function Settlements() {
       let today = 0, week = 0, month = 0, total = 0, customRangeTotal = 0;
       items.forEach(item => {
         const time = new Date(item[dateField]).getTime();
-        const val = item[amountField] || 0;
+        const val = Number(item[amountField]) || 0;
         total += val;
         if (time >= startOfToday) today += val;
         if (time >= startOfWeekTime) week += val;
@@ -357,7 +423,7 @@ export function Settlements() {
       return { today, week, month, total, customRangeTotal };
     };
 
-    const collections = parseMetricsForSet(orders, "created_at", "total_amount");
+    const collections = parseMetricsForSet(orders, "created_at", "vendor_earning");
     const commissions = parseMetricsForSet(orders, "created_at", "platform_fee");
     const subRevenue = parseMetricsForSet(subscriptionRequests, "created_at", "amount");
     const riderEarnings = parseMetricsForSet(riderSettlements, "created_at", "amount");
@@ -366,9 +432,11 @@ export function Settlements() {
     const paidRidersThisWeek = riderSettlements.filter(s => s.status === "paid" && new Date(s.paid_at || "").getTime() >= startOfWeekTime).reduce((a,c) => a + c.amount, 0);
     const paidThisWeek = paidVendorsThisWeek + paidRidersThisWeek;
 
-    const pendingVendorLiability = vendorSettlements.filter(s => s.status === "pending_request").reduce((a,c) => a + c.amount, 0);
-    const pendingRiderLiability = riderSettlements.filter(s => s.status === "pending_request").reduce((a,c) => a + c.amount, 0);
-    const pendingRequestsCount = vendorSettlements.filter(s => s.status === "pending_request").length + riderSettlements.filter(s => s.status === "pending_request").length;
+    const isPending = (st: string) => st === "pending" || st === "pending_request";
+
+    const pendingVendorLiability = vendorSettlements.filter(s => isPending(s.status)).reduce((a,c) => a + c.amount, 0);
+    const pendingRiderLiability = riderSettlements.filter(s => isPending(s.status)).reduce((a,c) => a + c.amount, 0);
+    const pendingSettlementsCount = vendorSettlements.filter(s => isPending(s.status)).length + riderSettlements.filter(s => isPending(s.status)).length;
 
     return {
       collections,
@@ -378,7 +446,7 @@ export function Settlements() {
       pendingVendorLiability,
       pendingRiderLiability,
       paidThisWeek,
-      pendingRequestsCount,
+      pendingSettlementsCount,
       hasCustomFilter: !!(startDate || endDate)
     };
   }, [orders, subscriptionRequests, vendorSettlements, riderSettlements, startDate, endDate]);
@@ -433,6 +501,7 @@ export function Settlements() {
       const targetTable = selectedType === 'vendor' ? 'vendor_settlements' : 'rider_settlements';
       const entityIdKey = selectedType === 'vendor' ? selectedSettlement.vendor_id : selectedSettlement.rider_id;
 
+      // 1. UPDATE SETTLEMENT TABLE STATUS
       const { error: patchError } = await supabase
         .from(targetTable)
         .update({
@@ -444,11 +513,22 @@ export function Settlements() {
         })
         .eq('id', selectedSettlement.id);
 
-      if (patchError) {
-        console.error(`Error updating ${targetTable}:`, patchError);
-        throw patchError;
+      if (patchError) throw patchError;
+
+      // 2. UPDATE INCLUDED ORDERS IN ORDERS TABLE
+      if (selectedSettlement.order_ids && selectedSettlement.order_ids.length > 0) {
+        const orderColumnToUpdate = selectedType === 'vendor' ? { settled_vendor: true } : { settled_rider: true };
+        const { error: orderUpdateError } = await supabase
+          .from('orders')
+          .update(orderColumnToUpdate)
+          .in('id', selectedSettlement.order_ids);
+
+        if (orderUpdateError) {
+          console.error("Error updating settled flag on orders:", orderUpdateError);
+        }
       }
 
+      // 3. INSERT FINANCIAL LEDGER ENTRY
       const { error: ledgerError } = await supabase
         .from('financial_ledger')
         .insert([{
@@ -487,13 +567,10 @@ export function Settlements() {
         })
         .eq('id', selectedSettlement.id);
 
-      if (rejectError) {
-        console.error(`Error reflecting rejection on ${targetTable}:`, rejectError);
-        throw rejectError;
-      }
+      if (rejectError) throw rejectError;
 
       setRejectModalOpen(false);
-      triggerToast("Settlement request rejected.");
+      triggerToast("Settlement rejected.");
       loadDatabaseState();
     } catch (err) {
       console.error("Rejection error:", err);
@@ -506,13 +583,15 @@ export function Settlements() {
   const auditLogsTimeline = useMemo(() => {
     const list: any[] = [];
     vendorSettlements.forEach(vs => {
-      list.push({ ts: vs.created_at, actor: 'Vendor Payout Request', action: 'Settlement Request Received', amount: vs.amount, targetId: vs.id, status: vs.status, type: 'vendor' });
+      const normalizedStatus = vs.status === 'pending_request' ? 'pending' : vs.status;
+      list.push({ ts: vs.created_at, actor: 'System Auto-Calculation', action: 'Pending Settlement Generated', amount: vs.amount, targetId: vs.id, status: normalizedStatus, type: 'vendor' });
       if (vs.paid_at) {
         list.push({ ts: vs.paid_at, actor: 'Finance Admin', action: 'Settlement Marked Paid', amount: vs.amount, targetId: vs.id, status: 'paid', type: 'vendor' });
       }
     });
     riderSettlements.forEach(rs => {
-      list.push({ ts: rs.created_at, actor: 'Rider Payout Request', action: 'Settlement Request Received', amount: rs.amount, targetId: rs.id, status: 'paid', type: 'rider' });
+      const normalizedStatus = rs.status === 'pending_request' ? 'pending' : rs.status;
+      list.push({ ts: rs.created_at, actor: 'System Auto-Calculation', action: 'Pending Settlement Generated', amount: rs.amount, targetId: rs.id, status: normalizedStatus, type: 'rider' });
       if (rs.paid_at) {
         list.push({ ts: rs.paid_at, actor: 'Finance Admin', action: 'Settlement Marked Paid', amount: rs.amount, targetId: rs.id, status: 'paid', type: 'rider' });
       }
@@ -587,7 +666,7 @@ export function Settlements() {
         ))}
       </div>
 
-      {/* ========================================================================================================= SECTION: OVERVIEW */}
+      {/* SECTION: OVERVIEW */}
       {activeTab === 'overview' && (
         <div className="space-y-6 animate-in fade-in duration-150">
           
@@ -630,10 +709,10 @@ export function Settlements() {
             {[
               { title: "Today's Collection", value: metrics.hasCustomFilter ? metrics.collections.customRangeTotal : metrics.collections.today, sub: metrics.hasCustomFilter ? "Calculated for chosen range" : `This Week: ₹${metrics.collections.week.toLocaleString()}` },
               { title: "Platform Commission", value: metrics.hasCustomFilter ? metrics.commissions.customRangeTotal : metrics.commissions.today, sub: metrics.hasCustomFilter ? "Calculated for chosen range" : `Month Total: ₹${metrics.commissions.month.toLocaleString()}` },
-              { title: "Subscription Revenue", value: metrics.hasCustomFilter ? metrics.subRevenue.customRangeTotal : metrics.subRevenue.total, sub: "Approved vendor requests" },
+              { title: "Subscription Revenue", value: metrics.hasCustomFilter ? metrics.subRevenue.customRangeTotal : metrics.subRevenue.total, sub: "Approved vendor settlements" },
               { title: "Rider Earnings Summary", value: metrics.hasCustomFilter ? metrics.riderEarnings.customRangeTotal : metrics.riderEarnings.total, sub: metrics.hasCustomFilter ? "Custom date scope value" : `Month Total: ₹${metrics.riderEarnings.month.toLocaleString()}` },
-              { title: "Pending Vendor Payouts", value: metrics.pendingVendorLiability, sub: "Awaiting confirmation review" },
-              { title: "Pending Rider Payouts", value: metrics.pendingRiderLiability, sub: "Awaiting tracking reference entry" },
+              { title: "Pending Vendor Payouts", value: metrics.pendingVendorLiability, sub: "Calculated weekly pending payouts" },
+              { title: "Pending Rider Payouts", value: metrics.pendingRiderLiability, sub: "Calculated weekly pending payouts" },
               { title: "Paid This Week", value: metrics.paidThisWeek, sub: "Cleared bank transactions total" }
             ].map((kpi, idx) => (
               <div 
@@ -653,8 +732,8 @@ export function Settlements() {
 
             <div className="bg-white border border-gray-200 p-5 rounded-xl transition-all duration-200 hover:border-emerald-600/30 hover:shadow-2xs group">
               <div>
-                <span className="text-[10px] font-bold tracking-wider text-slate-400 uppercase block">Pending Payout Requests</span>
-                <h3 className="text-3xl font-black text-slate-900 mt-2">{metrics.pendingRequestsCount}</h3>
+                <span className="text-[10px] font-bold tracking-wider text-slate-400 uppercase block">Pending Settlements</span>
+                <h3 className="text-3xl font-black text-slate-900 mt-2">{metrics.pendingSettlementsCount}</h3>
               </div>
               <p className="text-[10px] text-slate-400 font-medium mt-2.5 pt-2 border-t border-gray-50">Active orders settlement queue</p>
             </div>
@@ -695,20 +774,18 @@ export function Settlements() {
         </div>
       )}
 
-      {/* ========================================================================================================= SECTION: VENDOR SETTLEMENT */}
+      {/* SECTION: VENDOR SETTLEMENT */}
       {activeTab === 'vendor' && (
         <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-3xs animate-in fade-in duration-150">
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse text-xs">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-200 text-[10px] font-bold uppercase text-slate-400 tracking-wider">
-                  <th className="p-3.5 pl-4">Shop Name</th>
-                  <th className="p-3.5">Owner Name</th>
-                  <th className="p-3.5">Phone</th>
+                  <th className="p-3.5 pl-4">Shop</th>
+                  <th className="p-3.5">Owner</th>
                   <th className="p-3.5">Wallet Balance</th>
-                  <th className="p-3.5 text-emerald-600">Amount to Pay This Week</th>
-                  <th className="p-3.5">Order Count</th>
-                  <th className="p-3.5">Request Date</th>
+                  <th className="p-3.5">Orders Included</th>
+                  <th className="p-3.5 text-emerald-600">Pending Amount</th>
                   <th className="p-3.5">Status</th>
                   <th className="p-3.5 text-right pr-4">Actions</th>
                 </tr>
@@ -719,30 +796,29 @@ export function Settlements() {
                   .map((vs) => {
                     const vendor = vendors.find(v => v.id === vs.vendor_id);
                     const wallet = wallets.find(w => w.entity_id === vs.vendor_id && w.entity_type === 'vendor');
+                    const normalizedStatus = vs.status === 'pending_request' ? 'pending' : vs.status;
                     return (
                       <tr 
                         key={vs.id} 
                         className="transition-colors duration-200 hover:bg-emerald-50/30 cursor-pointer"
                       >
-                        <td className="p-3.5 pl-4 font-bold text-slate-900">{vendor?.shop_name || "Unresolved Shop Mappings"}</td>
+                        <td className="p-3.5 pl-4 font-bold text-slate-900">{vendor?.shop_name || "Unresolved Shop"}</td>
                         <td className="p-3.5 text-slate-600">{vendor?.owner_name || "—"}</td>
-                        <td className="p-3.5 text-slate-400 font-mono">{vendor?.phone || "—"}</td>
                         <td className="p-3.5 text-slate-500">₹{wallet?.balance?.toFixed(2) || '0.00'}</td>
+                        <td className="p-3.5 text-slate-400 font-mono">{vs.order_count || vs.order_ids?.length || 0}</td>
                         <td className="p-3.5 font-bold text-emerald-600">₹{vs.amount?.toFixed(2)}</td>
-                        <td className="p-3.5 text-slate-400 font-mono">{vs.order_ids?.length || 0}</td>
-                        <td className="p-3.5 font-normal text-slate-400">{new Date(vs.created_at).toLocaleDateString('en-IN', { dateStyle: 'medium' })}</td>
                         <td className="p-3.5">
                           <span className={`inline-block px-2 py-0.5 text-[9px] font-bold rounded border tracking-wider uppercase ${
-                            vs.status === 'paid' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
-                            vs.status === 'rejected' ? 'bg-rose-50 text-rose-700 border-rose-200' :
+                            normalizedStatus === 'paid' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                            normalizedStatus === 'rejected' ? 'bg-rose-50 text-rose-700 border-rose-200' :
                             'bg-amber-50 text-amber-700 border-amber-200'
                           }`}>
-                            {vs.status === 'pending_request' ? 'Requested' : vs.status}
+                            {normalizedStatus}
                           </span>
                         </td>
                         <td className="p-3.5 text-right pr-4 space-x-1 whitespace-nowrap">
                           <button onClick={() => handleOpenDetailsWorkflow(vs, 'vendor')} className="px-2.5 py-1 text-[10px] font-bold border border-gray-200 rounded text-slate-600 hover:bg-gray-50 cursor-pointer">Details</button>
-                          {vs.status === 'pending_request' && (
+                          {normalizedStatus === 'pending' && (
                             <>
                               <button onClick={() => handleOpenPayWorkflow(vs, 'vendor')} className="px-2.5 py-1 text-[10px] font-bold bg-emerald-600 text-white rounded hover:bg-emerald-700 cursor-pointer shadow-3xs">Pay</button>
                               <button onClick={() => handleOpenRejectWorkflow(vs, 'vendor')} className="px-2.5 py-1 text-[10px] font-bold bg-rose-600 text-white rounded hover:bg-rose-700 cursor-pointer shadow-3xs">Reject</button>
@@ -758,18 +834,17 @@ export function Settlements() {
         </div>
       )}
 
-      {/* ========================================================================================================= SECTION: RIDER SETTLEMENT */}
+      {/* SECTION: RIDER SETTLEMENT */}
       {activeTab === 'rider' && (
         <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-3xs animate-in fade-in duration-150">
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse text-xs">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-200 text-[10px] font-bold uppercase text-slate-400 tracking-wider">
-                  <th className="p-3.5 pl-4">Rider Name</th>
-                  <th className="p-3.5">Phone</th>
+                  <th className="p-3.5 pl-4">Rider</th>
                   <th className="p-3.5">Wallet Balance</th>
-                  <th className="p-3.5 text-emerald-600">Amount to Pay This Week</th>
-                  <th className="p-3.5">Deliveries</th>
+                  <th className="p-3.5">Deliveries Included</th>
+                  <th className="p-3.5 text-emerald-600">Pending Amount</th>
                   <th className="p-3.5">Status</th>
                   <th className="p-3.5 text-right pr-4">Actions</th>
                 </tr>
@@ -780,28 +855,28 @@ export function Settlements() {
                   .map((rs) => {
                     const rider = riders.find(r => r.id === rs.rider_id);
                     const wallet = wallets.find(w => w.entity_id === rs.rider_id && w.entity_type === 'rider');
+                    const normalizedStatus = rs.status === 'pending_request' ? 'pending' : rs.status;
                     return (
                       <tr 
                         key={rs.id} 
                         className="transition-colors duration-200 hover:bg-emerald-50/30 cursor-pointer"
                       >
-                        <td className="p-3.5 pl-4 font-bold text-slate-900">{rider?.rider_name || "Unresolved Rider Account"}</td>
-                        <td className="p-3.5 text-slate-400 font-mono">{rider?.phone || "—"}</td>
+                        <td className="p-3.5 pl-4 font-bold text-slate-900">{rider?.rider_name || "Unresolved Rider"}</td>
                         <td className="p-3.5 text-slate-500">₹{wallet?.balance?.toFixed(2) || '0.00'}</td>
+                        <td className="p-3.5 text-slate-400 font-mono">{rs.delivery_count || rs.order_ids?.length || 0}</td>
                         <td className="p-3.5 font-bold text-emerald-600">₹{rs.amount?.toFixed(2)}</td>
-                        <td className="p-3.5 text-slate-400 font-mono">{rs.order_ids?.length || 0}</td>
                         <td className="p-3.5">
                           <span className={`inline-block px-2 py-0.5 text-[9px] font-bold rounded border tracking-wider uppercase ${
-                            rs.status === 'paid' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
-                            rs.status === 'rejected' ? 'bg-rose-50 text-rose-700 border-rose-200' :
+                            normalizedStatus === 'paid' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                            normalizedStatus === 'rejected' ? 'bg-rose-50 text-rose-700 border-rose-200' :
                             'bg-amber-50 text-amber-700 border-amber-200'
                           }`}>
-                            {rs.status === 'pending_request' ? 'Requested' : rs.status}
+                            {normalizedStatus}
                           </span>
                         </td>
                         <td className="p-3.5 text-right pr-4 space-x-1 whitespace-nowrap">
                           <button onClick={() => handleOpenDetailsWorkflow(rs, 'rider')} className="px-2.5 py-1 text-[10px] font-bold border border-gray-200 rounded text-slate-600 hover:bg-gray-50 cursor-pointer">Details</button>
-                          {rs.status === 'pending_request' && (
+                          {normalizedStatus === 'pending' && (
                             <>
                               <button onClick={() => handleOpenPayWorkflow(rs, 'rider')} className="px-2.5 py-1 text-[10px] font-bold bg-emerald-600 text-white rounded hover:bg-emerald-700 cursor-pointer shadow-3xs">Pay</button>
                               <button onClick={() => handleOpenRejectWorkflow(rs, 'rider')} className="px-2.5 py-1 text-[10px] font-bold bg-rose-600 text-white rounded hover:bg-rose-700 cursor-pointer shadow-3xs">Reject</button>
@@ -817,7 +892,7 @@ export function Settlements() {
         </div>
       )}
 
-      {/* ========================================================================================================= SECTION: FINANCIAL LEDGER */}
+      {/* SECTION: FINANCIAL LEDGER */}
       {activeTab === 'ledger' && (
         <div className="space-y-4 animate-in fade-in duration-150">
           <div className="bg-gray-50 p-4 border border-gray-200 rounded-xl flex items-center gap-3 justify-between">
@@ -873,7 +948,7 @@ export function Settlements() {
         </div>
       )}
 
-      {/* ========================================================================================================= SECTION: AUDIT LOGS */}
+      {/* SECTION: AUDIT LOGS */}
       {activeTab === 'audit' && (
         <div className="space-y-4 animate-in fade-in duration-150">
           <div className="bg-gray-50 p-4 border border-gray-200 rounded-xl flex items-center gap-3">
@@ -915,7 +990,7 @@ export function Settlements() {
                       <td className="p-3.5 text-slate-700 font-bold">₹{log.amount?.toFixed(2)}</td>
                       <td className="p-3.5 text-slate-400 text-[11px] font-mono tracking-tight">{log.targetId}</td>
                       <td className="p-3.5 text-right pr-4 uppercase text-[10px] font-extrabold text-slate-500">
-                        {log.status === 'pending_request' ? 'Requested' : log.status}
+                        {log.status}
                       </td>
                     </tr>
                   ))}
@@ -925,7 +1000,7 @@ export function Settlements() {
         </div>
       )}
 
-      {/* ========================================================================================================= DETAILED ANALYSIS MODAL */}
+      {/* DETAILED ANALYSIS MODAL */}
       {detailsModalOpen && selectedSettlement && resolvedEntity && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
           <div className="bg-white border border-gray-200 rounded-2xl max-w-2xl w-full shadow-xl p-6 space-y-5 animate-in fade-in zoom-in-95 duration-150 overflow-y-auto max-h-[90vh]">
@@ -943,8 +1018,8 @@ export function Settlements() {
             {selectedType === 'vendor' ? (
               <div className="space-y-4 text-xs font-medium">
                 <div className="grid grid-cols-2 gap-4 bg-gray-50 p-4 rounded-xl border border-gray-100">
-                  <div><span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wide">Shop Name</span><p className="text-slate-900 font-bold mt-0.5">{resolvedEntity.vendor?.shop_name || "—"}</p></div>
-                  <div><span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wide">Owner Name</span><p className="text-slate-900 mt-0.5">{resolvedEntity.vendor?.owner_name || "—"}</p></div>
+                  <div><span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wide">Shop</span><p className="text-slate-900 font-bold mt-0.5">{resolvedEntity.vendor?.shop_name || "—"}</p></div>
+                  <div><span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wide">Owner</span><p className="text-slate-900 mt-0.5">{resolvedEntity.vendor?.owner_name || "—"}</p></div>
                   <div><span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wide">Phone</span><p className="text-slate-900 font-mono mt-0.5">{resolvedEntity.vendor?.phone || "—"}</p></div>
                   <div><span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wide">Email</span><p className="text-slate-900 mt-0.5">{resolvedEntity.vendorProfile?.email || "—"}</p></div>
                   <div className="col-span-2">
@@ -970,8 +1045,8 @@ export function Settlements() {
                 <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Settlement Details</h4>
                 <div className="grid grid-cols-2 gap-4 bg-gray-50 p-4 rounded-xl border border-gray-100 text-xs">
                   <div><span className="text-[10px] text-slate-400 block font-bold uppercase">Wallet Balance</span>₹{resolvedEntity.wallet?.balance?.toFixed(2) || '0.00'}</div>
-                  <div><span className="text-[10px] text-slate-400 block font-bold uppercase text-emerald-600">Amount to Pay This Week</span><span className="font-bold text-emerald-600">₹{selectedSettlement.amount?.toFixed(2)}</span></div>
-                  <div><span className="text-[10px] text-slate-400 block font-bold uppercase">Request Date</span>{new Date(selectedSettlement.created_at).toLocaleString('en-IN')}</div>
+                  <div><span className="text-[10px] text-slate-400 block font-bold uppercase text-emerald-600">Pending Amount</span><span className="font-bold text-emerald-600">₹{selectedSettlement.amount?.toFixed(2)}</span></div>
+                  <div><span className="text-[10px] text-slate-400 block font-bold uppercase">Orders Included</span>{selectedSettlement.order_count || selectedSettlement.order_ids?.length || 0} Orders</div>
                   <div><span className="text-[10px] text-slate-400 block font-bold uppercase">UTR / Reference Number</span><span className="font-mono">{selectedSettlement.utr_number || "—"}</span></div>
                 </div>
               </div>
@@ -1002,8 +1077,8 @@ export function Settlements() {
                 <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Settlement Details</h4>
                 <div className="grid grid-cols-2 gap-4 bg-gray-50 p-4 rounded-xl border border-gray-100 text-xs">
                   <div><span className="text-[10px] text-slate-400 block font-bold uppercase">Wallet Balance</span>₹{resolvedEntity.wallet?.balance?.toFixed(2) || '0.00'}</div>
-                  <div><span className="text-[10px] text-slate-400 block font-bold uppercase text-emerald-600">Amount to Pay This Week</span><span className="font-bold text-emerald-600">₹{selectedSettlement.amount?.toFixed(2)}</span></div>
-                  <div><span className="text-[10px] text-slate-400 block font-bold uppercase">Deliveries Included</span>{selectedSettlement.order_ids?.length || 0} Deliveries</div>
+                  <div><span className="text-[10px] text-slate-400 block font-bold uppercase text-emerald-600">Pending Amount</span><span className="font-bold text-emerald-600">₹{selectedSettlement.amount?.toFixed(2)}</span></div>
+                  <div><span className="text-[10px] text-slate-400 block font-bold uppercase">Deliveries Included</span>{selectedSettlement.delivery_count || selectedSettlement.order_ids?.length || 0} Deliveries</div>
                   <div><span className="text-[10px] text-slate-400 block font-bold uppercase">UTR / Reference Number</span><span className="font-mono">{selectedSettlement.utr_number || "—"}</span></div>
                 </div>
               </div>
@@ -1016,7 +1091,7 @@ export function Settlements() {
         </div>
       )}
 
-      {/* ========================================================================================================= CONFIRM PAY ACTIONS MODAL */}
+      {/* CONFIRM PAY ACTIONS MODAL */}
       {payModalOpen && selectedSettlement && resolvedEntity && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
           <div className="bg-white border border-gray-200 rounded-xl max-w-3xl w-full shadow-xl p-5 space-y-4 animate-in fade-in zoom-in-95 duration-150">
@@ -1100,11 +1175,11 @@ export function Settlements() {
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-[9px] font-bold text-slate-505 tracking-wider block uppercase">Transaction UTR / Reference Key</label>
+                  <label className="text-[9px] font-bold text-slate-500 tracking-wider block uppercase">Transaction UTR / Reference Key</label>
                   <input
                     type="text"
                     required
-                    placeholder="Enter the transaction UTR number"
+                    placeholder="Enter transaction UTR number"
                     value={formUtr}
                     onChange={(e) => setFormUtr(e.target.value)}
                     className="w-full h-9 px-3 border border-gray-200 rounded-lg text-xs bg-gray-50 focus:outline-none focus:bg-white focus:border-emerald-600 transition-all font-mono text-center"
@@ -1112,7 +1187,7 @@ export function Settlements() {
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-[9px] font-bold text-slate-505 tracking-wider block uppercase">Remarks / Internal Memo</label>
+                  <label className="text-[9px] font-bold text-slate-500 tracking-wider block uppercase">Remarks / Internal Memo</label>
                   <textarea
                     placeholder="Add payout documentation notes..."
                     value={formRemarks}
@@ -1136,7 +1211,7 @@ export function Settlements() {
         </div>
       )}
 
-      {/* ========================================================================================================= CONSOLIDATED REJECT DENIALS MODAL */}
+      {/* REJECT MODAL */}
       {rejectModalOpen && selectedSettlement && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
           <div className="bg-white border border-gray-200 rounded-xl max-w-sm w-full shadow-xl p-5 space-y-4 animate-in fade-in zoom-in-95 duration-150">
@@ -1151,11 +1226,11 @@ export function Settlements() {
             </div>
             
             <p className="text-xs text-slate-500 font-normal leading-relaxed">
-              Are you sure you want to deny this request? Please document the justification parameters below.
+              Are you sure you want to reject this settlement? Please state reason below.
             </p>
 
             <div className="space-y-1">
-              <label className="text-[9px] font-bold text-slate-505 uppercase tracking-wider block">Reason for Rejection</label>
+              <label className="text-[9px] font-bold text-slate-500 uppercase tracking-wider block">Reason for Rejection</label>
               <textarea
                 required
                 placeholder="State reason for rejecting the payout..."
