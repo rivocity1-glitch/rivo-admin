@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   Search,
   CheckCircle,
@@ -85,7 +85,7 @@ interface VendorSettlement {
   amount: number;
   order_ids: string[];
   order_count?: number;
-  status: 'pending' | 'paid' | 'rejected' | 'pending_request';
+  status: 'pending' | 'paid' | 'rejected';
   created_at: string;
   paid_at?: string;
   payment_method?: string;
@@ -102,7 +102,7 @@ interface RiderSettlement {
   amount: number;
   order_ids: string[];
   delivery_count?: number;
-  status: 'pending' | 'paid' | 'rejected' | 'pending_request';
+  status: 'pending' | 'paid' | 'rejected';
   created_at: string;
   paid_at?: string;
   payment_method?: string;
@@ -180,12 +180,19 @@ export function Settlements() {
   const [actionLoading, setActionLoading] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
+  // CONCURRENCY LOCK GUARD TO PREVENT REALTIME INFINITE LOOPS
+  const isSyncingRef = useRef(false);
+
   const triggerToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 4000);
   };
 
   const loadDatabaseState = useCallback(async () => {
+    // Prevent simultaneous concurrent executions from multiple realtime events
+    if (isSyncingRef.current) return;
+    isSyncingRef.current = true;
+
     try {
       setRealtimePulse(true);
 
@@ -209,7 +216,99 @@ export function Settlements() {
       const fetchedVSets: VendorSettlement[] = resVSet.data || [];
       const fetchedRSets: RiderSettlement[] = resRSet.data || [];
 
-      // AUTOMATIC PENDING SETTLEMENT CALCULATION FOR VENDORS
+      let stateMutated = false;
+
+      // =========================================================================
+      // 1. CLEANUP & MERGE EXISTING DUPLICATE PENDING VENDOR SETTLEMENTS
+      // =========================================================================
+      const pendingVSetsByVendor: { [vendorId: string]: VendorSettlement[] } = {};
+      fetchedVSets.forEach(vs => {
+        if (vs.status === 'pending') {
+          if (!pendingVSetsByVendor[vs.vendor_id]) pendingVSetsByVendor[vs.vendor_id] = [];
+          pendingVSetsByVendor[vs.vendor_id].push(vs);
+        }
+      });
+
+      for (const [vId, vList] of Object.entries(pendingVSetsByVendor)) {
+        if (vList.length > 1) {
+          // Sort oldest first (keep primary record)
+          vList.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+          const primary = vList[0];
+          const duplicates = vList.slice(1);
+
+          // Get all delivered unsettled orders for this vendor
+          const vOrders = fetchedOrders.filter(
+            o => o.vendor_id === vId && o.order_status === 'delivered' && o.settled_vendor === false
+          );
+
+          const mergedOrderIds = Array.from(new Set(vOrders.map(o => o.id)));
+          const mergedAmount = vOrders.reduce((acc, o) => acc + (Number(o.vendor_earning) || 0), 0);
+
+          // Update primary settlement
+          await supabase
+            .from("vendor_settlements")
+            .update({
+              amount: mergedAmount,
+              order_ids: mergedOrderIds,
+              order_count: mergedOrderIds.length,
+              status: 'pending'
+            })
+            .eq("id", primary.id);
+
+          // Delete duplicates
+          const dupIds = duplicates.map(d => d.id);
+          await supabase.from("vendor_settlements").delete().in("id", dupIds);
+          stateMutated = true;
+        }
+      }
+
+      // =========================================================================
+      // 2. CLEANUP & MERGE EXISTING DUPLICATE PENDING RIDER SETTLEMENTS
+      // =========================================================================
+      const pendingRSetsByRider: { [riderId: string]: RiderSettlement[] } = {};
+      fetchedRSets.forEach(rs => {
+        if (rs.status === 'pending') {
+          if (!pendingRSetsByRider[rs.rider_id]) pendingRSetsByRider[rs.rider_id] = [];
+          pendingRSetsByRider[rs.rider_id].push(rs);
+        }
+      });
+
+      for (const [rId, rList] of Object.entries(pendingRSetsByRider)) {
+        if (rList.length > 1) {
+          // Sort oldest first (keep primary record)
+          rList.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+          const primary = rList[0];
+          const duplicates = rList.slice(1);
+
+          // Get all delivered unsettled orders for this rider
+          const rOrders = fetchedOrders.filter(
+            o => o.rider_id === rId && o.order_status === 'delivered' && o.settled_rider === false
+          );
+
+          const mergedOrderIds = Array.from(new Set(rOrders.map(o => o.id)));
+          const mergedAmount = rOrders.reduce((acc, o) => acc + (Number(o.rider_earning) || 0), 0);
+
+          // Update primary settlement
+          await supabase
+            .from("rider_settlements")
+            .update({
+              amount: mergedAmount,
+              order_ids: mergedOrderIds,
+              delivery_count: mergedOrderIds.length,
+              status: 'pending'
+            })
+            .eq("id", primary.id);
+
+          // Delete duplicates
+          const dupIds = duplicates.map(d => d.id);
+          await supabase.from("rider_settlements").delete().in("id", dupIds);
+          stateMutated = true;
+        }
+      }
+
+      // =========================================================================
+      // 3. IDEMPOTENT PENDING SETTLEMENT AGGREGATION FOR VENDORS
+      // =========================================================================
       const vendorUnsettledOrders = fetchedOrders.filter(
         o => o.order_status === 'delivered' && o.settled_vendor === false && o.vendor_id
       );
@@ -222,35 +321,78 @@ export function Settlements() {
         }
       });
 
-      const newVendorSettlementInserts = [];
       for (const [vId, vOrders] of Object.entries(vendorGroups)) {
-        const orderIds = vOrders.map(o => o.id).sort();
+        const orderIds = Array.from(new Set(vOrders.map(o => o.id)));
         const totalAmount = vOrders.reduce((acc, o) => acc + (Number(o.vendor_earning) || 0), 0);
 
-        const exists = fetchedVSets.some(vs => {
-          if (vs.status === 'pending' || vs.status === 'pending_request') {
-            const existingIds = (vs.order_ids || []).slice().sort();
-            return JSON.stringify(existingIds) === JSON.stringify(orderIds);
-          }
-          return false;
-        });
+        // Immediate Fresh Verification before insert/update (Guards against database race conditions)
+        const { data: freshPending } = await supabase
+          .from("vendor_settlements")
+          .select("*")
+          .eq("vendor_id", vId)
+          .eq("status", "pending")
+          .order("created_at", { ascending: true });
 
-        if (!exists && orderIds.length > 0) {
-          newVendorSettlementInserts.push({
-            vendor_id: vId,
-            amount: totalAmount,
-            order_ids: orderIds,
-            order_count: orderIds.length,
-            status: 'pending'
-          });
+        if (freshPending && freshPending.length > 0) {
+          // If duplicates were inserted between requests, cleanup extra ones
+          const primary = freshPending[0];
+          if (freshPending.length > 1) {
+            const extraIds = freshPending.slice(1).map(x => x.id);
+            await supabase.from("vendor_settlements").delete().in("id", extraIds);
+            stateMutated = true;
+          }
+
+          const currentIds = (primary.order_ids || []).slice().sort();
+          const targetIds = orderIds.slice().sort();
+          const idsChanged = JSON.stringify(currentIds) !== JSON.stringify(targetIds);
+
+          if (idsChanged || Number(primary.amount) !== totalAmount) {
+            await supabase
+              .from("vendor_settlements")
+              .update({
+                amount: totalAmount,
+                order_ids: orderIds,
+                order_count: orderIds.length,
+                status: 'pending'
+              })
+              .eq("id", primary.id);
+            stateMutated = true;
+          }
+        } else if (orderIds.length > 0) {
+          // Check for the most recent rejected settlement to prevent regenerating duplicates after admin rejection
+          const { data: recentRejected } = await supabase
+            .from("vendor_settlements")
+            .select("order_ids")
+            .eq("vendor_id", vId)
+            .eq("status", "rejected")
+            .order("created_at", { ascending: false })
+            .limit(1);
+
+          let isSameAsRejected = false;
+          if (recentRejected && recentRejected.length > 0) {
+            const rejectedIds = (recentRejected[0].order_ids || []).slice().sort();
+            const currentTargetIds = orderIds.slice().sort();
+            if (JSON.stringify(rejectedIds) === JSON.stringify(currentTargetIds)) {
+              isSameAsRejected = true;
+            }
+          }
+
+          if (!isSameAsRejected) {
+            await supabase.from("vendor_settlements").insert([{
+              vendor_id: vId,
+              amount: totalAmount,
+              order_ids: orderIds,
+              order_count: orderIds.length,
+              status: 'pending'
+            }]);
+            stateMutated = true;
+          }
         }
       }
 
-      if (newVendorSettlementInserts.length > 0) {
-        await supabase.from("vendor_settlements").insert(newVendorSettlementInserts);
-      }
-
-      // AUTOMATIC PENDING SETTLEMENT CALCULATION FOR RIDERS
+      // =========================================================================
+      // 4. IDEMPOTENT PENDING SETTLEMENT AGGREGATION FOR RIDERS
+      // =========================================================================
       const riderUnsettledOrders = fetchedOrders.filter(
         o => o.order_status === 'delivered' && o.settled_rider === false && o.rider_id
       );
@@ -263,38 +405,79 @@ export function Settlements() {
         }
       });
 
-      const newRiderSettlementInserts = [];
       for (const [rId, rOrders] of Object.entries(riderGroups)) {
-        const orderIds = rOrders.map(o => o.id).sort();
+        const orderIds = Array.from(new Set(rOrders.map(o => o.id)));
         const totalAmount = rOrders.reduce((acc, o) => acc + (Number(o.rider_earning) || 0), 0);
 
-        const exists = fetchedRSets.some(rs => {
-          if (rs.status === 'pending' || rs.status === 'pending_request') {
-            const existingIds = (rs.order_ids || []).slice().sort();
-            return JSON.stringify(existingIds) === JSON.stringify(orderIds);
-          }
-          return false;
-        });
+        // Immediate Fresh Verification before insert/update (Guards against database race conditions)
+        const { data: freshPending } = await supabase
+          .from("rider_settlements")
+          .select("*")
+          .eq("rider_id", rId)
+          .eq("status", "pending")
+          .order("created_at", { ascending: true });
 
-        if (!exists && orderIds.length > 0) {
-          newRiderSettlementInserts.push({
-            rider_id: rId,
-            amount: totalAmount,
-            order_ids: orderIds,
-            delivery_count: orderIds.length,
-            status: 'pending'
-          });
+        if (freshPending && freshPending.length > 0) {
+          // If duplicates were inserted between requests, cleanup extra ones
+          const primary = freshPending[0];
+          if (freshPending.length > 1) {
+            const extraIds = freshPending.slice(1).map(x => x.id);
+            await supabase.from("rider_settlements").delete().in("id", extraIds);
+            stateMutated = true;
+          }
+
+          const currentIds = (primary.order_ids || []).slice().sort();
+          const targetIds = orderIds.slice().sort();
+          const idsChanged = JSON.stringify(currentIds) !== JSON.stringify(targetIds);
+
+          if (idsChanged || Number(primary.amount) !== totalAmount) {
+            await supabase
+              .from("rider_settlements")
+              .update({
+                amount: totalAmount,
+                order_ids: orderIds,
+                delivery_count: orderIds.length,
+                status: 'pending'
+              })
+              .eq("id", primary.id);
+            stateMutated = true;
+          }
+        } else if (orderIds.length > 0) {
+          // Check for the most recent rejected settlement to prevent regenerating duplicates after admin rejection
+          const { data: recentRejected } = await supabase
+            .from("rider_settlements")
+            .select("order_ids")
+            .eq("rider_id", rId)
+            .eq("status", "rejected")
+            .order("created_at", { ascending: false })
+            .limit(1);
+
+          let isSameAsRejected = false;
+          if (recentRejected && recentRejected.length > 0) {
+            const rejectedIds = (recentRejected[0].order_ids || []).slice().sort();
+            const currentTargetIds = orderIds.slice().sort();
+            if (JSON.stringify(rejectedIds) === JSON.stringify(currentTargetIds)) {
+              isSameAsRejected = true;
+            }
+          }
+
+          if (!isSameAsRejected) {
+            await supabase.from("rider_settlements").insert([{
+              rider_id: rId,
+              amount: totalAmount,
+              order_ids: orderIds,
+              delivery_count: orderIds.length,
+              status: 'pending'
+            }]);
+            stateMutated = true;
+          }
         }
       }
 
-      if (newRiderSettlementInserts.length > 0) {
-        await supabase.from("rider_settlements").insert(newRiderSettlementInserts);
-      }
-
-      // RE-FETCH REFRESHED SETTLEMENTS IF NEW INSERTS OCCURRED
+      // RE-FETCH REFRESHED SETTLEMENTS IF DATABASE MUTATION OCCURRED
       let finalVSets = fetchedVSets;
       let finalRSets = fetchedRSets;
-      if (newVendorSettlementInserts.length > 0 || newRiderSettlementInserts.length > 0) {
+      if (stateMutated) {
         const [rfV, rfR] = await Promise.all([
           supabase.from("vendor_settlements").select("*").order("created_at", { ascending: false }),
           supabase.from("rider_settlements").select("*").order("created_at", { ascending: false })
@@ -318,6 +501,7 @@ export function Settlements() {
     } finally {
       setLoading(false);
       setTimeout(() => setRealtimePulse(false), 500);
+      isSyncingRef.current = false;
     }
   }, []);
 
@@ -432,7 +616,7 @@ export function Settlements() {
     const paidRidersThisWeek = riderSettlements.filter(s => s.status === "paid" && new Date(s.paid_at || "").getTime() >= startOfWeekTime).reduce((a,c) => a + c.amount, 0);
     const paidThisWeek = paidVendorsThisWeek + paidRidersThisWeek;
 
-    const isPending = (st: string) => st === "pending" || st === "pending_request";
+    const isPending = (st: string) => st === "pending";
 
     const pendingVendorLiability = vendorSettlements.filter(s => isPending(s.status)).reduce((a,c) => a + c.amount, 0);
     const pendingRiderLiability = riderSettlements.filter(s => isPending(s.status)).reduce((a,c) => a + c.amount, 0);
@@ -583,14 +767,14 @@ export function Settlements() {
   const auditLogsTimeline = useMemo(() => {
     const list: any[] = [];
     vendorSettlements.forEach(vs => {
-      const normalizedStatus = vs.status === 'pending_request' ? 'pending' : vs.status;
+      const normalizedStatus = vs.status;
       list.push({ ts: vs.created_at, actor: 'System Auto-Calculation', action: 'Pending Settlement Generated', amount: vs.amount, targetId: vs.id, status: normalizedStatus, type: 'vendor' });
       if (vs.paid_at) {
         list.push({ ts: vs.paid_at, actor: 'Finance Admin', action: 'Settlement Marked Paid', amount: vs.amount, targetId: vs.id, status: 'paid', type: 'vendor' });
       }
     });
     riderSettlements.forEach(rs => {
-      const normalizedStatus = rs.status === 'pending_request' ? 'pending' : rs.status;
+      const normalizedStatus = rs.status;
       list.push({ ts: rs.created_at, actor: 'System Auto-Calculation', action: 'Pending Settlement Generated', amount: rs.amount, targetId: rs.id, status: normalizedStatus, type: 'rider' });
       if (rs.paid_at) {
         list.push({ ts: rs.paid_at, actor: 'Finance Admin', action: 'Settlement Marked Paid', amount: rs.amount, targetId: rs.id, status: 'paid', type: 'rider' });
@@ -796,7 +980,7 @@ export function Settlements() {
                   .map((vs) => {
                     const vendor = vendors.find(v => v.id === vs.vendor_id);
                     const wallet = wallets.find(w => w.entity_id === vs.vendor_id && w.entity_type === 'vendor');
-                    const normalizedStatus = vs.status === 'pending_request' ? 'pending' : vs.status;
+                    const normalizedStatus = vs.status;
                     return (
                       <tr 
                         key={vs.id} 
@@ -855,7 +1039,7 @@ export function Settlements() {
                   .map((rs) => {
                     const rider = riders.find(r => r.id === rs.rider_id);
                     const wallet = wallets.find(w => w.entity_id === rs.rider_id && w.entity_type === 'rider');
-                    const normalizedStatus = rs.status === 'pending_request' ? 'pending' : rs.status;
+                    const normalizedStatus = rs.status;
                     return (
                       <tr 
                         key={rs.id} 
