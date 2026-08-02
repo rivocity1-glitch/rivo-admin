@@ -67,6 +67,9 @@ const operationalBadgeMap: Record<string, { variant: "success" | "warning" | "er
   busy: { variant: "warning", label: "Busy" }
 };
 
+const SUPABASE_ANON_KEY =
+  ((import.meta as any).env?.VITE_SUPABASE_ANON_KEY ?? "") as string;
+
 export const PLAN_CONFIG = {
   free: {
     label: "FREE",
@@ -372,7 +375,6 @@ export function Vendors() {
 
       if (vendorError) throw vendorError;
 
-      // Seed Vendor Profile Row structure with dynamic drug license state logic
       const vendorProfilePayload = {
         vendor_id: insertedVendor.id,
         store_status: "closed",
@@ -630,6 +632,43 @@ export function Vendors() {
             .insert([autoSubPayload]);
 
           if (autoSubInsertError) throw autoSubInsertError;
+        }
+
+        try {
+          const { data: vendorData, error: vendorFetchError } = await supabase
+            .from("vendors")
+            .select("email, owner_name, shop_name, shop_code")
+            .eq("id", id)
+            .single();
+
+          if (!vendorFetchError && vendorData) {
+            const response = await fetch(
+              "https://fduolwqvevmkgmicyviy.functions.supabase.co/send-email",
+              {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+                  apikey: SUPABASE_ANON_KEY,
+                },
+                body: JSON.stringify({
+                  type: "vendor-approved",
+                  to: vendorData.email,
+                  ownerName: vendorData.owner_name,
+                  shopName: vendorData.shop_name,
+                  shopCode: vendorData.shop_code,
+                }),
+              }
+            );
+            const responseText = await response.text();
+            console.log("Email Status:", response.status);
+            console.log("Email Response:", responseText);
+            if (!response.ok) {
+              console.error("Email API Error:", responseText);
+            }
+          }
+        } catch (err) {
+          console.error("Vendor approval email failed", err);
         }
       }
 

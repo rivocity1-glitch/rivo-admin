@@ -79,6 +79,7 @@ interface Rider {
   selfie_photo_url: string;
   selfie_locked: boolean;
   selfie_uploaded_at: string;
+  rider_code?: string;
 }
 
 interface VendorOption {
@@ -114,6 +115,9 @@ const QUICK_REJECT_REASONS = [
   "Bank details mismatch",
   "Other"
 ];
+
+const SUPABASE_ANON_KEY =
+  ((import.meta as any).env?.VITE_SUPABASE_ANON_KEY ?? "") as string;
 
 function PortalDropdown({ 
   trigger, 
@@ -336,6 +340,7 @@ export function Riders() {
           selfie_photo_url: row.selfie_photo_url || "",
           selfie_locked: !!row.selfie_locked,
           selfie_uploaded_at: row.selfie_uploaded_at || "",
+          rider_code: row.rider_code || "",
         };
       });
 
@@ -545,6 +550,45 @@ export function Riders() {
         .eq("id", id);
 
       if (updateError) throw updateError;
+
+      if (updates.status === "active") {
+        try {
+          const { data: riderData, error: riderFetchError } = await supabase
+            .from("riders")
+            .select("email, rider_name, rider_code")
+            .eq("id", id)
+            .single();
+
+          if (!riderFetchError && riderData && riderData.email) {
+            const response = await fetch(
+              "https://fduolwqvevmkgmicyviy.functions.supabase.co/send-email",
+              {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+                  apikey: SUPABASE_ANON_KEY,
+                },
+                body: JSON.stringify({
+                  type: "rider-approved",
+                  to: riderData.email,
+                  riderName: riderData.rider_name,
+                  riderCode: riderData.rider_code,
+                }),
+              }
+            );
+            const responseText = await response.text();
+            console.log("Rider Email Status:", response.status);
+            console.log("Rider Email Response:", responseText);
+            if (!response.ok) {
+              console.error("Rider approval email failed:", responseText);
+            }
+          }
+        } catch (err) {
+          console.error("Rider approval email failed:", err);
+        }
+      }
+
       await fetchRiders();
     } catch (err) {
       console.error("Status mutation sequence crashed:", err);
@@ -628,6 +672,42 @@ export function Riders() {
           verified_by: user?.id || null
         })
         .eq("rider_id", kycRider.id);
+
+      try {
+        const { data: riderData, error: riderFetchError } = await supabase
+          .from("riders")
+          .select("email, full_name, rider_name, rider_code")
+          .eq("id", kycRider.id)
+          .single();
+
+        if (!riderFetchError && riderData && riderData.email) {
+          const response = await fetch(
+            "https://fduolwqvevmkgmicyviy.functions.supabase.co/send-email",
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+                apikey: SUPABASE_ANON_KEY,
+              },
+              body: JSON.stringify({
+                type: "rider-approved",
+                to: riderData.email,
+                riderName: riderData.full_name || riderData.rider_name,
+                riderCode: riderData.rider_code,
+              }),
+            }
+          );
+          const responseText = await response.text();
+          console.log("Rider Email Status:", response.status);
+          console.log("Rider Email Response:", responseText);
+          if (!response.ok) {
+            console.error("Rider approval email failed:", responseText);
+          }
+        }
+      } catch (err) {
+        console.error("Rider approval email failed:", err);
+      }
 
       if (kycRider.auth_user_id) {
         await supabase

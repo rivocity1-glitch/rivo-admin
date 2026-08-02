@@ -85,7 +85,7 @@ interface VendorSettlement {
   amount: number;
   order_ids: string[];
   order_count?: number;
-  status: 'pending' | 'paid' | 'rejected';
+  status: 'AVAILABLE' | 'REQUESTED' | 'PAID';
   created_at: string;
   paid_at?: string;
   payment_method?: string;
@@ -102,7 +102,7 @@ interface RiderSettlement {
   amount: number;
   order_ids: string[];
   delivery_count?: number;
-  status: 'pending' | 'paid' | 'rejected';
+  status: 'AVAILABLE' | 'REQUESTED' | 'PAID';
   created_at: string;
   paid_at?: string;
   payment_method?: string;
@@ -219,11 +219,11 @@ export function Settlements() {
       let stateMutated = false;
 
       // =========================================================================
-      // 1. CLEANUP & MERGE EXISTING DUPLICATE PENDING VENDOR SETTLEMENTS
+      // 1. CLEANUP & MERGE EXISTING DUPLICATE REQUESTED VENDOR SETTLEMENTS
       // =========================================================================
       const pendingVSetsByVendor: { [vendorId: string]: VendorSettlement[] } = {};
       fetchedVSets.forEach(vs => {
-        if (vs.status === 'pending') {
+        if (vs.status === 'REQUESTED') {
           if (!pendingVSetsByVendor[vs.vendor_id]) pendingVSetsByVendor[vs.vendor_id] = [];
           pendingVSetsByVendor[vs.vendor_id].push(vs);
         }
@@ -231,12 +231,10 @@ export function Settlements() {
 
       for (const [vId, vList] of Object.entries(pendingVSetsByVendor)) {
         if (vList.length > 1) {
-          // Sort oldest first (keep primary record)
           vList.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
           const primary = vList[0];
           const duplicates = vList.slice(1);
 
-          // Get all delivered unsettled orders for this vendor
           const vOrders = fetchedOrders.filter(
             o => o.vendor_id === vId && o.order_status === 'delivered' && o.settled_vendor === false
           );
@@ -244,18 +242,16 @@ export function Settlements() {
           const mergedOrderIds = Array.from(new Set(vOrders.map(o => o.id)));
           const mergedAmount = vOrders.reduce((acc, o) => acc + (Number(o.vendor_earning) || 0), 0);
 
-          // Update primary settlement
           await supabase
             .from("vendor_settlements")
             .update({
               amount: mergedAmount,
               order_ids: mergedOrderIds,
               order_count: mergedOrderIds.length,
-              status: 'pending'
+              status: 'REQUESTED'
             })
             .eq("id", primary.id);
 
-          // Delete duplicates
           const dupIds = duplicates.map(d => d.id);
           await supabase.from("vendor_settlements").delete().in("id", dupIds);
           stateMutated = true;
@@ -263,11 +259,11 @@ export function Settlements() {
       }
 
       // =========================================================================
-      // 2. CLEANUP & MERGE EXISTING DUPLICATE PENDING RIDER SETTLEMENTS
+      // 2. CLEANUP & MERGE EXISTING DUPLICATE REQUESTED RIDER SETTLEMENTS
       // =========================================================================
       const pendingRSetsByRider: { [riderId: string]: RiderSettlement[] } = {};
       fetchedRSets.forEach(rs => {
-        if (rs.status === 'pending') {
+        if (rs.status === 'REQUESTED') {
           if (!pendingRSetsByRider[rs.rider_id]) pendingRSetsByRider[rs.rider_id] = [];
           pendingRSetsByRider[rs.rider_id].push(rs);
         }
@@ -275,12 +271,10 @@ export function Settlements() {
 
       for (const [rId, rList] of Object.entries(pendingRSetsByRider)) {
         if (rList.length > 1) {
-          // Sort oldest first (keep primary record)
           rList.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
           const primary = rList[0];
           const duplicates = rList.slice(1);
 
-          // Get all delivered unsettled orders for this rider
           const rOrders = fetchedOrders.filter(
             o => o.rider_id === rId && o.order_status === 'delivered' && o.settled_rider === false
           );
@@ -288,18 +282,16 @@ export function Settlements() {
           const mergedOrderIds = Array.from(new Set(rOrders.map(o => o.id)));
           const mergedAmount = rOrders.reduce((acc, o) => acc + (Number(o.rider_earning) || 0), 0);
 
-          // Update primary settlement
           await supabase
             .from("rider_settlements")
             .update({
               amount: mergedAmount,
               order_ids: mergedOrderIds,
               delivery_count: mergedOrderIds.length,
-              status: 'pending'
+              status: 'REQUESTED'
             })
             .eq("id", primary.id);
 
-          // Delete duplicates
           const dupIds = duplicates.map(d => d.id);
           await supabase.from("rider_settlements").delete().in("id", dupIds);
           stateMutated = true;
@@ -307,7 +299,7 @@ export function Settlements() {
       }
 
       // =========================================================================
-      // 3. IDEMPOTENT PENDING SETTLEMENT AGGREGATION FOR VENDORS
+      // 3. IDEMPOTENT REQUESTED SETTLEMENT AGGREGATION FOR VENDORS
       // =========================================================================
       const vendorUnsettledOrders = fetchedOrders.filter(
         o => o.order_status === 'delivered' && o.settled_vendor === false && o.vendor_id
@@ -325,16 +317,14 @@ export function Settlements() {
         const orderIds = Array.from(new Set(vOrders.map(o => o.id)));
         const totalAmount = vOrders.reduce((acc, o) => acc + (Number(o.vendor_earning) || 0), 0);
 
-        // Immediate Fresh Verification before insert/update (Guards against database race conditions)
         const { data: freshPending } = await supabase
           .from("vendor_settlements")
           .select("*")
           .eq("vendor_id", vId)
-          .eq("status", "pending")
+          .eq("status", "REQUESTED")
           .order("created_at", { ascending: true });
 
         if (freshPending && freshPending.length > 0) {
-          // If duplicates were inserted between requests, cleanup extra ones
           const primary = freshPending[0];
           if (freshPending.length > 1) {
             const extraIds = freshPending.slice(1).map(x => x.id);
@@ -353,18 +343,17 @@ export function Settlements() {
                 amount: totalAmount,
                 order_ids: orderIds,
                 order_count: orderIds.length,
-                status: 'pending'
+                status: 'REQUESTED'
               })
               .eq("id", primary.id);
             stateMutated = true;
           }
         } else if (orderIds.length > 0) {
-          // Check for the most recent rejected settlement to prevent regenerating duplicates after admin rejection
           const { data: recentRejected } = await supabase
             .from("vendor_settlements")
             .select("order_ids")
             .eq("vendor_id", vId)
-            .eq("status", "rejected")
+            .eq("status", "AVAILABLE")
             .order("created_at", { ascending: false })
             .limit(1);
 
@@ -378,20 +367,42 @@ export function Settlements() {
           }
 
           if (!isSameAsRejected) {
-            await supabase.from("vendor_settlements").insert([{
-              vendor_id: vId,
-              amount: totalAmount,
-              order_ids: orderIds,
-              order_count: orderIds.length,
-              status: 'pending'
-            }]);
-            stateMutated = true;
+            // Requirement 4 & 5: Check existing settlement using order_ids and avoid duplicates
+            const { data: existingSet } = await supabase
+              .from("vendor_settlements")
+              .select("id, order_ids, status")
+              .eq("vendor_id", vId);
+
+            let alreadyExists = false;
+            if (existingSet) {
+              for (const s of existingSet) {
+                if ((s.status === 'AVAILABLE' || s.status === 'REQUESTED') && s.order_ids) {
+                  const sIds = [...s.order_ids].sort();
+                  const tIds = [...orderIds].sort();
+                  if (JSON.stringify(sIds) === JSON.stringify(tIds)) {
+                    alreadyExists = true;
+                    break;
+                  }
+                }
+              }
+            }
+
+            if (!alreadyExists) {
+              await supabase.from("vendor_settlements").insert([{
+                vendor_id: vId,
+                amount: totalAmount,
+                order_ids: orderIds,
+                order_count: orderIds.length,
+                status: 'REQUESTED'
+              }]);
+              stateMutated = true;
+            }
           }
         }
       }
 
       // =========================================================================
-      // 4. IDEMPOTENT PENDING SETTLEMENT AGGREGATION FOR RIDERS
+      // 4. IDEMPOTENT REQUESTED SETTLEMENT AGGREGATION FOR RIDERS
       // =========================================================================
       const riderUnsettledOrders = fetchedOrders.filter(
         o => o.order_status === 'delivered' && o.settled_rider === false && o.rider_id
@@ -409,16 +420,14 @@ export function Settlements() {
         const orderIds = Array.from(new Set(rOrders.map(o => o.id)));
         const totalAmount = rOrders.reduce((acc, o) => acc + (Number(o.rider_earning) || 0), 0);
 
-        // Immediate Fresh Verification before insert/update (Guards against database race conditions)
         const { data: freshPending } = await supabase
           .from("rider_settlements")
           .select("*")
           .eq("rider_id", rId)
-          .eq("status", "pending")
+          .eq("status", "REQUESTED")
           .order("created_at", { ascending: true });
 
         if (freshPending && freshPending.length > 0) {
-          // If duplicates were inserted between requests, cleanup extra ones
           const primary = freshPending[0];
           if (freshPending.length > 1) {
             const extraIds = freshPending.slice(1).map(x => x.id);
@@ -437,18 +446,17 @@ export function Settlements() {
                 amount: totalAmount,
                 order_ids: orderIds,
                 delivery_count: orderIds.length,
-                status: 'pending'
+                status: 'REQUESTED'
               })
               .eq("id", primary.id);
             stateMutated = true;
           }
         } else if (orderIds.length > 0) {
-          // Check for the most recent rejected settlement to prevent regenerating duplicates after admin rejection
           const { data: recentRejected } = await supabase
             .from("rider_settlements")
             .select("order_ids")
             .eq("rider_id", rId)
-            .eq("status", "rejected")
+            .eq("status", "AVAILABLE")
             .order("created_at", { ascending: false })
             .limit(1);
 
@@ -462,14 +470,36 @@ export function Settlements() {
           }
 
           if (!isSameAsRejected) {
-            await supabase.from("rider_settlements").insert([{
-              rider_id: rId,
-              amount: totalAmount,
-              order_ids: orderIds,
-              delivery_count: orderIds.length,
-              status: 'pending'
-            }]);
-            stateMutated = true;
+            // Requirement 4 & 5: Check existing settlement using order_ids and avoid duplicates for riders
+            const { data: existingSet } = await supabase
+              .from("rider_settlements")
+              .select("id, order_ids, status")
+              .eq("rider_id", rId);
+
+            let alreadyExists = false;
+            if (existingSet) {
+              for (const s of existingSet) {
+                if ((s.status === 'AVAILABLE' || s.status === 'REQUESTED') && s.order_ids) {
+                  const sIds = [...s.order_ids].sort();
+                  const tIds = [...orderIds].sort();
+                  if (JSON.stringify(sIds) === JSON.stringify(tIds)) {
+                    alreadyExists = true;
+                    break;
+                  }
+                }
+              }
+            }
+
+            if (!alreadyExists) {
+              await supabase.from("rider_settlements").insert([{
+                rider_id: rId,
+                amount: totalAmount,
+                order_ids: orderIds,
+                delivery_count: orderIds.length,
+                status: 'REQUESTED'
+              }]);
+              stateMutated = true;
+            }
           }
         }
       }
@@ -612,11 +642,11 @@ export function Settlements() {
     const subRevenue = parseMetricsForSet(subscriptionRequests, "created_at", "amount");
     const riderEarnings = parseMetricsForSet(riderSettlements, "created_at", "amount");
 
-    const paidVendorsThisWeek = vendorSettlements.filter(s => s.status === "paid" && new Date(s.paid_at || "").getTime() >= startOfWeekTime).reduce((a,c) => a + c.amount, 0);
-    const paidRidersThisWeek = riderSettlements.filter(s => s.status === "paid" && new Date(s.paid_at || "").getTime() >= startOfWeekTime).reduce((a,c) => a + c.amount, 0);
+    const paidVendorsThisWeek = vendorSettlements.filter(s => s.status === "PAID" && new Date(s.paid_at || "").getTime() >= startOfWeekTime).reduce((a,c) => a + c.amount, 0);
+    const paidRidersThisWeek = riderSettlements.filter(s => s.status === "PAID" && new Date(s.paid_at || "").getTime() >= startOfWeekTime).reduce((a,c) => a + c.amount, 0);
     const paidThisWeek = paidVendorsThisWeek + paidRidersThisWeek;
 
-    const isPending = (st: string) => st === "pending";
+    const isPending = (st: string) => st === "REQUESTED";
 
     const pendingVendorLiability = vendorSettlements.filter(s => isPending(s.status)).reduce((a,c) => a + c.amount, 0);
     const pendingRiderLiability = riderSettlements.filter(s => isPending(s.status)).reduce((a,c) => a + c.amount, 0);
@@ -685,19 +715,30 @@ export function Settlements() {
       const targetTable = selectedType === 'vendor' ? 'vendor_settlements' : 'rider_settlements';
       const entityIdKey = selectedType === 'vendor' ? selectedSettlement.vendor_id : selectedSettlement.rider_id;
 
+      const payloadUpdate = {
+        status: "PAID" as const,
+        paid_at: new Date().toISOString(),
+        payment_method: formPaymentMethod,
+        utr_number: formUtr.trim(),
+        remarks: formRemarks.trim()
+      };
+
+      console.log("PAY UPDATE", {
+        id: selectedSettlement.id,
+        ...payloadUpdate
+      });
+
       // 1. UPDATE SETTLEMENT TABLE STATUS
       const { error: patchError } = await supabase
         .from(targetTable)
-        .update({
-          status: 'paid',
-          paid_at: new Date().toISOString(),
-          payment_method: formPaymentMethod,
-          utr_number: formUtr.trim(),
-          remarks: formRemarks.trim()
-        })
+        .update(payloadUpdate)
         .eq('id', selectedSettlement.id);
 
-      if (patchError) throw patchError;
+      if (patchError) {
+        console.error(patchError);
+        console.error("Payload sent:", payloadUpdate);
+        throw patchError;
+      }
 
       // 2. UPDATE INCLUDED ORDERS IN ORDERS TABLE
       if (selectedSettlement.order_ids && selectedSettlement.order_ids.length > 0) {
@@ -708,24 +749,30 @@ export function Settlements() {
           .in('id', selectedSettlement.order_ids);
 
         if (orderUpdateError) {
+          console.error(orderUpdateError);
           console.error("Error updating settled flag on orders:", orderUpdateError);
         }
       }
 
       // 3. INSERT FINANCIAL LEDGER ENTRY
+      const ledgerPayload = {
+        entity_type: selectedType,
+        entity_id: entityIdKey,
+        transaction_type: 'Manual Transfer Clearance',
+        entry_type: 'debit' as const,
+        amount: selectedSettlement.amount,
+        reference_id: selectedSettlement.id,
+        remarks: `Payout processed. Method: ${formPaymentMethod}. UTR: ${formUtr}. Remarks: ${formRemarks}`
+      };
       const { error: ledgerError } = await supabase
         .from('financial_ledger')
-        .insert([{
-          entity_type: selectedType,
-          entity_id: entityIdKey,
-          transaction_type: 'Manual Transfer Clearance',
-          entry_type: 'debit',
-          amount: selectedSettlement.amount,
-          reference_id: selectedSettlement.id,
-          remarks: `Payout processed. Method: ${formPaymentMethod}. UTR: ${formUtr}. Remarks: ${formRemarks}`
-        }]);
+        .insert([ledgerPayload]);
 
-      if (ledgerError) console.error("Error writing to financial_ledger:", ledgerError);
+      if (ledgerError) {
+        console.error(ledgerError);
+        console.error("Payload sent:", ledgerPayload);
+        console.error("Error writing to financial_ledger:", ledgerError);
+      }
 
       setPayModalOpen(false);
       triggerToast("Payment recorded successfully.");
@@ -743,15 +790,20 @@ export function Settlements() {
     setActionLoading(true);
     try {
       const targetTable = selectedType === 'vendor' ? 'vendor_settlements' : 'rider_settlements';
+      const rejectPayload = {
+        status: "AVAILABLE" as const,
+        remarks: formRemarks.trim()
+      };
       const { error: rejectError } = await supabase
         .from(targetTable)
-        .update({
-          status: 'rejected',
-          remarks: formRemarks.trim()
-        })
+        .update(rejectPayload)
         .eq('id', selectedSettlement.id);
 
-      if (rejectError) throw rejectError;
+      if (rejectError) {
+        console.error(rejectError);
+        console.error("Payload sent:", rejectPayload);
+        throw rejectError;
+      }
 
       setRejectModalOpen(false);
       triggerToast("Settlement rejected.");
@@ -770,14 +822,14 @@ export function Settlements() {
       const normalizedStatus = vs.status;
       list.push({ ts: vs.created_at, actor: 'System Auto-Calculation', action: 'Pending Settlement Generated', amount: vs.amount, targetId: vs.id, status: normalizedStatus, type: 'vendor' });
       if (vs.paid_at) {
-        list.push({ ts: vs.paid_at, actor: 'Finance Admin', action: 'Settlement Marked Paid', amount: vs.amount, targetId: vs.id, status: 'paid', type: 'vendor' });
+        list.push({ ts: vs.paid_at, actor: 'Finance Admin', action: 'Settlement Marked Paid', amount: vs.amount, targetId: vs.id, status: 'PAID', type: 'vendor' });
       }
     });
     riderSettlements.forEach(rs => {
       const normalizedStatus = rs.status;
       list.push({ ts: rs.created_at, actor: 'System Auto-Calculation', action: 'Pending Settlement Generated', amount: rs.amount, targetId: rs.id, status: normalizedStatus, type: 'rider' });
       if (rs.paid_at) {
-        list.push({ ts: rs.paid_at, actor: 'Finance Admin', action: 'Settlement Marked Paid', amount: rs.amount, targetId: rs.id, status: 'paid', type: 'rider' });
+        list.push({ ts: rs.paid_at, actor: 'Finance Admin', action: 'Settlement Marked Paid', amount: rs.amount, targetId: rs.id, status: 'PAID', type: 'rider' });
       }
     });
     return list.sort((a,b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
@@ -993,8 +1045,8 @@ export function Settlements() {
                         <td className="p-3.5 font-bold text-emerald-600">₹{vs.amount?.toFixed(2)}</td>
                         <td className="p-3.5">
                           <span className={`inline-block px-2 py-0.5 text-[9px] font-bold rounded border tracking-wider uppercase ${
-                            normalizedStatus === 'paid' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
-                            normalizedStatus === 'rejected' ? 'bg-rose-50 text-rose-700 border-rose-200' :
+                            normalizedStatus === 'PAID' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                            normalizedStatus === 'AVAILABLE' ? 'bg-orange-50 text-orange-700 border-orange-200' :
                             'bg-amber-50 text-amber-700 border-amber-200'
                           }`}>
                             {normalizedStatus}
@@ -1002,7 +1054,7 @@ export function Settlements() {
                         </td>
                         <td className="p-3.5 text-right pr-4 space-x-1 whitespace-nowrap">
                           <button onClick={() => handleOpenDetailsWorkflow(vs, 'vendor')} className="px-2.5 py-1 text-[10px] font-bold border border-gray-200 rounded text-slate-600 hover:bg-gray-50 cursor-pointer">Details</button>
-                          {normalizedStatus === 'pending' && (
+                          {normalizedStatus === 'REQUESTED' && (
                             <>
                               <button onClick={() => handleOpenPayWorkflow(vs, 'vendor')} className="px-2.5 py-1 text-[10px] font-bold bg-emerald-600 text-white rounded hover:bg-emerald-700 cursor-pointer shadow-3xs">Pay</button>
                               <button onClick={() => handleOpenRejectWorkflow(vs, 'vendor')} className="px-2.5 py-1 text-[10px] font-bold bg-rose-600 text-white rounded hover:bg-rose-700 cursor-pointer shadow-3xs">Reject</button>
@@ -1051,8 +1103,8 @@ export function Settlements() {
                         <td className="p-3.5 font-bold text-emerald-600">₹{rs.amount?.toFixed(2)}</td>
                         <td className="p-3.5">
                           <span className={`inline-block px-2 py-0.5 text-[9px] font-bold rounded border tracking-wider uppercase ${
-                            normalizedStatus === 'paid' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
-                            normalizedStatus === 'rejected' ? 'bg-rose-50 text-rose-700 border-rose-200' :
+                            normalizedStatus === 'PAID' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                            normalizedStatus === 'AVAILABLE' ? 'bg-orange-50 text-orange-700 border-orange-200' :
                             'bg-amber-50 text-amber-700 border-amber-200'
                           }`}>
                             {normalizedStatus}
@@ -1060,7 +1112,7 @@ export function Settlements() {
                         </td>
                         <td className="p-3.5 text-right pr-4 space-x-1 whitespace-nowrap">
                           <button onClick={() => handleOpenDetailsWorkflow(rs, 'rider')} className="px-2.5 py-1 text-[10px] font-bold border border-gray-200 rounded text-slate-600 hover:bg-gray-50 cursor-pointer">Details</button>
-                          {normalizedStatus === 'pending' && (
+                          {normalizedStatus === 'REQUESTED' && (
                             <>
                               <button onClick={() => handleOpenPayWorkflow(rs, 'rider')} className="px-2.5 py-1 text-[10px] font-bold bg-emerald-600 text-white rounded hover:bg-emerald-700 cursor-pointer shadow-3xs">Pay</button>
                               <button onClick={() => handleOpenRejectWorkflow(rs, 'rider')} className="px-2.5 py-1 text-[10px] font-bold bg-rose-600 text-white rounded hover:bg-rose-700 cursor-pointer shadow-3xs">Reject</button>
