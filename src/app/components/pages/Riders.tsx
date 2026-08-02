@@ -16,7 +16,9 @@ import {
   UserCheck,
   Loader2,
   ShieldCheck,
-  ExternalLink
+  ExternalLink,
+  CheckSquare,
+  Square
 } from "lucide-react";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
@@ -63,6 +65,20 @@ interface Rider {
   account_number: string;
   ifsc_code: string;
   upi_id: string;
+  // Extended Columns
+  gender: string;
+  blood_group: string;
+  emergency_contact: string;
+  alternate_contact: string;
+  address: string;
+  city: string;
+  state: string;
+  pin_code: string;
+  is_specially_abled: boolean;
+  disability_type?: string;
+  selfie_photo_url: string;
+  selfie_locked: boolean;
+  selfie_uploaded_at: string;
 }
 
 interface VendorOption {
@@ -89,6 +105,15 @@ const vehicleLabelMap: Record<VehicleType, string> = {
   scooter: "Scooter",
   electric_scooter: "EV Scooter",
 };
+
+const QUICK_REJECT_REASONS = [
+  "Aadhaar image unclear",
+  "PAN image unclear",
+  "Selfie mismatch",
+  "Driving licence invalid",
+  "Bank details mismatch",
+  "Other"
+];
 
 function PortalDropdown({ 
   trigger, 
@@ -233,7 +258,6 @@ export function Riders() {
 
       if (ridersError) throw ridersError;
 
-      // FETCH RIDER PROFILES DATA TO JOIN KYC DOCUMENTS
       const { data: profilesData, error: profilesError } = await supabase
         .from("rider_profiles")
         .select("*");
@@ -260,7 +284,6 @@ export function Riders() {
             name: a.vendors.shop_name || "Unnamed Shop"
           }));
 
-        // Find associated profile record for KYC documents & bank info
         const prof = (profilesData || []).find((p) => p.rider_id === row.id) || {};
 
         return {
@@ -299,6 +322,20 @@ export function Riders() {
           account_number: prof.account_number || row.account_number || "",
           ifsc_code: prof.ifsc_code || row.ifsc_code || "",
           upi_id: prof.upi_id || row.upi_id || "",
+          // Mapping Extended Columns
+          gender: row.gender || "—",
+          blood_group: row.blood_group || "—",
+          emergency_contact: row.emergency_contact || "—",
+          alternate_contact: row.alternate_contact || "—",
+          address: row.address || "—",
+          city: row.city || "—",
+          state: row.state || "—",
+          pin_code: row.pin_code || "—",
+          is_specially_abled: !!row.is_specially_abled,
+          disability_type: row.disability_type || "",
+          selfie_photo_url: row.selfie_photo_url || "",
+          selfie_locked: !!row.selfie_locked,
+          selfie_uploaded_at: row.selfie_uploaded_at || "",
         };
       });
 
@@ -323,23 +360,27 @@ export function Riders() {
     fetchVendorOptions();
     fetchRiders();
 
-    const channel = supabase
+    const channelRiders = supabase
       .channel("public:riders")
       .on(
         "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "riders",
-        },
-        () => {
-          fetchRiders();
-        }
+        { event: "*", schema: "public", table: "riders" },
+        () => fetchRiders()
+      )
+      .subscribe();
+
+    const channelProfiles = supabase
+      .channel("public:rider_profiles")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "rider_profiles" },
+        () => fetchRiders()
       )
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      supabase.removeChannel(channelRiders);
+      supabase.removeChannel(channelProfiles);
     };
   }, []);
 
@@ -533,38 +574,40 @@ export function Riders() {
     }
   }
 
-  // --- Core Administrative KYC Status Engine Hooks ---
   const isEvOrNonMotorized = (vehicleType?: string) => {
     return ["ev", "electric", "bicycle", "cycle", "electric_scooter"].some(t => (vehicleType || "").toLowerCase().includes(t));
   };
 
-  const checkDocumentsComplete = (rider: Rider | null): boolean => {
-    if (!rider) return false;
+  const getKycChecklist = (rider: Rider | null) => {
+    if (!rider) return {};
     const dlRequired = !isEvOrNonMotorized(rider.vehicle_type);
-    
-    return !!(
-      rider.aadhaar_number &&
-      rider.aadhaar_document_url &&
-      rider.pan_number &&
-      rider.pan_document_url &&
-      (!dlRequired || (rider.driving_license_number && rider.driving_license_document_url)) &&
-      rider.bank_name &&
-      rider.account_holder_name &&
-      rider.account_number &&
-      rider.ifsc_code
-    );
+    return {
+      profilePhoto: !!rider.profile_photo_url,
+      kycSelfie: !!rider.selfie_photo_url,
+      aadhaar: !!(rider.aadhaar_number && rider.aadhaar_document_url),
+      pan: !!(rider.pan_number && rider.pan_document_url),
+      drivingLicense: !dlRequired || !!(rider.driving_license_number && rider.driving_license_document_url),
+      bankDetails: !!(rider.bank_name && rider.account_holder_name && rider.account_number && rider.ifsc_code),
+    };
+  };
+
+  const isKycComplete = (rider: Rider | null): boolean => {
+    const checks = getKycChecklist(rider);
+    return Object.values(checks).every(Boolean);
   };
 
   async function handleApproveKyc() {
     if (!kycRider) return;
     
-    if (!checkDocumentsComplete(kycRider)) {
+    if (!isKycComplete(kycRider)) {
       alert("Complete documents required before approval.");
       return;
     }
 
     try {
       setIsSubmitting(true);
+      const now = new Date().toISOString();
+      const { data: { user } } = await supabase.auth.getUser();
 
       const { error: updateError } = await supabase
         .from("riders")
@@ -576,6 +619,15 @@ export function Riders() {
         .eq("id", kycRider.id);
 
       if (updateError) throw updateError;
+
+      await supabase
+        .from("rider_profiles")
+        .update({
+          kyc_status: "verified",
+          verified_at: now,
+          verified_by: user?.id || null
+        })
+        .eq("rider_id", kycRider.id);
 
       if (kycRider.auth_user_id) {
         await supabase
@@ -622,10 +674,12 @@ export function Riders() {
 
       if (updateError) throw updateError;
 
-      // Also record rejection reason in rider_profiles
       await supabase
         .from("rider_profiles")
-        .update({ rejection_reason: rejectReason })
+        .update({ 
+          kyc_status: "rejected",
+          rejection_reason: rejectReason 
+        })
         .eq("rider_id", kycRider.id);
 
       if (kycRider.auth_user_id) {
@@ -781,6 +835,23 @@ export function Riders() {
                               <MapPin className="w-3 h-3 text-muted-foreground/60" />
                               <span>{rider.location_area}</span>
                             </div>
+                            <div className="flex flex-wrap items-center gap-1 mt-1">
+                              {rider.gender !== "—" && (
+                                <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold bg-muted text-muted-foreground border border-border">
+                                  {rider.gender}
+                                </span>
+                              )}
+                              {rider.blood_group !== "—" && (
+                                <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold bg-muted text-muted-foreground border border-border">
+                                  {rider.blood_group}
+                                </span>
+                              )}
+                              {rider.is_specially_abled && (
+                                <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold bg-[#22C55E]/10 text-[#22C55E] border border-[#22C55E]/20">
+                                  ♿ Specially Abled
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </div>
                       </td>
@@ -917,44 +988,48 @@ export function Riders() {
           description="Review operational credentials, verification records, and uploaded document files."
           size="md"
           footer={
-            <div className="flex gap-2 justify-end w-full items-center">
-              {kycRider.kyc_status === "not_submitted" && (
-                <span className="text-sm font-semibold text-amber-600 mr-auto bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-lg">
-                  KYC not submitted yet.
-                </span>
-              )}
-              {!checkDocumentsComplete(kycRider) && kycRider.kyc_status !== "not_submitted" && kycRider.kyc_status !== "verified" && (
-                <span className="text-xs font-semibold text-red-500 mr-auto max-w-[50%] leading-tight bg-red-50 border border-red-100 p-2 rounded-md">
-                  Complete documents required before approval.
-                </span>
-              )}
+            <div className="flex flex-col sm:flex-row gap-2 justify-between w-full items-center">
+              <div className="flex flex-wrap items-center gap-2 mr-auto">
+                {kycRider.kyc_status === "not_submitted" && (
+                  <span className="text-sm font-semibold text-amber-600 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-lg">
+                    KYC not submitted yet.
+                  </span>
+                )}
+                {!isKycComplete(kycRider) && kycRider.kyc_status !== "not_submitted" && kycRider.kyc_status !== "verified" && (
+                  <span className="text-xs font-semibold text-red-500 leading-tight bg-red-50 border border-red-100 p-2 rounded-md">
+                    Complete documents required before approval.
+                  </span>
+                )}
+              </div>
               
-              <Button variant="secondary" onClick={() => { setKycOpen(false); setKycRider(null); }}>Close</Button>
-              
-              {kycRider.kyc_status !== "not_submitted" && (
-                <>
-                  <Button variant="destructive" onClick={() => setRejectConfirmOpen(true)} disabled={isSubmitting}>
-                    Reject KYC
-                  </Button>
-                  <Button 
-                    variant="primary" 
-                    onClick={handleApproveKyc} 
-                    disabled={kycRider.kyc_status === "verified" || !checkDocumentsComplete(kycRider) || isSubmitting}
-                  >
-                    {kycRider.kyc_status === "verified" ? "Already Verified" : "Approve KYC"}
-                  </Button>
-                </>
-              )}
+              <div className="flex gap-2 items-center">
+                <Button variant="secondary" onClick={() => { setKycOpen(false); setKycRider(null); }}>Close</Button>
+                
+                {kycRider.kyc_status !== "not_submitted" && (
+                  <>
+                    <Button variant="destructive" onClick={() => setRejectConfirmOpen(true)} disabled={isSubmitting}>
+                      Reject KYC
+                    </Button>
+                    <Button 
+                      variant="primary" 
+                      onClick={handleApproveKyc} 
+                      disabled={kycRider.kyc_status === "verified" || !isKycComplete(kycRider) || isSubmitting}
+                    >
+                      {kycRider.kyc_status === "verified" ? "Already Verified" : "Approve KYC"}
+                    </Button>
+                  </>
+                )}
+              </div>
             </div>
           }
         >
           <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1 pt-2">
-            {/* Profile Photo Section */}
+            {/* Section 1: Profile Photo */}
             <div className="bg-muted/30 border border-border p-3 rounded-lg flex flex-col gap-2">
-              <p className="text-xs text-muted-foreground font-medium">Profile Photo (Selfie)</p>
+              <p className="text-xs text-muted-foreground font-medium">Profile Photo (Display Picture)</p>
               {kycRider.profile_photo_url ? (
                 <div className="relative group w-32 h-32 rounded-lg border border-border overflow-hidden bg-card">
-                  <img src={kycRider.profile_photo_url} alt="Selfie" className="w-full h-full object-cover" />
+                  <img src={kycRider.profile_photo_url} alt="Profile" className="w-full h-full object-cover" />
                   <a 
                     href={kycRider.profile_photo_url} 
                     target="_blank" 
@@ -965,84 +1040,118 @@ export function Riders() {
                   </a>
                 </div>
               ) : (
-                <span className="text-xs font-semibold text-amber-600 italic bg-amber-50 px-2 py-1.5 rounded border border-amber-100 w-fit">Selfie Not Uploaded</span>
+                <span className="text-xs font-semibold text-amber-600 italic bg-amber-50 px-2 py-1.5 rounded border border-amber-100 w-fit">Profile Photo Not Uploaded</span>
               )}
             </div>
 
-            {/* Aadhaar Section */}
+            {/* Section 2: KYC Selfie */}
             <div className="bg-muted/30 border border-border p-3 rounded-lg flex flex-col gap-2">
               <div className="flex justify-between items-center">
-                <p className="text-xs text-muted-foreground font-medium">Aadhaar Card Details</p>
-                <p className="text-xs font-bold text-foreground tracking-wide">{kycRider.aadhaar_number ? "[Aadhaar Redacted]" : "No Number Entered"}</p>
+                <p className="text-xs text-muted-foreground font-medium">KYC Selfie</p>
+                {kycRider.selfie_locked ? (
+                  <span className="text-xs font-bold text-emerald-500 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded">
+                    ✅ KYC Selfie Locked
+                  </span>
+                ) : (
+                  <span className="text-xs font-bold text-amber-500 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded">
+                    ⚠ Selfie Not Locked
+                  </span>
+                )}
               </div>
-              {kycRider.aadhaar_document_url ? (
-                <div className="relative group w-full h-40 rounded-lg border border-border overflow-hidden bg-card">
-                  <img src={kycRider.aadhaar_document_url} alt="Aadhaar Front" className="w-full h-full object-cover" />
+              {kycRider.selfie_photo_url ? (
+                <div className="relative group w-32 h-32 rounded-lg border border-border overflow-hidden bg-card">
+                  <img src={kycRider.selfie_photo_url} alt="KYC Selfie" className="w-full h-full object-cover" />
                   <a 
-                    href={kycRider.aadhaar_document_url} 
+                    href={kycRider.selfie_photo_url} 
                     target="_blank" 
                     rel="noreferrer" 
                     className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition-opacity text-xs font-semibold gap-1"
                   >
-                    <ExternalLink className="w-3.5 h-3.5" /> Open Document
+                    <ExternalLink className="w-3.5 h-3.5" /> View Full
                   </a>
                 </div>
               ) : (
-                <span className="text-xs font-semibold text-amber-600 italic bg-amber-50 px-2 py-1.5 rounded border border-amber-100 w-fit">Aadhaar Photo Not Uploaded</span>
+                <span className="text-xs font-semibold text-amber-600 italic bg-amber-50 px-2 py-1.5 rounded border border-amber-100 w-fit">KYC Selfie Not Uploaded</span>
               )}
             </div>
 
-            {/* PAN Section */}
-            <div className="bg-muted/30 border border-border p-3 rounded-lg flex flex-col gap-2">
-              <div className="flex justify-between items-center">
-                <p className="text-xs text-muted-foreground font-medium">PAN Card Details</p>
-                <p className="text-xs font-bold text-foreground tracking-wide uppercase">{kycRider.pan_number || "No Number Entered"}</p>
+            {/* Section 3: Identity Documents */}
+            <div className="space-y-3">
+              {/* Aadhaar Section */}
+              <div className="bg-muted/30 border border-border p-3 rounded-lg flex flex-col gap-2">
+                <div className="flex justify-between items-center">
+                  <p className="text-xs text-muted-foreground font-medium">Aadhaar Card Details</p>
+                  <p className="text-xs font-bold text-foreground tracking-wide">{kycRider.aadhaar_number ? "[Aadhaar Redacted]" : "No Number Entered"}</p>
+                </div>
+                {kycRider.aadhaar_document_url ? (
+                  <div className="relative group w-full h-40 rounded-lg border border-border overflow-hidden bg-card">
+                    <img src={kycRider.aadhaar_document_url} alt="Aadhaar Front" className="w-full h-full object-cover" />
+                    <a 
+                      href={kycRider.aadhaar_document_url} 
+                      target="_blank" 
+                      rel="noreferrer" 
+                      className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition-opacity text-xs font-semibold gap-1"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" /> Open Document
+                    </a>
+                  </div>
+                ) : (
+                  <span className="text-xs font-semibold text-amber-600 italic bg-amber-50 px-2 py-1.5 rounded border border-amber-100 w-fit">Aadhaar Photo Not Uploaded</span>
+                )}
               </div>
-              {kycRider.pan_document_url ? (
-                <div className="relative group w-full h-40 rounded-lg border border-border overflow-hidden bg-card">
-                  <img src={kycRider.pan_document_url} alt="PAN Card" className="w-full h-full object-cover" />
-                  <a 
-                    href={kycRider.pan_document_url} 
-                    target="_blank" 
-                    rel="noreferrer" 
-                    className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition-opacity text-xs font-semibold gap-1"
-                  >
-                    <ExternalLink className="w-3.5 h-3.5" /> Open Document
-                  </a>
-                </div>
-              ) : (
-                <span className="text-xs font-semibold text-amber-600 italic bg-amber-50 px-2 py-1.5 rounded border border-amber-100 w-fit">PAN Photo Not Uploaded</span>
-              )}
-            </div>
 
-            {/* Driving License Section */}
-            <div className="bg-muted/30 border border-border p-3 rounded-lg flex flex-col gap-2">
-              <div className="flex justify-between items-center">
-                <p className="text-xs text-muted-foreground font-medium">
-                  Driving Licence {isEvOrNonMotorized(kycRider.vehicle_type) ? "(Optional for EV / Cycle)" : ""}
-                </p>
-                <p className="text-xs font-bold text-foreground tracking-wide uppercase">{kycRider.driving_license_number || "—"}</p>
+              {/* PAN Section */}
+              <div className="bg-muted/30 border border-border p-3 rounded-lg flex flex-col gap-2">
+                <div className="flex justify-between items-center">
+                  <p className="text-xs text-muted-foreground font-medium">PAN Card Details</p>
+                  <p className="text-xs font-bold text-foreground tracking-wide uppercase">{kycRider.pan_number || "No Number Entered"}</p>
+                </div>
+                {kycRider.pan_document_url ? (
+                  <div className="relative group w-full h-40 rounded-lg border border-border overflow-hidden bg-card">
+                    <img src={kycRider.pan_document_url} alt="PAN Card" className="w-full h-full object-cover" />
+                    <a 
+                      href={kycRider.pan_document_url} 
+                      target="_blank" 
+                      rel="noreferrer" 
+                      className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition-opacity text-xs font-semibold gap-1"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" /> Open Document
+                    </a>
+                  </div>
+                ) : (
+                  <span className="text-xs font-semibold text-amber-600 italic bg-amber-50 px-2 py-1.5 rounded border border-amber-100 w-fit">PAN Photo Not Uploaded</span>
+                )}
               </div>
-              {kycRider.driving_license_document_url ? (
-                <div className="relative group w-full h-40 rounded-lg border border-border overflow-hidden bg-card">
-                  <img src={kycRider.driving_license_document_url} alt="Driving License" className="w-full h-full object-cover" />
-                  <a 
-                    href={kycRider.driving_license_document_url} 
-                    target="_blank" 
-                    rel="noreferrer" 
-                    className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition-opacity text-xs font-semibold gap-1"
-                  >
-                    <ExternalLink className="w-3.5 h-3.5" /> Open Document
-                  </a>
+
+              {/* Driving License Section */}
+              <div className="bg-muted/30 border border-border p-3 rounded-lg flex flex-col gap-2">
+                <div className="flex justify-between items-center">
+                  <p className="text-xs text-muted-foreground font-medium">
+                    Driving Licence {isEvOrNonMotorized(kycRider.vehicle_type) ? "(Optional for EV / Cycle)" : ""}
+                  </p>
+                  <p className="text-xs font-bold text-foreground tracking-wide uppercase">{kycRider.driving_license_number || "—"}</p>
                 </div>
-              ) : (
-                <span className="text-xs font-semibold text-amber-600 italic bg-amber-50 px-2 py-1.5 rounded border border-amber-100 w-fit">
-                  {isEvOrNonMotorized(kycRider.vehicle_type) ? "DL Not Uploaded (Optional for EV)" : "DL Photo Not Uploaded"}
-                </span>
-              )}
+                {kycRider.driving_license_document_url ? (
+                  <div className="relative group w-full h-40 rounded-lg border border-border overflow-hidden bg-card">
+                    <img src={kycRider.driving_license_document_url} alt="Driving License" className="w-full h-full object-cover" />
+                    <a 
+                      href={kycRider.driving_license_document_url} 
+                      target="_blank" 
+                      rel="noreferrer" 
+                      className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition-opacity text-xs font-semibold gap-1"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" /> Open Document
+                    </a>
+                  </div>
+                ) : (
+                  <span className="text-xs font-semibold text-amber-600 italic bg-amber-50 px-2 py-1.5 rounded border border-amber-100 w-fit">
+                    {isEvOrNonMotorized(kycRider.vehicle_type) ? "DL Not Uploaded (Optional for EV)" : "DL Photo Not Uploaded"}
+                  </span>
+                )}
+              </div>
             </div>
 
-            {/* Bank Details Section */}
+            {/* Section 4: Bank Details */}
             <div className="bg-muted/30 border border-border p-3 rounded-lg space-y-2">
               <p className="text-xs text-muted-foreground font-medium">Bank Details</p>
               <div className="grid grid-cols-2 gap-3 text-xs bg-card border border-border/60 p-2.5 rounded-md">
@@ -1067,6 +1176,77 @@ export function Riders() {
                   <span className="font-semibold text-foreground text-emerald-500">{kycRider.upi_id || "—"}</span>
                 </div>
               </div>
+            </div>
+
+            {/* Section 5: Personal Details */}
+            <div className="bg-muted/30 border border-border p-3 rounded-lg space-y-2">
+              <p className="text-xs text-muted-foreground font-medium">Personal Details</p>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs bg-card border border-border/60 p-2.5 rounded-md">
+                <div>
+                  <span className="block text-[10px] uppercase text-muted-foreground font-semibold">Gender</span>
+                  <span className="font-semibold text-foreground">{kycRider.gender}</span>
+                </div>
+                <div>
+                  <span className="block text-[10px] uppercase text-muted-foreground font-semibold">Blood Group</span>
+                  <span className="font-semibold text-foreground">{kycRider.blood_group}</span>
+                </div>
+                <div>
+                  <span className="block text-[10px] uppercase text-muted-foreground font-semibold">Emergency Contact</span>
+                  <span className="font-semibold text-foreground">{kycRider.emergency_contact}</span>
+                </div>
+                <div className="col-span-2 sm:col-span-3">
+                  <span className="block text-[10px] uppercase text-muted-foreground font-semibold">Address</span>
+                  <span className="font-semibold text-foreground">{kycRider.address}</span>
+                </div>
+                <div>
+                  <span className="block text-[10px] uppercase text-muted-foreground font-semibold">City</span>
+                  <span className="font-semibold text-foreground">{kycRider.city}</span>
+                </div>
+                <div>
+                  <span className="block text-[10px] uppercase text-muted-foreground font-semibold">State</span>
+                  <span className="font-semibold text-foreground">{kycRider.state}</span>
+                </div>
+                <div>
+                  <span className="block text-[10px] uppercase text-muted-foreground font-semibold">PIN Code</span>
+                  <span className="font-semibold text-foreground">{kycRider.pin_code}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* KYC Checklist */}
+            <div className="bg-muted/30 border border-border p-3 rounded-lg space-y-2">
+              <p className="text-xs text-muted-foreground font-medium">KYC Checklist</p>
+              {(() => {
+                const checks = getKycChecklist(kycRider);
+                return (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
+                    <div className="flex items-center gap-1.5 font-medium">
+                      {checks.profilePhoto ? <CheckSquare className="w-4 h-4 text-[#22C55E]" /> : <Square className="w-4 h-4 text-muted-foreground" />}
+                      <span className={checks.profilePhoto ? "text-foreground" : "text-muted-foreground"}>Profile Photo</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 font-medium">
+                      {checks.kycSelfie ? <CheckSquare className="w-4 h-4 text-[#22C55E]" /> : <Square className="w-4 h-4 text-muted-foreground" />}
+                      <span className={checks.kycSelfie ? "text-foreground" : "text-muted-foreground"}>KYC Selfie</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 font-medium">
+                      {checks.aadhaar ? <CheckSquare className="w-4 h-4 text-[#22C55E]" /> : <Square className="w-4 h-4 text-muted-foreground" />}
+                      <span className={checks.aadhaar ? "text-foreground" : "text-muted-foreground"}>Aadhaar</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 font-medium">
+                      {checks.pan ? <CheckSquare className="w-4 h-4 text-[#22C55E]" /> : <Square className="w-4 h-4 text-muted-foreground" />}
+                      <span className={checks.pan ? "text-foreground" : "text-muted-foreground"}>PAN</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 font-medium">
+                      {checks.drivingLicense ? <CheckSquare className="w-4 h-4 text-[#22C55E]" /> : <Square className="w-4 h-4 text-muted-foreground" />}
+                      <span className={checks.drivingLicense ? "text-foreground" : "text-muted-foreground"}>Driving Licence (if req)</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 font-medium">
+                      {checks.bankDetails ? <CheckSquare className="w-4 h-4 text-[#22C55E]" /> : <Square className="w-4 h-4 text-muted-foreground" />}
+                      <span className={checks.bankDetails ? "text-foreground" : "text-muted-foreground"}>Bank Details</span>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Submission Parameters */}
@@ -1103,7 +1283,7 @@ export function Riders() {
           open={rejectConfirmOpen}
           onClose={() => setRejectConfirmOpen(false)}
           title="Reject KYC Verification"
-          description="Enter the exact rationale message to inform the rider why their KYC failed verification metrics."
+          description="Select a quick reason or enter a custom rationale message to inform the rider why their KYC failed verification."
           size="sm"
           footer={
             <div className="flex gap-2 justify-end w-full">
@@ -1114,7 +1294,27 @@ export function Riders() {
             </div>
           }
         >
-          <div className="pt-2">
+          <div className="space-y-3 pt-2">
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground mb-1.5">Quick Reasons</p>
+              <div className="flex flex-wrap gap-1.5">
+                {QUICK_REJECT_REASONS.map((reason) => (
+                  <button
+                    key={reason}
+                    type="button"
+                    onClick={() => setRejectReason(reason)}
+                    className={cn(
+                      "px-2.5 py-1 text-xs font-medium rounded-md border transition-colors",
+                      rejectReason === reason
+                        ? "bg-[#22C55E]/10 border-[#22C55E] text-[#22C55E]"
+                        : "bg-muted border-border text-foreground hover:bg-muted/80"
+                    )}
+                  >
+                    {reason}
+                  </button>
+                ))}
+              </div>
+            </div>
             <Input 
               label="Reason for Rejection *" 
               placeholder="e.g. Blurred document photograph image, incorrect account mismatch details" 
@@ -1239,7 +1439,7 @@ export function Riders() {
             </div>
           }
         >
-          <div className="space-y-4 pt-2">
+          <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1 pt-2">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {[
                 { label: "Rider Name", value: viewRider.name },
@@ -1256,6 +1456,35 @@ export function Riders() {
                 </div>
               ))}
             </div>
+
+            {/* Extended Section: Personal Information */}
+            <div className="bg-muted/30 border border-border p-3 rounded-lg space-y-2">
+              <p className="text-xs text-muted-foreground font-medium">Personal Information</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {[
+                  { label: "Gender", value: viewRider.gender },
+                  { label: "Blood Group", value: viewRider.blood_group },
+                  { label: "Phone", value: viewRider.phone },
+                  { label: "Email", value: viewRider.email },
+                  { label: "Emergency Contact", value: viewRider.emergency_contact },
+                  { label: "Alternate Contact", value: viewRider.alternate_contact },
+                  { label: "Address", value: viewRider.address },
+                  { label: "City", value: viewRider.city },
+                  { label: "State", value: viewRider.state },
+                  { label: "PIN Code", value: viewRider.pin_code },
+                  { label: "Specially Abled", value: viewRider.is_specially_abled ? "Yes" : "No" },
+                  ...(viewRider.is_specially_abled && viewRider.disability_type
+                    ? [{ label: "Disability Type", value: viewRider.disability_type }]
+                    : []),
+                ].map((item) => (
+                  <div key={item.label} className="bg-card rounded-md p-2.5 border border-border/50">
+                    <p className="text-[10px] uppercase text-muted-foreground font-semibold">{item.label}</p>
+                    <p className="text-sm font-semibold text-foreground mt-0.5">{item.value}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
             <div className="bg-muted/30 border border-border p-3 rounded-lg">
               <p className="text-xs text-muted-foreground mb-1.5 font-medium">Currently Attached Stores ({viewRider.assigned_vendors.length})</p>
               <div className="flex flex-wrap gap-1">
