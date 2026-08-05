@@ -1,1 +1,17 @@
-node_modules
+# Dependencies
+node_modules/
+
+# Environment files
+.env
+.env.*
+
+# Supabase local files
+supabase/.temp/
+supabase/functions/.env
+
+# Build output
+dist/
+build/
+
+# Expo
+.expo/
