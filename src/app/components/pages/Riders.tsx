@@ -538,6 +538,12 @@ export function Riders() {
   }
 
   async function mutateStatusDirectly(id: string, updates: Partial<Pick<Rider, "status" | "availability_status">>) {
+    const targetRider = riderList.find(r => r.id === id);
+    if (updates.status === "active" && targetRider && targetRider.kyc_status === "not_submitted") {
+      alert("Cannot activate a rider whose KYC is not submitted.");
+      return;
+    }
+
     setRiderList(prev => prev.map(r => r.id === id ? { ...r, ...updates } : r));
     if (viewRider && viewRider.id === id) {
       setViewRider(prev => prev ? { ...prev, ...updates } : null);
@@ -603,16 +609,25 @@ export function Riders() {
     try {
       setIsSubmitting(true);
       
-      await supabase.from("rider_vendor_assignments").delete().eq("rider_id", id);
-      const { error: deleteRiderError } = await supabase.from("riders").delete().eq("id", id);
-      if (deleteRiderError) throw deleteRiderError;
+      const { data, error } = await supabase.functions.invoke("delete-user", {
+        body: {
+          user_type: "rider",
+          user_id: id
+        }
+      });
+
+      if (error || (data && !data.success)) {
+        throw new Error(error?.message || data?.error || "Failed to delete rider via Edge Function.");
+      }
       
+      alert(`Rider "${name}" deleted successfully.`);
       setEditOpen(false);
       setAssignmentOpen(false);
       setViewRider(null);
       await fetchRiders();
-    } catch (err) {
+    } catch (err: any) {
       console.error("Destructive process fault:", err);
+      alert(err.message || "An error occurred while deleting the rider.");
     } finally {
       setIsSubmitting(false);
     }
@@ -642,14 +657,29 @@ export function Riders() {
 
   async function handleApproveKyc() {
     if (!kycRider) return;
-    
-    if (!isKycComplete(kycRider)) {
-      alert("Complete documents required before approval.");
-      return;
-    }
 
     try {
       setIsSubmitting(true);
+
+      // Re-fetch latest records from Supabase to avoid stale state
+      const { data: latestRiderData, error: latestRiderError } = await supabase
+        .from("riders")
+        .select("*")
+        .eq("id", kycRider.id)
+        .single();
+
+      if (latestRiderError || !latestRiderData) {
+        throw new Error("Failed to fetch latest rider data.");
+      }
+
+      const freshKyStatus = latestRiderData.kyc_status || "not_submitted";
+
+      if (freshKyStatus !== "pending") {
+        alert("Cannot approve a rider whose KYC is not pending submission.");
+        setIsSubmitting(false);
+        return;
+      }
+
       const now = new Date().toISOString();
       const { data: { user } } = await supabase.auth.getUser();
 
@@ -674,46 +704,38 @@ export function Riders() {
         .eq("rider_id", kycRider.id);
 
       try {
-        const { data: riderData, error: riderFetchError } = await supabase
-          .from("riders")
-          .select("email, full_name, rider_name, rider_code")
-          .eq("id", kycRider.id)
-          .single();
-
-        if (!riderFetchError && riderData && riderData.email) {
-          const response = await fetch(
-            "https://fduolwqvevmkgmicyviy.functions.supabase.co/send-email",
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-                apikey: SUPABASE_ANON_KEY,
-              },
-              body: JSON.stringify({
-                type: "rider-approved",
-                to: riderData.email,
-                riderName: riderData.full_name || riderData.rider_name,
-                riderCode: riderData.rider_code,
-              }),
-            }
-          );
-          const responseText = await response.text();
-          console.log("Rider Email Status:", response.status);
-          console.log("Rider Email Response:", responseText);
-          if (!response.ok) {
-            console.error("Rider approval email failed:", responseText);
+        const response = await fetch(
+          "https://fduolwqvevmkgmicyviy.functions.supabase.co/send-email",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+              apikey: SUPABASE_ANON_KEY,
+            },
+            body: JSON.stringify({
+              type: "rider-approved",
+              to: latestRiderData.email,
+              riderName: latestRiderData.full_name || latestRiderData.rider_name,
+              riderCode: latestRiderData.rider_code,
+            }),
           }
+        );
+        const responseText = await response.text();
+        console.log("Rider Email Status:", response.status);
+        console.log("Rider Email Response:", responseText);
+        if (!response.ok) {
+          console.error("Rider approval email failed:", responseText);
         }
       } catch (err) {
         console.error("Rider approval email failed:", err);
       }
 
-      if (kycRider.auth_user_id) {
+      if (latestRiderData.auth_user_id) {
         await supabase
           .from("notifications")
           .insert({
-            recipient_id: kycRider.auth_user_id,
+            recipient_id: latestRiderData.auth_user_id,
             recipient_type: "rider",
             title: "✅ KYC Approved",
             message: "Your KYC has been approved. You can now go online and receive delivery requests.",
@@ -735,6 +757,10 @@ export function Riders() {
 
   async function handleRejectKyc() {
     if (!kycRider) return;
+    if (kycRider.kyc_status === "not_submitted") {
+      alert("Cannot reject KYC that has not been submitted.");
+      return;
+    }
     if (!rejectReason.trim()) {
       alert("A reason note is explicitly mandatory.");
       return;
@@ -1013,7 +1039,7 @@ export function Riders() {
                             { label: "View Details", icon: <Edit className="w-3.5 h-3.5" />, onClick: () => setViewRider(rider) },
                             { label: "View KYC", icon: <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />, onClick: () => { setKycRider(rider); setKycOpen(true); } },
                             { label: "Manage Stores", icon: <Store className="w-3.5 h-3.5 text-emerald-500" />, onClick: () => handleOpenStoreAssignment(rider) },
-                            ...(rider.status === "inactive" ? [{ 
+                            ...(rider.status === "inactive" && rider.kyc_status !== "not_submitted" ? [{ 
                               label: "Approve Rider", 
                               icon: <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />, 
                               onClick: () => mutateStatusDirectly(rider.id, { status: "active" }) 
@@ -1023,7 +1049,7 @@ export function Riders() {
                               icon: <UserCheck className="w-3.5 h-3.5 text-sky-500" />, 
                               onClick: () => mutateStatusDirectly(rider.id, { availability_status: "available" }) 
                             }] : []),
-                            ...(rider.status !== "active" && rider.status !== "inactive" ? [{ 
+                            ...(rider.status !== "active" && rider.status !== "inactive" && rider.kyc_status !== "not_submitted" ? [{ 
                               label: "Set Active", 
                               icon: <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />, 
                               onClick: () => mutateStatusDirectly(rider.id, { status: "active" }) 
@@ -1072,12 +1098,12 @@ export function Riders() {
               <div className="flex flex-wrap items-center gap-2 mr-auto">
                 {kycRider.kyc_status === "not_submitted" && (
                   <span className="text-sm font-semibold text-amber-600 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-lg">
-                    KYC not submitted yet.
+                    This rider has not submitted KYC yet.
                   </span>
                 )}
-                {!isKycComplete(kycRider) && kycRider.kyc_status !== "not_submitted" && kycRider.kyc_status !== "verified" && (
-                  <span className="text-xs font-semibold text-red-500 leading-tight bg-red-50 border border-red-100 p-2 rounded-md">
-                    Complete documents required before approval.
+                {kycRider.kyc_status === "not_submitted" && (
+                  <span className="text-xs font-semibold text-muted-foreground">
+                    Approve/Reject buttons are disabled because KYC is not submitted.
                   </span>
                 )}
               </div>
@@ -1093,7 +1119,7 @@ export function Riders() {
                     <Button 
                       variant="primary" 
                       onClick={handleApproveKyc} 
-                      disabled={kycRider.kyc_status === "verified" || !isKycComplete(kycRider) || isSubmitting}
+                      disabled={kycRider.kyc_status === "verified" || kycRider.kyc_status !== "pending" || isSubmitting}
                     >
                       {kycRider.kyc_status === "verified" ? "Already Verified" : "Approve KYC"}
                     </Button>
@@ -1161,7 +1187,7 @@ export function Riders() {
               <div className="bg-muted/30 border border-border p-3 rounded-lg flex flex-col gap-2">
                 <div className="flex justify-between items-center">
                   <p className="text-xs text-muted-foreground font-medium">Aadhaar Card Details</p>
-                  <p className="text-xs font-bold text-foreground tracking-wide">{kycRider.aadhaar_number ? "[Aadhaar Redacted]" : "No Number Entered"}</p>
+                  <p className="text-xs font-bold text-foreground tracking-wide">[Aadhaar Redacted]</p>
                 </div>
                 {kycRider.aadhaar_document_url ? (
                   <div className="relative group w-full h-40 rounded-lg border border-border overflow-hidden bg-card">
