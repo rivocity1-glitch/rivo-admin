@@ -1,83 +1,38 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
-  Search,
+  AlertCircle,
+  Banknote,
+  Calendar,
   CheckCircle,
-  XCircle,
+  ChevronDown,
   Clock,
   Eye,
-  Calendar,
+  FileText,
   History,
-  Filter,
-  ShieldCheck,
-  User,
-  Store,
-  X,
   Loader2,
-  QrCode
+  RefreshCw,
+  Search,
+  X,
 } from "lucide-react";
 import { supabase } from "../../../lib/supabase";
 
-interface VendorProfile {
-  id: string;
-  vendor_id: string;
-  account_holder_name?: string;
-  bank_name?: string;
-  account_number?: string;
-  ifsc_code?: string;
-  upi_id?: string;
-  billing_address?: string;
-  address?: string;
-  address_line1?: string;
-  address_line2?: string;
-  city?: string;
-  state?: string;
-  pin_code?: string;
-  email?: string;
-  qr_code_url?: string;
-  created_at?: string;
-  updated_at?: string;
-}
+type SettlementType = "vendor" | "rider";
 
-interface RiderProfile {
-  id: string;
-  rider_id: string;
-  account_holder_name?: string;
-  bank_name?: string;
-  account_number?: string;
-  ifsc_code?: string;
-  upi_id?: string;
-  home_address?: string;
-  address?: string;
-  email?: string;
-  created_at?: string;
-  updated_at?: string;
-}
-
-interface Vendor {
-  id: string;
-  shop_name: string;
-  owner_name: string;
-  phone: string;
-}
-
-interface Rider {
-  id: string;
-  rider_name: string;
-  phone: string;
-  email?: string;
-  account_holder_name?: string;
-  bank_name?: string;
-  account_number?: string;
-  ifsc_code?: string;
-  upi_id?: string;
-}
-
-interface Wallet {
-  id: string;
-  entity_id: string;
-  entity_type: 'vendor' | 'rider';
-  balance: number;
-}
+type SettlementStatus =
+  | "AVAILABLE"
+  |  "REQUESTED"
+  | "PAID"
+  | "pending"
+  | "pending_request"
+  | "paid"
+  | "rejected"
+  | string;
 
 interface VendorSettlement {
   id: string;
@@ -85,15 +40,15 @@ interface VendorSettlement {
   amount: number;
   order_ids: string[];
   order_count?: number;
-  status: 'AVAILABLE' | 'REQUESTED' | 'PAID';
+  status: SettlementStatus;
   created_at: string;
-  paid_at?: string;
-  payment_method?: string;
-  utr_number?: string;
-  remarks?: string;
-  settlement_type?: string;
-  requested_by?: string;
-  request_date?: string;
+  paid_at?: string | null;
+  payment_method?: string | null;
+  utr_number?: string | null;
+  remarks?: string | null;
+  settlement_type?: string | null;
+  requested_by?: string | null;
+  request_date?: string | null;
 }
 
 interface RiderSettlement {
@@ -102,591 +57,772 @@ interface RiderSettlement {
   amount: number;
   order_ids: string[];
   delivery_count?: number;
-  status: 'AVAILABLE' | 'REQUESTED' | 'PAID';
+  status: SettlementStatus;
   created_at: string;
-  paid_at?: string;
-  payment_method?: string;
-  utr_number?: string;
-  remarks?: string;
-}
-
-interface FinancialLedger {
-  id: string;
-  entity_type: string;
-  entity_id: string;
-  transaction_type: string;
-  entry_type: 'credit' | 'debit';
-  amount: number;
-  reference_id: string;
-  remarks: string;
-  created_at: string;
-}
-
-interface SubscriptionPaymentRequest {
-  id: string;
-  amount: number;
-  status: 'pending' | 'approved' | 'rejected';
-  created_at: string;
+  paid_at?: string | null;
+  payment_method?: string | null;
+  utr_number?: string | null;
+  remarks?: string | null;
+  settlement_type?: string | null;
+  requested_by?: string | null;
+  request_date?: string | null;
 }
 
 interface Order {
   id: string;
-  vendor_id?: string;
-  rider_id?: string;
-  vendor_earning?: number;
-  rider_earning?: number;
-  vendor_commission?: number;
-  platform_fee?: number;
-  rivo_delivery_margin?: number;
-  order_status?: string;
-  delivered_at?: string;
-  settled_vendor?: boolean;
-  settled_rider?: boolean;
+  order_number?: string | null;
+  vendor_id?: string | null;
+  rider_id?: string | null;
+  subtotal?: number | null;
+  delivery_fee?: number | null;
+  platform_fee?: number | null;
+  total_amount?: number | null;
+  payment_status?: string | null;
+  order_status?: string | null;
+  payment_method?: string | null;
+  delivery_distance_km?: number | null;
+  actual_distance_km?: number | null;
+  chargeable_distance_km?: number | null;
+  rider_earning?: number | null;
+  rivo_delivery_margin?: number | null;
+  vendor_commission?: number | null;
+  vendor_earning?: number | null;
+  settled_vendor?: boolean | null;
+  settled_rider?: boolean | null;
+  delivered_at?: string | null;
   created_at: string;
+  updated_at?: string | null;
+}
+
+interface LedgerEntry {
+  id: string;
+  entity_type: string;
+  entity_id?: string | null;
+  transaction_type: string;
+  amount: number;
+  reference_id?: string | null;
+  remarks?: string | null;
+  created_at: string;
+  entry_type: string;
+  status?: string | null;
+  metadata?: Record<string, any> | null;
+}
+
+interface Vendor {
+  id: string;
+  shop_name?: string | null;
+  owner_name?: string | null;
+  phone?: string | null;
+  email?: string | null;
+}
+
+interface Rider {
+  id: string;
+  rider_name?: string | null;
+  phone?: string | null;
+  email?: string | null;
+}
+
+interface HistoryRow {
+  id: string;
+  type: SettlementType;
+  entityId: string;
+  entityName: string;
+  settlementId: string;
+  settlementStatus: string;
+  settlementDate: string;
+  paidDate: string | null;
+  orderId: string;
+  orderNumber: string;
+  orderDate: string;
+  amount: number;
+  paymentMethod: string;
+  utr: string;
+}
+
+function money(value: number | null | undefined) {
+  return `₹${Number(value || 0).toLocaleString("en-IN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+function formatDate(value?: string | null) {
+  if (!value) return "—";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "—";
+  }
+
+  return date.toLocaleDateString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) return "—";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "—";
+  }
+
+  return date.toLocaleString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function normalizeStatus(status?: string | null) {
+  return String(status || "").toUpperCase();
+}
+
+function isPaid(status?: string | null) {
+  return normalizeStatus(status) === "PAID";
+}
+
+function isPending(status?: string | null) {
+  const value = normalizeStatus(status);
+
+  return (
+    value === "REQUESTED" ||
+    value === "PENDING" ||
+    value === "PENDING_REQUEST"
+  );
+}
+
+function isAvailable(status?: string | null) {
+  const value = normalizeStatus(status);
+
+  return value === "AVAILABLE" || value === "PENDING";
 }
 
 export function Settlements() {
-  const [activeTab, setActiveTab] = useState<'overview' | 'vendor' | 'rider' | 'ledger' | 'audit'>('overview');
-  const [globalSearch, setGlobalSearch] = useState("");
+  const [activeTab, setActiveTab] = useState<
+    "overview" | "vendor" | "rider" | "ledger" | "audit"
+  >("overview");
+
   const [loading, setLoading] = useState(true);
-  const [realtimePulse, setRealtimePulse] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [globalSearch, setGlobalSearch] = useState("");
 
-  const [vendorSettlements, setVendorSettlements] = useState<VendorSettlement[]>([]);
-  const [riderSettlements, setRiderSettlements] = useState<RiderSettlement[]>([]);
+  const [vendorSettlements, setVendorSettlements] = useState<
+    VendorSettlement[]
+  >([]);
+
+  const [riderSettlements, setRiderSettlements] = useState<
+    RiderSettlement[]
+  >([]);
+
   const [vendors, setVendors] = useState<Vendor[]>([]);
-  const [vendorProfiles, setVendorProfiles] = useState<VendorProfile[]>([]);
   const [riders, setRiders] = useState<Rider[]>([]);
-  const [riderProfiles, setRiderProfiles] = useState<RiderProfile[]>([]);
-  const [wallets, setWallets] = useState<Wallet[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
-  const [ledger, setLedger] = useState<FinancialLedger[]>([]);
-  const [subscriptionRequests, setSubscriptionRequests] = useState<SubscriptionPaymentRequest[]>([]);
+  const [ledger, setLedger] = useState<LedgerEntry[]>([]);
 
-  const [startDate, setStartDate] = useState<string>("");
-  const [endDate, setStartDateEnd] = useState<string>("");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+
+  const [selectedSettlement, setSelectedSettlement] = useState<
+    VendorSettlement | RiderSettlement | null
+  >(null);
+
+  const [selectedType, setSelectedType] =
+    useState<SettlementType>("vendor");
 
   const [detailsModalOpen, setDetailsModalOpen] = useState(false);
   const [payModalOpen, setPayModalOpen] = useState(false);
-  const [rejectModalOpen, setRejectModalOpen] = useState(false);
-  const [selectedSettlement, setSelectedSettlement] = useState<any>(null);
-  const [selectedType, setSelectedType] = useState<'vendor' | 'rider'>('vendor');
 
   const [formUtr, setFormUtr] = useState("");
   const [formRemarks, setFormRemarks] = useState("");
-  const [formPaymentMethod, setFormPaymentMethod] = useState("Bank Transfer");
+  const [formPaymentMethod, setFormPaymentMethod] =
+    useState("Bank Transfer");
 
-  const [ledgerFilter, setLedgerFilter] = useState("all");
-  const [auditFilter, setAuditFilter] = useState({ entity: "all", status: "all" });
   const [actionLoading, setActionLoading] = useState(false);
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
-  // CONCURRENCY LOCK GUARD TO PREVENT REALTIME INFINITE LOOPS
-  const isSyncingRef = useRef(false);
+  const [toast, setToast] = useState<{
+    message: string;
+    type: "success" | "error";
+  } | null>(null);
 
-  const triggerToast = (message: string, type: 'success' | 'error' = 'success') => {
-    setToast({ message, type });
-    setTimeout(() => setToast(null), 4000);
-  };
+  const realtimeLock = useRef(false);
 
-  const loadDatabaseState = useCallback(async () => {
-    // Prevent simultaneous concurrent executions from multiple realtime events
-    if (isSyncingRef.current) return;
-    isSyncingRef.current = true;
+  const showToast = useCallback(
+    (
+      message: string,
+      type: "success" | "error" = "success"
+    ) => {
+      setToast({ message, type });
 
-    try {
-      setRealtimePulse(true);
+      window.setTimeout(() => {
+        setToast(null);
+      }, 3500);
+    },
+    []
+  );
 
-      const [
-        resVSet, resRSet, resVendors, resVProf, resRiders, 
-        resRProf, resWallets, resOrders, resLedger, resSubs
-      ] = await Promise.all([
-        supabase.from("vendor_settlements").select("*").order("created_at", { ascending: false }),
-        supabase.from("rider_settlements").select("*").order("created_at", { ascending: false }),
-        supabase.from("vendors").select("*"),
-        supabase.from("vendor_profiles").select("*"),
-        supabase.from("riders").select("*"),
-        supabase.from("rider_profiles").select("*"),
-        supabase.from("wallets").select("*"),
-        supabase.from("orders").select("*").order("created_at", { ascending: false }),
-        supabase.from("financial_ledger").select("*").order("created_at", { ascending: false }),
-        supabase.from("subscription_payment_requests").select("*").eq("status", "approved")
-      ]);
+  const loadData = useCallback(
+    async (showLoader = true) => {
+      if (realtimeLock.current) return;
 
-      const fetchedOrders: Order[] = resOrders.data || [];
-      const fetchedVSets: VendorSettlement[] = resVSet.data || [];
-      const fetchedRSets: RiderSettlement[] = resRSet.data || [];
+      realtimeLock.current = true;
 
-      let stateMutated = false;
-
-      // =========================================================================
-      // 1. CLEANUP & MERGE EXISTING DUPLICATE REQUESTED VENDOR SETTLEMENTS
-      // =========================================================================
-      const pendingVSetsByVendor: { [vendorId: string]: VendorSettlement[] } = {};
-      fetchedVSets.forEach(vs => {
-        if (vs.status === 'REQUESTED') {
-          if (!pendingVSetsByVendor[vs.vendor_id]) pendingVSetsByVendor[vs.vendor_id] = [];
-          pendingVSetsByVendor[vs.vendor_id].push(vs);
+      try {
+        if (showLoader) {
+          setLoading(true);
         }
-      });
 
-      for (const [vId, vList] of Object.entries(pendingVSetsByVendor)) {
-        if (vList.length > 1) {
-          vList.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-          const primary = vList[0];
-          const duplicates = vList.slice(1);
-
-          const vOrders = fetchedOrders.filter(
-            o => o.vendor_id === vId && o.order_status === 'delivered' && o.settled_vendor === false
-          );
-
-          const mergedOrderIds = Array.from(new Set(vOrders.map(o => o.id)));
-          const mergedAmount = vOrders.reduce((acc, o) => acc + (Number(o.vendor_earning) || 0), 0);
-
-          await supabase
+        const [
+          vendorSettlementResult,
+          riderSettlementResult,
+          vendorsResult,
+          ridersResult,
+          ordersResult,
+          ledgerResult,
+        ] = await Promise.all([
+          supabase
             .from("vendor_settlements")
-            .update({
-              amount: mergedAmount,
-              order_ids: mergedOrderIds,
-              order_count: mergedOrderIds.length,
-              status: 'REQUESTED'
-            })
-            .eq("id", primary.id);
+            .select("*")
+            .order("created_at", { ascending: false }),
 
-          const dupIds = duplicates.map(d => d.id);
-          await supabase.from("vendor_settlements").delete().in("id", dupIds);
-          stateMutated = true;
-        }
-      }
-
-      // =========================================================================
-      // 2. CLEANUP & MERGE EXISTING DUPLICATE REQUESTED RIDER SETTLEMENTS
-      // =========================================================================
-      const pendingRSetsByRider: { [riderId: string]: RiderSettlement[] } = {};
-      fetchedRSets.forEach(rs => {
-        if (rs.status === 'REQUESTED') {
-          if (!pendingRSetsByRider[rs.rider_id]) pendingRSetsByRider[rs.rider_id] = [];
-          pendingRSetsByRider[rs.rider_id].push(rs);
-        }
-      });
-
-      for (const [rId, rList] of Object.entries(pendingRSetsByRider)) {
-        if (rList.length > 1) {
-          rList.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-          const primary = rList[0];
-          const duplicates = rList.slice(1);
-
-          const rOrders = fetchedOrders.filter(
-            o => o.rider_id === rId && o.order_status === 'delivered' && o.settled_rider === false
-          );
-
-          const mergedOrderIds = Array.from(new Set(rOrders.map(o => o.id)));
-          const mergedAmount = rOrders.reduce((acc, o) => acc + (Number(o.rider_earning) || 0), 0);
-
-          await supabase
+          supabase
             .from("rider_settlements")
-            .update({
-              amount: mergedAmount,
-              order_ids: mergedOrderIds,
-              delivery_count: mergedOrderIds.length,
-              status: 'REQUESTED'
-            })
-            .eq("id", primary.id);
+            .select("*")
+            .order("created_at", { ascending: false }),
 
-          const dupIds = duplicates.map(d => d.id);
-          await supabase.from("rider_settlements").delete().in("id", dupIds);
-          stateMutated = true;
-        }
-      }
+          supabase.from("vendors").select("*"),
 
-      // =========================================================================
-      // 3. IDEMPOTENT REQUESTED SETTLEMENT AGGREGATION FOR VENDORS
-      // =========================================================================
-      const vendorUnsettledOrders = fetchedOrders.filter(
-        o => o.order_status === 'delivered' && o.settled_vendor === false && o.vendor_id
-      );
+          supabase.from("riders").select("*"),
 
-      const vendorGroups: { [vendorId: string]: Order[] } = {};
-      vendorUnsettledOrders.forEach(o => {
-        if (o.vendor_id) {
-          if (!vendorGroups[o.vendor_id]) vendorGroups[o.vendor_id] = [];
-          vendorGroups[o.vendor_id].push(o);
-        }
-      });
+          supabase
+            .from("orders")
+            .select(
+              `
+              id,
+              order_number,
+              vendor_id,
+              rider_id,
+              subtotal,
+              delivery_fee,
+              platform_fee,
+              total_amount,
+              payment_status,
+              order_status,
+              payment_method,
+              delivery_distance_km,
+              actual_distance_km,
+              chargeable_distance_km,
+              rider_earning,
+              rivo_delivery_margin,
+              vendor_commission,
+              vendor_earning,
+              settled_vendor,
+              settled_rider,
+              delivered_at,
+              created_at,
+              updated_at
+            `
+            )
+            .order("created_at", { ascending: false }),
 
-      for (const [vId, vOrders] of Object.entries(vendorGroups)) {
-        const orderIds = Array.from(new Set(vOrders.map(o => o.id)));
-        const totalAmount = vOrders.reduce((acc, o) => acc + (Number(o.vendor_earning) || 0), 0);
-
-        const { data: freshPending } = await supabase
-          .from("vendor_settlements")
-          .select("*")
-          .eq("vendor_id", vId)
-          .eq("status", "REQUESTED")
-          .order("created_at", { ascending: true });
-
-        if (freshPending && freshPending.length > 0) {
-          const primary = freshPending[0];
-          if (freshPending.length > 1) {
-            const extraIds = freshPending.slice(1).map(x => x.id);
-            await supabase.from("vendor_settlements").delete().in("id", extraIds);
-            stateMutated = true;
-          }
-
-          const currentIds = (primary.order_ids || []).slice().sort();
-          const targetIds = orderIds.slice().sort();
-          const idsChanged = JSON.stringify(currentIds) !== JSON.stringify(targetIds);
-
-          if (idsChanged || Number(primary.amount) !== totalAmount) {
-            await supabase
-              .from("vendor_settlements")
-              .update({
-                amount: totalAmount,
-                order_ids: orderIds,
-                order_count: orderIds.length,
-                status: 'REQUESTED'
-              })
-              .eq("id", primary.id);
-            stateMutated = true;
-          }
-        } else if (orderIds.length > 0) {
-          const { data: recentRejected } = await supabase
-            .from("vendor_settlements")
-            .select("order_ids")
-            .eq("vendor_id", vId)
-            .eq("status", "AVAILABLE")
-            .order("created_at", { ascending: false })
-            .limit(1);
-
-          let isSameAsRejected = false;
-          if (recentRejected && recentRejected.length > 0) {
-            const rejectedIds = (recentRejected[0].order_ids || []).slice().sort();
-            const currentTargetIds = orderIds.slice().sort();
-            if (JSON.stringify(rejectedIds) === JSON.stringify(currentTargetIds)) {
-              isSameAsRejected = true;
-            }
-          }
-
-          if (!isSameAsRejected) {
-            // Requirement 4 & 5: Check existing settlement using order_ids and avoid duplicates
-            const { data: existingSet } = await supabase
-              .from("vendor_settlements")
-              .select("id, order_ids, status")
-              .eq("vendor_id", vId);
-
-            let alreadyExists = false;
-            if (existingSet) {
-              for (const s of existingSet) {
-                if ((s.status === 'AVAILABLE' || s.status === 'REQUESTED') && s.order_ids) {
-                  const sIds = [...s.order_ids].sort();
-                  const tIds = [...orderIds].sort();
-                  if (JSON.stringify(sIds) === JSON.stringify(tIds)) {
-                    alreadyExists = true;
-                    break;
-                  }
-                }
-              }
-            }
-
-            if (!alreadyExists) {
-              await supabase.from("vendor_settlements").insert([{
-                vendor_id: vId,
-                amount: totalAmount,
-                order_ids: orderIds,
-                order_count: orderIds.length,
-                status: 'REQUESTED'
-              }]);
-              stateMutated = true;
-            }
-          }
-        }
-      }
-
-      // =========================================================================
-      // 4. IDEMPOTENT REQUESTED SETTLEMENT AGGREGATION FOR RIDERS
-      // =========================================================================
-      const riderUnsettledOrders = fetchedOrders.filter(
-        o => o.order_status === 'delivered' && o.settled_rider === false && o.rider_id
-      );
-
-      const riderGroups: { [riderId: string]: Order[] } = {};
-      riderUnsettledOrders.forEach(o => {
-        if (o.rider_id) {
-          if (!riderGroups[o.rider_id]) riderGroups[o.rider_id] = [];
-          riderGroups[o.rider_id].push(o);
-        }
-      });
-
-      for (const [rId, rOrders] of Object.entries(riderGroups)) {
-        const orderIds = Array.from(new Set(rOrders.map(o => o.id)));
-        const totalAmount = rOrders.reduce((acc, o) => acc + (Number(o.rider_earning) || 0), 0);
-
-        const { data: freshPending } = await supabase
-          .from("rider_settlements")
-          .select("*")
-          .eq("rider_id", rId)
-          .eq("status", "REQUESTED")
-          .order("created_at", { ascending: true });
-
-        if (freshPending && freshPending.length > 0) {
-          const primary = freshPending[0];
-          if (freshPending.length > 1) {
-            const extraIds = freshPending.slice(1).map(x => x.id);
-            await supabase.from("rider_settlements").delete().in("id", extraIds);
-            stateMutated = true;
-          }
-
-          const currentIds = (primary.order_ids || []).slice().sort();
-          const targetIds = orderIds.slice().sort();
-          const idsChanged = JSON.stringify(currentIds) !== JSON.stringify(targetIds);
-
-          if (idsChanged || Number(primary.amount) !== totalAmount) {
-            await supabase
-              .from("rider_settlements")
-              .update({
-                amount: totalAmount,
-                order_ids: orderIds,
-                delivery_count: orderIds.length,
-                status: 'REQUESTED'
-              })
-              .eq("id", primary.id);
-            stateMutated = true;
-          }
-        } else if (orderIds.length > 0) {
-          const { data: recentRejected } = await supabase
-            .from("rider_settlements")
-            .select("order_ids")
-            .eq("rider_id", rId)
-            .eq("status", "AVAILABLE")
-            .order("created_at", { ascending: false })
-            .limit(1);
-
-          let isSameAsRejected = false;
-          if (recentRejected && recentRejected.length > 0) {
-            const rejectedIds = (recentRejected[0].order_ids || []).slice().sort();
-            const currentTargetIds = orderIds.slice().sort();
-            if (JSON.stringify(rejectedIds) === JSON.stringify(currentTargetIds)) {
-              isSameAsRejected = true;
-            }
-          }
-
-          if (!isSameAsRejected) {
-            // Requirement 4 & 5: Check existing settlement using order_ids and avoid duplicates for riders
-            const { data: existingSet } = await supabase
-              .from("rider_settlements")
-              .select("id, order_ids, status")
-              .eq("rider_id", rId);
-
-            let alreadyExists = false;
-            if (existingSet) {
-              for (const s of existingSet) {
-                if ((s.status === 'AVAILABLE' || s.status === 'REQUESTED') && s.order_ids) {
-                  const sIds = [...s.order_ids].sort();
-                  const tIds = [...orderIds].sort();
-                  if (JSON.stringify(sIds) === JSON.stringify(tIds)) {
-                    alreadyExists = true;
-                    break;
-                  }
-                }
-              }
-            }
-
-            if (!alreadyExists) {
-              await supabase.from("rider_settlements").insert([{
-                rider_id: rId,
-                amount: totalAmount,
-                order_ids: orderIds,
-                delivery_count: orderIds.length,
-                status: 'REQUESTED'
-              }]);
-              stateMutated = true;
-            }
-          }
-        }
-      }
-
-      // RE-FETCH REFRESHED SETTLEMENTS IF DATABASE MUTATION OCCURRED
-      let finalVSets = fetchedVSets;
-      let finalRSets = fetchedRSets;
-      if (stateMutated) {
-        const [rfV, rfR] = await Promise.all([
-          supabase.from("vendor_settlements").select("*").order("created_at", { ascending: false }),
-          supabase.from("rider_settlements").select("*").order("created_at", { ascending: false })
+          supabase
+            .from("financial_ledger")
+            .select("*")
+            .order("created_at", { ascending: false }),
         ]);
-        if (rfV.data) finalVSets = rfV.data;
-        if (rfR.data) finalRSets = rfR.data;
-      }
 
-      setVendorSettlements(finalVSets);
-      setRiderSettlements(finalRSets);
-      if (resVendors.data) setVendors(resVendors.data);
-      if (resVProf.data) setVendorProfiles(resVProf.data);
-      if (resRiders.data) setRiders(resRiders.data);
-      if (resRProf.data) setRiderProfiles(resRProf.data);
-      if (resWallets.data) setWallets(resWallets.data);
-      setOrders(fetchedOrders);
-      if (resLedger.data) setLedger(resLedger.data);
-      if (resSubs.data) setSubscriptionRequests(resSubs.data);
-    } catch (e) {
-      console.error("Database loading exception:", e);
-    } finally {
-      setLoading(false);
-      setTimeout(() => setRealtimePulse(false), 500);
-      isSyncingRef.current = false;
-    }
-  }, []);
+        if (vendorSettlementResult.error) {
+          throw vendorSettlementResult.error;
+        }
+
+        if (riderSettlementResult.error) {
+          throw riderSettlementResult.error;
+        }
+
+        if (vendorsResult.error) {
+          throw vendorsResult.error;
+        }
+
+        if (ridersResult.error) {
+          throw ridersResult.error;
+        }
+
+        if (ordersResult.error) {
+          throw ordersResult.error;
+        }
+
+        if (ledgerResult.error) {
+          throw ledgerResult.error;
+        }
+
+        setVendorSettlements(
+          (vendorSettlementResult.data || []) as VendorSettlement[]
+        );
+
+        setRiderSettlements(
+          (riderSettlementResult.data || []) as RiderSettlement[]
+        );
+
+        setVendors((vendorsResult.data || []) as Vendor[]);
+        setRiders((ridersResult.data || []) as Rider[]);
+        setOrders((ordersResult.data || []) as Order[]);
+        setLedger((ledgerResult.data || []) as LedgerEntry[]);
+      } catch (error: any) {
+        console.error("Settlements loading error:", error);
+
+        showToast(
+          error?.message || "Failed to load settlement data.",
+          "error"
+        );
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+        realtimeLock.current = false;
+      }
+    },
+    [showToast]
+  );
 
   useEffect(() => {
-    loadDatabaseState();
+    loadData(true);
+  }, [loadData]);
+
+  useEffect(() => {
     const tables = [
-      "vendor_settlements", "rider_settlements", "vendors", "vendor_profiles", 
-      "riders", "rider_profiles", "wallets", "orders", "financial_ledger", "subscription_payment_requests"
+      "vendor_settlements",
+      "rider_settlements",
+      "orders",
+      "financial_ledger",
+      "vendors",
+      "riders",
     ];
-    
-    const channels = tables.map(table => 
-      supabase.channel(`realtime-${table}`)
-        .on("postgres_changes", { event: "*", schema: "public", table }, () => loadDatabaseState())
+
+    const channels = tables.map((table) =>
+      supabase
+        .channel(`admin-settlements-${table}`)
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table,
+          },
+          () => {
+            loadData(false);
+          }
+        )
         .subscribe()
     );
 
     return () => {
-      channels.forEach(ch => supabase.removeChannel(ch));
+      channels.forEach((channel) => {
+        supabase.removeChannel(channel);
+      });
     };
-  }, [loadDatabaseState]);
+  }, [loadData]);
 
-  const resolvedEntity = useMemo(() => {
-    if (!selectedSettlement) return null;
+  const refresh = async () => {
+    setRefreshing(true);
+    await loadData(false);
+  };
 
-    if (selectedType === 'vendor') {
-      const vendorId = selectedSettlement.vendor_id;
-      const vendor = vendors.find(v => v.id === vendorId) || null;
-      const wallet = wallets.find(w => w.entity_id === vendorId && w.entity_type === 'vendor') || null;
-      
-      const sortedProfiles = [...vendorProfiles]
-        .filter(p => p.vendor_id === vendorId)
-        .sort((a, b) => {
-          const timeA = new Date(a.updated_at || a.created_at || 0).getTime();
-          const timeB = new Date(b.updated_at || b.created_at || 0).getTime();
-          return timeB - timeA;
+  const vendorMap = useMemo(() => {
+    const map = new Map<string, Vendor>();
+
+    vendors.forEach((vendor) => {
+      map.set(vendor.id, vendor);
+    });
+
+    return map;
+  }, [vendors]);
+
+  const riderMap = useMemo(() => {
+    const map = new Map<string, Rider>();
+
+    riders.forEach((rider) => {
+      map.set(rider.id, rider);
+    });
+
+    return map;
+  }, [riders]);
+
+  const orderMap = useMemo(() => {
+    const map = new Map<string, Order>();
+
+    orders.forEach((order) => {
+      map.set(order.id, order);
+    });
+
+    return map;
+  }, [orders]);
+
+  const filteredOrders = useMemo(() => {
+    const search = globalSearch.trim().toLowerCase();
+
+    return orders.filter((order) => {
+      const orderNumber =
+        order.order_number?.toLowerCase() || "";
+
+      const orderId = order.id.toLowerCase();
+
+      const matchesSearch =
+        !search ||
+        orderNumber.includes(search) ||
+        orderId.includes(search);
+
+      const createdTime = new Date(order.created_at).getTime();
+
+      let matchesDate = true;
+
+      if (startDate) {
+        const start = new Date(`${startDate}T00:00:00`).getTime();
+        matchesDate = createdTime >= start;
+      }
+
+      if (matchesDate && endDate) {
+        const end = new Date(`${endDate}T23:59:59.999`).getTime();
+        matchesDate = createdTime <= end;
+      }
+
+      return matchesSearch && matchesDate;
+    });
+  }, [orders, globalSearch, startDate, endDate]);
+
+  const filteredLedger = useMemo(() => {
+    const search = globalSearch.trim().toLowerCase();
+
+    return ledger.filter((item) => {
+      if (!search) return true;
+
+      return (
+        item.transaction_type?.toLowerCase().includes(search) ||
+        item.remarks?.toLowerCase().includes(search) ||
+        item.reference_id?.toLowerCase().includes(search) ||
+        item.entity_type?.toLowerCase().includes(search)
+      );
+    });
+  }, [ledger, globalSearch]);
+
+  const vendorRows = useMemo(() => {
+    return vendorSettlements.filter((settlement) => {
+      const vendor = vendorMap.get(settlement.vendor_id);
+
+      const search = globalSearch.trim().toLowerCase();
+
+      if (!search) return true;
+
+      return (
+        vendor?.shop_name?.toLowerCase().includes(search) ||
+        vendor?.owner_name?.toLowerCase().includes(search) ||
+        vendor?.phone?.toLowerCase().includes(search) ||
+        settlement.utr_number?.toLowerCase().includes(search) ||
+        settlement.id.toLowerCase().includes(search)
+      );
+    });
+  }, [vendorSettlements, vendorMap, globalSearch]);
+
+  const riderRows = useMemo(() => {
+    return riderSettlements.filter((settlement) => {
+      const rider = riderMap.get(settlement.rider_id);
+
+      const search = globalSearch.trim().toLowerCase();
+
+      if (!search) return true;
+
+      return (
+        rider?.rider_name?.toLowerCase().includes(search) ||
+        rider?.email?.toLowerCase().includes(search) ||
+        rider?.phone?.toLowerCase().includes(search) ||
+        settlement.utr_number?.toLowerCase().includes(search) ||
+        settlement.id.toLowerCase().includes(search)
+      );
+    });
+  }, [riderSettlements, riderMap, globalSearch]);
+
+  const historyRows = useMemo<HistoryRow[]>(() => {
+    const rows: HistoryRow[] = [];
+
+    vendorSettlements.forEach((settlement) => {
+      const vendor = vendorMap.get(settlement.vendor_id);
+
+      const orderIds = Array.isArray(settlement.order_ids)
+        ? settlement.order_ids
+        : [];
+
+      orderIds.forEach((orderId) => {
+        const order = orderMap.get(orderId);
+
+        if (!order) return;
+
+        rows.push({
+          id: `${settlement.id}-${order.id}`,
+          type: "vendor",
+          entityId: settlement.vendor_id,
+          entityName:
+            vendor?.shop_name ||
+            vendor?.owner_name ||
+            "Unknown Vendor",
+          settlementId: settlement.id,
+          settlementStatus: settlement.status,
+          settlementDate: settlement.created_at,
+          paidDate: settlement.paid_at || null,
+          orderId: order.id,
+          orderNumber: order.order_number || order.id,
+          orderDate:
+            order.delivered_at ||
+            order.created_at,
+          amount: Number(order.vendor_earning || 0),
+          paymentMethod:
+            settlement.payment_method || "—",
+          utr: settlement.utr_number || "—",
         });
-      
-      const vendorProfile = sortedProfiles[0] || null;
+      });
+    });
 
-      return {
-        vendor,
-        vendorProfile,
-        wallet,
-        rider: null,
-        riderProfile: null
-      };
+    riderSettlements.forEach((settlement) => {
+      const rider = riderMap.get(settlement.rider_id);
 
-    } else {
-      const riderId = selectedSettlement.rider_id;
-      const rider = riders.find(r => r.id === riderId) || null;
-      const wallet = wallets.find(w => w.entity_id === riderId && w.entity_type === 'rider') || null;
-      
-      const sortedProfiles = [...riderProfiles]
-        .filter(p => p.rider_id === riderId)
-        .sort((a, b) => {
-          const timeA = new Date(a.updated_at || a.created_at || 0).getTime();
-          const timeB = new Date(b.updated_at || b.created_at || 0).getTime();
-          return timeB - timeA;
+      const orderIds = Array.isArray(settlement.order_ids)
+        ? settlement.order_ids
+        : [];
+
+      orderIds.forEach((orderId) => {
+        const order = orderMap.get(orderId);
+
+        if (!order) return;
+
+        rows.push({
+          id: `${settlement.id}-${order.id}`,
+          type: "rider",
+          entityId: settlement.rider_id,
+          entityName:
+            rider?.rider_name ||
+            rider?.email ||
+            "Unknown Rider",
+          settlementId: settlement.id,
+          settlementStatus: settlement.status,
+          settlementDate: settlement.created_at,
+          paidDate: settlement.paid_at || null,
+          orderId: order.id,
+          orderNumber: order.order_number || order.id,
+          orderDate:
+            order.delivered_at ||
+            order.created_at,
+          amount: Number(order.rider_earning || 0),
+          paymentMethod:
+            settlement.payment_method || "—",
+          utr: settlement.utr_number || "—",
         });
+      });
+    });
 
-      const riderProfile = sortedProfiles[0] || null;
+    const search = globalSearch.trim().toLowerCase();
 
-      return {
-        rider,
-        riderProfile,
-        wallet,
-        vendor: null,
-        vendorProfile: null
-      };
-    }
-  }, [selectedSettlement, selectedType, vendors, vendorProfiles, riders, riderProfiles, wallets]);
+    return rows
+      .filter((row) => {
+        if (!search) return true;
+
+        return (
+          row.orderNumber.toLowerCase().includes(search) ||
+          row.entityName.toLowerCase().includes(search) ||
+          row.settlementId.toLowerCase().includes(search) ||
+          row.utr.toLowerCase().includes(search)
+        );
+      })
+      .filter((row) => {
+        const time = new Date(row.orderDate).getTime();
+
+        if (startDate) {
+          const start = new Date(
+            `${startDate}T00:00:00`
+          ).getTime();
+
+          if (time < start) return false;
+        }
+
+        if (endDate) {
+          const end = new Date(
+            `${endDate}T23:59:59.999`
+          ).getTime();
+
+          if (time > end) return false;
+        }
+
+        return true;
+      })
+      .sort(
+        (a, b) =>
+          new Date(b.orderDate).getTime() -
+          new Date(a.orderDate).getTime()
+      );
+  }, [
+    vendorSettlements,
+    riderSettlements,
+    vendorMap,
+    riderMap,
+    orderMap,
+    globalSearch,
+    startDate,
+    endDate,
+  ]);
 
   const metrics = useMemo(() => {
-    const now = new Date();
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-    
-    const startOfWeek = new Date(now);
-    startOfWeek.setDate(now.getDate() - now.getDay());
-    startOfWeek.setHours(0,0,0,0);
-    const startOfWeekTime = startOfWeek.getTime();
+    const deliveredOrders = filteredOrders.filter(
+      (order) =>
+        String(order.order_status || "").toLowerCase() ===
+        "delivered"
+    );
 
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    const vendorPending = deliveredOrders
+      .filter((order) => !order.settled_vendor)
+      .reduce(
+        (sum, order) =>
+          sum + Number(order.vendor_earning || 0),
+        0
+      );
 
-    const isInCustomRange = (timestampStr: string) => {
-      if (!startDate && !endDate) return true;
-      const targetTime = new Date(timestampStr).getTime();
-      if (startDate && targetTime < new Date(startDate).setHours(0,0,0,0)) return false;
-      if (endDate && targetTime > new Date(endDate).setHours(23,59,59,999)) return false;
-      return true;
-    };
+    const riderPending = deliveredOrders
+      .filter((order) => !order.settled_rider)
+      .reduce(
+        (sum, order) =>
+          sum + Number(order.rider_earning || 0),
+        0
+      );
 
-    const parseMetricsForSet = (items: any[], dateField: string, amountField: string = "amount") => {
-      let today = 0, week = 0, month = 0, total = 0, customRangeTotal = 0;
-      items.forEach(item => {
-        const time = new Date(item[dateField]).getTime();
-        const val = Number(item[amountField]) || 0;
-        total += val;
-        if (time >= startOfToday) today += val;
-        if (time >= startOfWeekTime) week += val;
-        if (time >= startOfMonth) month += val;
-        if (isInCustomRange(item[dateField])) customRangeTotal += val;
-      });
-      return { today, week, month, total, customRangeTotal };
-    };
+    const vendorPaid = vendorSettlements
+      .filter((item) => isPaid(item.status))
+      .reduce(
+        (sum, item) => sum + Number(item.amount || 0),
+        0
+      );
 
-    const collections = parseMetricsForSet(orders, "created_at", "vendor_earning");
-    const commissions = parseMetricsForSet(orders, "created_at", "platform_fee");
-    const subRevenue = parseMetricsForSet(subscriptionRequests, "created_at", "amount");
-    const riderEarnings = parseMetricsForSet(riderSettlements, "created_at", "amount");
+    const riderPaid = riderSettlements
+      .filter((item) => isPaid(item.status))
+      .reduce(
+        (sum, item) => sum + Number(item.amount || 0),
+        0
+      );
 
-    const paidVendorsThisWeek = vendorSettlements.filter(s => s.status === "PAID" && new Date(s.paid_at || "").getTime() >= startOfWeekTime).reduce((a,c) => a + c.amount, 0);
-    const paidRidersThisWeek = riderSettlements.filter(s => s.status === "PAID" && new Date(s.paid_at || "").getTime() >= startOfWeekTime).reduce((a,c) => a + c.amount, 0);
-    const paidThisWeek = paidVendorsThisWeek + paidRidersThisWeek;
+    const vendorRequested = vendorSettlements
+      .filter((item) => isPending(item.status))
+      .reduce(
+        (sum, item) => sum + Number(item.amount || 0),
+        0
+      );
 
-    const isPending = (st: string) => st === "REQUESTED";
+    const riderRequested = riderSettlements
+      .filter((item) => isPending(item.status))
+      .reduce(
+        (sum, item) => sum + Number(item.amount || 0),
+        0
+      );
 
-    const pendingVendorLiability = vendorSettlements.filter(s => isPending(s.status)).reduce((a,c) => a + c.amount, 0);
-    const pendingRiderLiability = riderSettlements.filter(s => isPending(s.status)).reduce((a,c) => a + c.amount, 0);
-    const pendingSettlementsCount = vendorSettlements.filter(s => isPending(s.status)).length + riderSettlements.filter(s => isPending(s.status)).length;
+    const platformCredits = ledger
+      .filter(
+        (item) =>
+          item.entity_type === "platform" &&
+          String(item.entry_type).toLowerCase() === "credit"
+      )
+      .reduce(
+        (sum, item) => sum + Number(item.amount || 0),
+        0
+      );
+
+    const platformDebits = ledger
+      .filter(
+        (item) =>
+          item.entity_type === "platform" &&
+          String(item.entry_type).toLowerCase() === "debit"
+      )
+      .reduce(
+        (sum, item) => sum + Number(item.amount || 0),
+        0
+      );
 
     return {
-      collections,
-      commissions,
-      subRevenue,
-      riderEarnings,
-      pendingVendorLiability,
-      pendingRiderLiability,
-      paidThisWeek,
-      pendingSettlementsCount,
-      hasCustomFilter: !!(startDate || endDate)
+      deliveredOrders: deliveredOrders.length,
+      vendorPending,
+      riderPending,
+      vendorPaid,
+      riderPaid,
+      vendorRequested,
+      riderRequested,
+      totalPaid: vendorPaid + riderPaid,
+      totalRequested:
+        vendorRequested + riderRequested,
+      platformCredits,
+      platformDebits,
+      platformNet:
+        platformCredits - platformDebits,
+      historyCount: historyRows.length,
     };
-  }, [orders, subscriptionRequests, vendorSettlements, riderSettlements, startDate, endDate]);
+  }, [
+    filteredOrders,
+    vendorSettlements,
+    riderSettlements,
+    ledger,
+    historyRows.length,
+  ]);
 
-  const matchesGlobalSearch = useCallback((entityId: string, type: 'vendor' | 'rider', utr: string = "", settlementId: string = "") => {
-    if (!globalSearch.trim()) return true;
-    const query = globalSearch.toLowerCase();
-    
-    const targetUtr = utr.toLowerCase();
-    const targetId = settlementId.toLowerCase();
+  const getEntityName = (
+    settlement: VendorSettlement | RiderSettlement,
+    type: SettlementType
+  ) => {
+    if (type === "vendor") {
+      const vendor = vendorMap.get(
+        (settlement as VendorSettlement).vendor_id
+      );
 
-    if (type === 'vendor') {
-      const vendor = vendors.find(v => v.id === entityId);
-      const shopName = (vendor?.shop_name || "").toLowerCase();
-      const ownerName = (vendor?.owner_name || "").toLowerCase();
-      const phone = (vendor?.phone || "").toLowerCase();
-      return shopName.includes(query) || ownerName.includes(query) || phone.includes(query) || targetUtr.includes(query) || targetId.includes(query);
-    } else {
-      const rider = riders.find(r => r.id === entityId);
-      const riderName = (rider?.rider_name || "").toLowerCase();
-      const phone = (rider?.phone || "").toLowerCase();
-      return riderName.includes(query) || phone.includes(query) || targetUtr.includes(query) || targetId.includes(query);
+      return (
+        vendor?.shop_name ||
+        vendor?.owner_name ||
+        "Unknown Vendor"
+      );
     }
-  }, [globalSearch, vendors, riders]);
 
-  const handleOpenPayWorkflow = (settlement: any, type: 'vendor' | 'rider') => {
+    const rider = riderMap.get(
+      (settlement as RiderSettlement).rider_id
+    );
+
+    return (
+      rider?.rider_name ||
+      rider?.email ||
+      "Unknown Rider"
+    );
+  };
+
+  const getSettlementOrders = (
+    settlement: VendorSettlement | RiderSettlement
+  ) => {
+    const ids = Array.isArray(settlement.order_ids)
+      ? settlement.order_ids
+      : [];
+
+    return ids
+      .map((id) => orderMap.get(id))
+      .filter(Boolean) as Order[];
+  };
+
+  const openDetails = (
+    settlement: VendorSettlement | RiderSettlement,
+    type: SettlementType
+  ) => {
+    setSelectedSettlement(settlement);
+    setSelectedType(type);
+    setDetailsModalOpen(true);
+  };
+
+  const openPayment = (
+    settlement: VendorSettlement | RiderSettlement,
+    type: SettlementType
+  ) => {
     setSelectedSettlement(settlement);
     setSelectedType(type);
     setFormUtr("");
@@ -695,798 +831,1503 @@ export function Settlements() {
     setPayModalOpen(true);
   };
 
-  const handleOpenRejectWorkflow = (settlement: any, type: 'vendor' | 'rider') => {
-    setSelectedSettlement(settlement);
-    setSelectedType(type);
-    setFormRemarks("");
-    setRejectModalOpen(true);
-  };
-
-  const handleOpenDetailsWorkflow = (settlement: any, type: 'vendor' | 'rider') => {
-    setSelectedSettlement(settlement);
-    setSelectedType(type);
-    setDetailsModalOpen(true);
-  };
-
-  const executePayFinalization = async () => {
+  const recordPayment = async () => {
     if (!selectedSettlement) return;
+
+    const settlementId = selectedSettlement.id;
+
+    const targetTable =
+      selectedType === "vendor"
+        ? "vendor_settlements"
+        : "rider_settlements";
+
+    const entityId =
+      selectedType === "vendor"
+        ? (selectedSettlement as VendorSettlement).vendor_id
+        : (selectedSettlement as RiderSettlement).rider_id;
+
+    const orderIds = Array.isArray(
+      selectedSettlement.order_ids
+    )
+      ? selectedSettlement.order_ids
+      : [];
+
+    if (!formPaymentMethod.trim()) {
+      showToast(
+        "Payment method is required.",
+        "error"
+      );
+      return;
+    }
+
     setActionLoading(true);
+
     try {
-      const targetTable = selectedType === 'vendor' ? 'vendor_settlements' : 'rider_settlements';
-      const entityIdKey = selectedType === 'vendor' ? selectedSettlement.vendor_id : selectedSettlement.rider_id;
+      const paidAt = new Date().toISOString();
 
-      const payloadUpdate = {
-        status: "PAID" as const,
-        paid_at: new Date().toISOString(),
-        payment_method: formPaymentMethod,
-        utr_number: formUtr.trim(),
-        remarks: formRemarks.trim()
-      };
-
-      console.log("PAY UPDATE", {
-        id: selectedSettlement.id,
-        ...payloadUpdate
-      });
-
-      // 1. UPDATE SETTLEMENT TABLE STATUS
-      const { error: patchError } = await supabase
+      const { error: settlementError } = await supabase
         .from(targetTable)
-        .update(payloadUpdate)
-        .eq('id', selectedSettlement.id);
+        .update({
+          status: "PAID",
+          payment_method:
+            formPaymentMethod.trim(),
+          utr_number:
+            formUtr.trim() || null,
+          remarks:
+            formRemarks.trim() || null,
+          paid_at: paidAt,
+        })
+        .eq("id", settlementId);
 
-      if (patchError) {
-        console.error(patchError);
-        console.error("Payload sent:", payloadUpdate);
-        throw patchError;
+      if (settlementError) {
+        throw settlementError;
       }
 
-      // 2. UPDATE INCLUDED ORDERS IN ORDERS TABLE
-      if (selectedSettlement.order_ids && selectedSettlement.order_ids.length > 0) {
-        const orderColumnToUpdate = selectedType === 'vendor' ? { settled_vendor: true } : { settled_rider: true };
-        const { error: orderUpdateError } = await supabase
-          .from('orders')
-          .update(orderColumnToUpdate)
-          .in('id', selectedSettlement.order_ids);
+      if (orderIds.length > 0) {
+        const settledColumn =
+          selectedType === "vendor"
+            ? "settled_vendor"
+            : "settled_rider";
 
-        if (orderUpdateError) {
-          console.error(orderUpdateError);
-          console.error("Error updating settled flag on orders:", orderUpdateError);
+        const { error: orderError } = await supabase
+          .from("orders")
+          .update({
+            [settledColumn]: true,
+          })
+          .in("id", orderIds);
+
+        if (orderError) {
+          throw orderError;
         }
       }
 
-      // 3. INSERT FINANCIAL LEDGER ENTRY
-      const ledgerPayload = {
-        entity_type: selectedType,
-        entity_id: entityIdKey,
-        transaction_type: 'Manual Transfer Clearance',
-        entry_type: 'debit' as const,
-        amount: selectedSettlement.amount,
-        reference_id: selectedSettlement.id,
-        remarks: `Payout processed. Method: ${formPaymentMethod}. UTR: ${formUtr}. Remarks: ${formRemarks}`
-      };
-      const { error: ledgerError } = await supabase
-        .from('financial_ledger')
-        .insert([ledgerPayload]);
+      const ledgerRemarks =
+        selectedType === "vendor"
+          ? `Vendor payout processed. Method: ${formPaymentMethod}. UTR: ${
+              formUtr.trim() || "N/A"
+            }. Orders: ${orderIds.length}.`
+          : `Rider payout processed. Method: ${formPaymentMethod}. UTR: ${
+              formUtr.trim() || "N/A"
+            }. Orders: ${orderIds.length}.`;
 
-      if (ledgerError) {
-        console.error(ledgerError);
-        console.error("Payload sent:", ledgerPayload);
-        console.error("Error writing to financial_ledger:", ledgerError);
+      const { data: existingLedger, error: ledgerCheckError } =
+        await supabase
+          .from("financial_ledger")
+          .select("id")
+          .eq("reference_id", settlementId)
+          .limit(1);
+
+      if (ledgerCheckError) {
+        throw ledgerCheckError;
+      }
+
+      if (!existingLedger || existingLedger.length === 0) {
+        const { error: ledgerError } = await supabase
+          .from("financial_ledger")
+          .insert([
+            {
+              entity_type: selectedType,
+              entity_id: entityId,
+              transaction_type:
+                "Manual Transfer Clearance",
+              amount: Number(
+                selectedSettlement.amount || 0
+              ),
+              reference_id: settlementId,
+              remarks:
+                `${ledgerRemarks} ${
+                  formRemarks.trim()
+                    ? `Remarks: ${formRemarks.trim()}`
+                    : ""
+                }`.trim(),
+              entry_type: "DEBIT",
+              status: "COMPLETED",
+              metadata: {
+                settlement_id: settlementId,
+                order_ids: orderIds,
+                payment_method:
+                  formPaymentMethod.trim(),
+                utr_number:
+                  formUtr.trim() || null,
+              },
+            },
+          ]);
+
+        if (ledgerError) {
+          throw ledgerError;
+        }
       }
 
       setPayModalOpen(false);
-      triggerToast("Payment recorded successfully.");
-      loadDatabaseState();
-    } catch (err) {
-      console.error("Payout trigger error: ", err);
-      triggerToast("Failed to record payment.", "error");
+      setSelectedSettlement(null);
+
+      showToast(
+        "Payment recorded successfully."
+      );
+
+      await loadData(false);
+    } catch (error: any) {
+      console.error(
+        "Settlement payment error:",
+        error
+      );
+
+      showToast(
+        error?.message ||
+          "Failed to record payment.",
+        "error"
+      );
     } finally {
       setActionLoading(false);
     }
   };
 
-  const executeRejectFinalization = async () => {
-    if (!selectedSettlement) return;
-    setActionLoading(true);
-    try {
-      const targetTable = selectedType === 'vendor' ? 'vendor_settlements' : 'rider_settlements';
-      const rejectPayload = {
-        status: "AVAILABLE" as const,
-        remarks: formRemarks.trim()
-      };
-      const { error: rejectError } = await supabase
-        .from(targetTable)
-        .update(rejectPayload)
-        .eq('id', selectedSettlement.id);
-
-      if (rejectError) {
-        console.error(rejectError);
-        console.error("Payload sent:", rejectPayload);
-        throw rejectError;
-      }
-
-      setRejectModalOpen(false);
-      triggerToast("Settlement rejected.");
-      loadDatabaseState();
-    } catch (err) {
-      console.error("Rejection error:", err);
-      triggerToast("Failed to reject settlement.", "error");
-    } finally {
-      setActionLoading(false);
-    }
+  const clearFilters = () => {
+    setStartDate("");
+    setEndDate("");
+    setGlobalSearch("");
   };
 
-  const auditLogsTimeline = useMemo(() => {
-    const list: any[] = [];
-    vendorSettlements.forEach(vs => {
-      const normalizedStatus = vs.status;
-      list.push({ ts: vs.created_at, actor: 'System Auto-Calculation', action: 'Pending Settlement Generated', amount: vs.amount, targetId: vs.id, status: normalizedStatus, type: 'vendor' });
-      if (vs.paid_at) {
-        list.push({ ts: vs.paid_at, actor: 'Finance Admin', action: 'Settlement Marked Paid', amount: vs.amount, targetId: vs.id, status: 'PAID', type: 'vendor' });
-      }
-    });
-    riderSettlements.forEach(rs => {
-      const normalizedStatus = rs.status;
-      list.push({ ts: rs.created_at, actor: 'System Auto-Calculation', action: 'Pending Settlement Generated', amount: rs.amount, targetId: rs.id, status: normalizedStatus, type: 'rider' });
-      if (rs.paid_at) {
-        list.push({ ts: rs.paid_at, actor: 'Finance Admin', action: 'Settlement Marked Paid', amount: rs.amount, targetId: rs.id, status: 'PAID', type: 'rider' });
-      }
-    });
-    return list.sort((a,b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
-  }, [vendorSettlements, riderSettlements]);
+  const renderStatus = (status?: string | null) => {
+    const value = normalizeStatus(status);
+
+    if (value === "PAID") {
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 border border-emerald-200 px-2 py-1 text-[10px] font-bold uppercase text-emerald-700">
+          <CheckCircle size={11} />
+          Paid
+        </span>
+      );
+    }
+
+    if (
+      value === "REQUESTED" ||
+      value === "PENDING" ||
+      value === "PENDING_REQUEST"
+    ) {
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 border border-amber-200 px-2 py-1 text-[10px] font-bold uppercase text-amber-700">
+          <Clock size={11} />
+          Pending
+        </span>
+      );
+    }
+
+    if (value === "AVAILABLE") {
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 border border-blue-200 px-2 py-1 text-[10px] font-bold uppercase text-blue-700">
+          Available
+        </span>
+      );
+    }
+
+    if (value === "REJECTED") {
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 border border-rose-200 px-2 py-1 text-[10px] font-bold uppercase text-rose-700">
+          Rejected
+        </span>
+      );
+    }
+
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-gray-50 border border-gray-200 px-2 py-1 text-[10px] font-bold uppercase text-gray-600">
+        {value || "Unknown"}
+      </span>
+    );
+  };
+
+  const renderSettlementTable = (
+    items: Array<
+      VendorSettlement | RiderSettlement
+    >,
+    type: SettlementType
+  ) => {
+    return (
+      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="bg-gray-50 border-b border-gray-200 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                <th className="p-4">
+                  {type === "vendor"
+                    ? "Vendor"
+                    : "Rider"}
+                </th>
+                <th className="p-4">
+                  Amount
+                </th>
+                <th className="p-4">
+                  Orders
+                </th>
+                <th className="p-4">
+                  Created
+                </th>
+                <th className="p-4">
+                  Paid
+                </th>
+                <th className="p-4">
+                  Status
+                </th>
+                <th className="p-4 text-right">
+                  Actions
+                </th>
+              </tr>
+            </thead>
+
+            <tbody className="divide-y divide-gray-100">
+              {items.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={7}
+                    className="p-10 text-center text-sm text-slate-400"
+                  >
+                    No settlement records found.
+                  </td>
+                </tr>
+              ) : (
+                items.map((settlement) => {
+                  const orderCount =
+                    Array.isArray(
+                      settlement.order_ids
+                    )
+                      ? settlement.order_ids.length
+                      : Number(
+                          (
+                            settlement as any
+                          ).order_count ||
+                            (
+                              settlement as any
+                            ).delivery_count ||
+                            0
+                        );
+
+                  const paid = isPaid(
+                    settlement.status
+                  );
+
+                  return (
+                    <tr
+                      key={settlement.id}
+                      className="hover:bg-emerald-50/20 transition-colors"
+                    >
+                      <td className="p-4">
+                        <div className="font-bold text-sm text-slate-900">
+                          {getEntityName(
+                            settlement,
+                            type
+                          )}
+                        </div>
+
+                        <div className="font-mono text-[9px] text-slate-400 mt-1">
+                          {settlement.id}
+                        </div>
+                      </td>
+
+                      <td className="p-4">
+                        <span className="font-black text-slate-900">
+                          {money(
+                            settlement.amount
+                          )}
+                        </span>
+                      </td>
+
+                      <td className="p-4">
+                        <span className="font-bold text-slate-700">
+                          {orderCount}
+                        </span>
+                      </td>
+
+                      <td className="p-4 text-xs text-slate-500">
+                        {formatDate(
+                          settlement.created_at
+                        )}
+                      </td>
+
+                      <td className="p-4 text-xs text-slate-500">
+                        {formatDate(
+                          settlement.paid_at
+                        )}
+                      </td>
+
+                      <td className="p-4">
+                        {renderStatus(
+                          settlement.status
+                        )}
+                      </td>
+
+                      <td className="p-4">
+                        <div className="flex justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              openDetails(
+                                settlement,
+                                type
+                              )
+                            }
+                            className="h-8 px-2.5 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-slate-600 flex items-center gap-1.5 text-[10px] font-bold"
+                          >
+                            <Eye size={13} />
+                            View
+                          </button>
+
+                          {!paid &&
+                            isPending(
+                              settlement.status
+                            ) && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  openPayment(
+                                    settlement,
+                                    type
+                                  )
+                                }
+                                className="h-8 px-2.5 rounded-lg bg-[#10B981] hover:bg-[#059669] text-white flex items-center gap-1.5 text-[10px] font-bold"
+                              >
+                                <Banknote
+                                  size={13}
+                                />
+                                Pay
+                              </button>
+                            )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  };
 
   if (loading) {
     return (
-      <div className="flex h-screen w-full items-center justify-center bg-white text-slate-900">
-        <div className="flex flex-col items-center gap-2">
-          <Loader2 className="h-6 w-6 animate-spin text-emerald-600" />
-          <span className="text-xs font-mono font-bold tracking-widest uppercase text-slate-400">Loading Financial Matrices...</span>
+      <div className="flex h-screen w-full items-center justify-center bg-white">
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 className="h-7 w-7 animate-spin text-[#10B981]" />
+          <span className="text-[11px] font-bold uppercase tracking-widest text-slate-400">
+            Loading settlements...
+          </span>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6 p-6 max-w-7xl mx-auto bg-white min-h-screen antialiased text-slate-800 font-sans relative">
-      
-      {/* TOAST FEEDBACK */}
+    <div className="min-h-screen bg-white text-slate-800 p-6 space-y-6">
       {toast && (
-        <div className="fixed top-6 right-6 z-50 flex items-center gap-2 px-4 py-3 rounded-xl shadow-md border text-white font-medium bg-slate-900 border-emerald-500/30 animate-in fade-in slide-in-from-top-4 duration-200">
-          <span className="text-xs tracking-wide">{toast.message}</span>
+        <div
+          className={`fixed top-5 right-5 z-[100] flex items-center gap-2 px-4 py-3 rounded-xl shadow-lg text-white text-sm font-medium ${
+            toast.type === "success"
+              ? "bg-slate-900 border border-emerald-500/30"
+              : "bg-rose-600"
+          }`}
+        >
+          {toast.type === "success" ? (
+            <CheckCircle
+              size={17}
+              className="text-[#10B981]"
+            />
+          ) : (
+            <AlertCircle size={17} />
+          )}
+
+          {toast.message}
         </div>
       )}
 
-      {/* HEADER SECTION CONTROLS BAR */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between pb-4 border-b border-gray-100 gap-4">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-5 border-b border-gray-100">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-xl font-bold tracking-tight text-slate-950">Settlements</h1>
-            {realtimePulse && <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />}
+            <h1 className="text-xl font-black text-slate-950">
+              Settlements
+            </h1>
+
+            <span className="h-2 w-2 rounded-full bg-[#10B981]" />
           </div>
-          <p className="text-xs text-slate-400 font-medium mt-0.5">Review pending balances, look up bank details, and log manual payments</p>
+
+          <p className="text-xs text-slate-400 mt-1">
+            Vendor payouts, rider payouts, order history and financial ledger
+          </p>
         </div>
 
-        {/* Search Interface */}
-        <div className="relative w-full md:w-80">
-          <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-          <input
-            type="text"
-            placeholder="Search by name, shop, phone or UTR..."
-            value={globalSearch}
-            onChange={(e) => setGlobalSearch(e.target.value)}
-            className="w-full pl-9 pr-4 py-2 text-xs bg-gray-50 border border-gray-200 rounded-lg text-slate-900 focus:outline-none focus:bg-white focus:border-emerald-600 transition-all font-medium"
-          />
+        <div className="flex items-center gap-2">
+          <div className="relative">
+            <Search
+              size={15}
+              className="absolute left-3 top-2.5 text-slate-400"
+            />
+
+            <input
+              value={globalSearch}
+              onChange={(e) =>
+                setGlobalSearch(e.target.value)
+              }
+              placeholder="Search vendor, rider, order, UTR..."
+              className="w-72 h-9 pl-9 pr-3 rounded-lg bg-gray-50 border border-gray-200 text-xs outline-none focus:border-[#10B981]"
+            />
+          </div>
+
+          <button
+            type="button"
+            onClick={refresh}
+            className="h-9 px-3 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-slate-600 flex items-center gap-2 text-xs font-bold"
+          >
+            <RefreshCw
+              size={14}
+              className={
+                refreshing
+                  ? "animate-spin"
+                  : ""
+              }
+            />
+            Refresh
+          </button>
         </div>
       </div>
 
-      {/* NAVIGATION TABS ACCORDION */}
-      <div className="flex gap-1.5 border-b border-gray-100 overflow-x-auto pb-px scrollbar-none">
+      <div className="flex gap-1 border-b border-gray-100 overflow-x-auto">
         {[
-          { id: 'overview', label: 'Overview' },
-          { id: 'vendor', label: 'Vendor Settlements' },
-          { id: 'rider', label: 'Rider Settlements' },
-          { id: 'ledger', label: 'Financial Ledger' },
-          { id: 'audit', label: 'Audit Trail Logs' }
-        ].map((tab) => (
+          ["overview", "Overview"],
+          ["vendor", "Vendor Settlements"],
+          ["rider", "Rider Settlements"],
+          ["ledger", "Financial Ledger"],
+          ["audit", "Payment History"],
+        ].map(([id, label]) => (
           <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id as any)}
-            className={`px-4 py-2 text-xs font-bold uppercase tracking-wider border-b-2 transition-all cursor-pointer whitespace-nowrap ${
-              activeTab === tab.id
-                ? 'border-emerald-600 text-emerald-600'
-                : 'border-transparent text-slate-400 hover:text-slate-600'
+            key={id}
+            type="button"
+            onClick={() =>
+              setActiveTab(id as any)
+            }
+            className={`px-4 py-2.5 text-[10px] font-black uppercase tracking-wider border-b-2 whitespace-nowrap ${
+              activeTab === id
+                ? "border-[#10B981] text-[#10B981]"
+                : "border-transparent text-slate-400 hover:text-slate-600"
             }`}
           >
-            {tab.label}
+            {label}
           </button>
         ))}
       </div>
 
-      {/* SECTION: OVERVIEW */}
-      {activeTab === 'overview' && (
-        <div className="space-y-6 animate-in fade-in duration-150">
-          
-          {/* CUSTOM DATE RANGE BAR */}
-          <div className="bg-gray-50 p-4 border border-gray-200 rounded-xl flex flex-wrap items-center gap-4 justify-between">
-            <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase tracking-wider">
-              <Calendar size={14} className="text-emerald-600" /> Filter Overview By Date Range
+      <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 flex flex-wrap items-center gap-4">
+        <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-wider text-slate-500">
+          <Calendar
+            size={14}
+            className="text-[#10B981]"
+          />
+          Date Range
+        </div>
+
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-bold text-slate-400">
+            From
+          </span>
+
+          <input
+            type="date"
+            value={startDate}
+            onChange={(e) =>
+              setStartDate(e.target.value)
+            }
+            className="h-8 px-2 rounded-lg bg-white border border-gray-200 text-xs outline-none focus:border-[#10B981]"
+          />
+        </div>
+
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-bold text-slate-400">
+            To
+          </span>
+
+          <input
+            type="date"
+            value={endDate}
+            onChange={(e) =>
+              setEndDate(e.target.value)
+            }
+            className="h-8 px-2 rounded-lg bg-white border border-gray-200 text-xs outline-none focus:border-[#10B981]"
+          />
+        </div>
+
+        {(startDate ||
+          endDate ||
+          globalSearch) && (
+          <button
+            type="button"
+            onClick={clearFilters}
+            className="h-8 px-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-600 text-[10px] font-bold"
+          >
+            Clear Filters
+          </button>
+        )}
+      </div>
+
+      {activeTab === "overview" && (
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-white border border-gray-200 rounded-xl p-5">
+              <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                Delivered Orders
+              </span>
+
+              <div className="text-2xl font-black mt-2">
+                {metrics.deliveredOrders}
+              </div>
             </div>
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="flex items-center gap-1.5 text-xs text-slate-600">
-                <span className="font-semibold">Start:</span>
-                <input 
-                  type="date" 
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                  className="p-1.5 bg-white border border-gray-200 rounded-lg font-medium text-slate-700 focus:outline-none focus:border-emerald-600"
-                />
+
+            <div className="bg-white border border-gray-200 rounded-xl p-5">
+              <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                Vendor Pending
+              </span>
+
+              <div className="text-2xl font-black mt-2 text-amber-600">
+                {money(
+                  metrics.vendorPending
+                )}
               </div>
-              <div className="flex items-center gap-1.5 text-xs text-slate-600">
-                <span className="font-semibold">End:</span>
-                <input 
-                  type="date" 
-                  value={endDate}
-                  onChange={(e) => setStartDateEnd(e.target.value)}
-                  className="p-1.5 bg-white border border-gray-200 rounded-lg font-medium text-slate-700 focus:outline-none focus:border-emerald-600"
-                />
+            </div>
+
+            <div className="bg-white border border-gray-200 rounded-xl p-5">
+              <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                Rider Pending
+              </span>
+
+              <div className="text-2xl font-black mt-2 text-amber-600">
+                {money(
+                  metrics.riderPending
+                )}
               </div>
-              {(startDate || endDate) && (
-                <button 
-                  onClick={() => { setStartDate(""); setStartDateEnd(""); }}
-                  className="text-[11px] font-bold text-rose-600 bg-rose-50 border border-rose-200 px-2 py-1 rounded-md hover:bg-rose-100 cursor-pointer"
-                >
-                  Clear Filter
-                </button>
-              )}
+            </div>
+
+            <div className="bg-white border border-gray-200 rounded-xl p-5">
+              <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                Total Paid
+              </span>
+
+              <div className="text-2xl font-black mt-2 text-[#10B981]">
+                {money(
+                  metrics.totalPaid
+                )}
+              </div>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
-            {[
-              { title: "Today's Collection", value: metrics.hasCustomFilter ? metrics.collections.customRangeTotal : metrics.collections.today, sub: metrics.hasCustomFilter ? "Calculated for chosen range" : `This Week: ₹${metrics.collections.week.toLocaleString()}` },
-              { title: "Platform Commission", value: metrics.hasCustomFilter ? metrics.commissions.customRangeTotal : metrics.commissions.today, sub: metrics.hasCustomFilter ? "Calculated for chosen range" : `Month Total: ₹${metrics.commissions.month.toLocaleString()}` },
-              { title: "Subscription Revenue", value: metrics.hasCustomFilter ? metrics.subRevenue.customRangeTotal : metrics.subRevenue.total, sub: "Approved vendor settlements" },
-              { title: "Rider Earnings Summary", value: metrics.hasCustomFilter ? metrics.riderEarnings.customRangeTotal : metrics.riderEarnings.total, sub: metrics.hasCustomFilter ? "Custom date scope value" : `Month Total: ₹${metrics.riderEarnings.month.toLocaleString()}` },
-              { title: "Pending Vendor Payouts", value: metrics.pendingVendorLiability, sub: "Calculated weekly pending payouts" },
-              { title: "Pending Rider Payouts", value: metrics.pendingRiderLiability, sub: "Calculated weekly pending payouts" },
-              { title: "Paid This Week", value: metrics.paidThisWeek, sub: "Cleared bank transactions total" }
-            ].map((kpi, idx) => (
-              <div 
-                key={idx} 
-                className="bg-white border border-gray-200 p-5 rounded-xl transition-all duration-200 hover:border-emerald-600/30 hover:shadow-2xs group"
-              >
-                <div>
-                  <span className="text-[10px] font-bold tracking-wider text-slate-400 uppercase block transition-colors group-hover:text-slate-500">{kpi.title}</span>
-                  <h3 className="text-2xl font-black text-slate-900 tracking-tight mt-2 flex items-baseline">
-                    <span className="text-base font-bold text-slate-400 mr-0.5">₹</span>
-                    {kpi.value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </h3>
-                </div>
-                <p className="text-[10px] text-slate-400 font-medium mt-2.5 pt-2 border-t border-gray-50">{kpi.sub}</p>
-              </div>
-            ))}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <div className="bg-white border border-gray-200 rounded-xl p-5">
+              <div className="flex items-center gap-2">
+                <Clock
+                  size={16}
+                  className="text-amber-500"
+                />
 
-            <div className="bg-white border border-gray-200 p-5 rounded-xl transition-all duration-200 hover:border-emerald-600/30 hover:shadow-2xs group">
-              <div>
-                <span className="text-[10px] font-bold tracking-wider text-slate-400 uppercase block">Pending Settlements</span>
-                <h3 className="text-3xl font-black text-slate-900 mt-2">{metrics.pendingSettlementsCount}</h3>
+                <span className="text-xs font-black">
+                  Pending Requests
+                </span>
               </div>
-              <p className="text-[10px] text-slate-400 font-medium mt-2.5 pt-2 border-t border-gray-50">Active orders settlement queue</p>
+
+              <div className="text-xl font-black mt-3">
+                {money(
+                  metrics.totalRequested
+                )}
+              </div>
+
+              <p className="text-[10px] text-slate-400 mt-1">
+                Vendor + rider settlement requests
+              </p>
+            </div>
+
+            <div className="bg-white border border-gray-200 rounded-xl p-5">
+              <div className="flex items-center gap-2">
+                <Banknote
+                  size={16}
+                  className="text-[#10B981]"
+                />
+
+                <span className="text-xs font-black">
+                  Vendor Paid
+                </span>
+              </div>
+
+              <div className="text-xl font-black mt-3 text-[#10B981]">
+                {money(
+                  metrics.vendorPaid
+                )}
+              </div>
+            </div>
+
+            <div className="bg-white border border-gray-200 rounded-xl p-5">
+              <div className="flex items-center gap-2">
+                <Banknote
+                  size={16}
+                  className="text-[#10B981]"
+                />
+
+                <span className="text-xs font-black">
+                  Rider Paid
+                </span>
+              </div>
+
+              <div className="text-xl font-black mt-3 text-[#10B981]">
+                {money(
+                  metrics.riderPaid
+                )}
+              </div>
             </div>
           </div>
 
-          {/* RECENT TRANSACTIONS LEDGER MINI TABLE */}
-          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-3xs space-y-3 p-5">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5"><History size={14} className="text-emerald-600" /> Recent Transactions Overview</h3>
+          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+            <div className="p-5 border-b border-gray-100">
+              <div className="flex items-center gap-2">
+                <History
+                  size={16}
+                  className="text-[#10B981]"
+                />
+
+                <h2 className="text-xs font-black uppercase tracking-wider">
+                  Recent Payment Activity
+                </h2>
+              </div>
+            </div>
+
             <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-xs">
+              <table className="w-full text-left">
                 <thead>
-                  <tr className="bg-gray-50 border-b border-gray-200 text-[10px] font-bold uppercase text-slate-400 tracking-wider">
-                    <th className="p-3">Date</th>
-                    <th className="p-3">Scope</th>
-                    <th className="p-3">Transaction Type</th>
-                    <th className="p-3">Credit (+ Inflow)</th>
-                    <th className="p-3">Debit (- Outflow)</th>
+                  <tr className="bg-gray-50 text-[10px] font-black uppercase tracking-wider text-slate-400">
+                    <th className="p-3">
+                      Date
+                    </th>
+
+                    <th className="p-3">
+                      Entity
+                    </th>
+
+                    <th className="p-3">
+                      Type
+                    </th>
+
+                    <th className="p-3">
+                      Transaction
+                    </th>
+
+                    <th className="p-3 text-right">
+                      Amount
+                    </th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-100 font-medium text-slate-700">
-                  {ledger.slice(0, 8).map((item) => (
-                    <tr 
-                      key={item.id} 
-                      className="transition-colors duration-200 hover:bg-emerald-50/30 cursor-pointer"
-                    >
-                      <td className="p-3 text-slate-400 font-normal">{new Date(item.created_at).toLocaleDateString('en-IN', { dateStyle: 'medium' })}</td>
-                      <td className="p-3 capitalize font-bold text-slate-900">{item.entity_type}</td>
-                      <td className="p-3 text-slate-400 font-sans">{item.transaction_type}</td>
-                      <td className="p-3 text-emerald-600 font-bold">{item.entry_type === 'credit' ? `₹${item.amount.toFixed(2)}` : '—'}</td>
-                      <td className="p-3 text-rose-600 font-bold">{item.entry_type === 'debit' ? `₹${item.amount.toFixed(2)}` : '—'}</td>
+
+                <tbody className="divide-y divide-gray-100">
+                  {ledger.slice(0, 10).map(
+                    (item) => (
+                      <tr
+                        key={item.id}
+                        className="hover:bg-gray-50"
+                      >
+                        <td className="p-3 text-xs text-slate-500">
+                          {formatDateTime(
+                            item.created_at
+                          )}
+                        </td>
+
+                        <td className="p-3 text-xs font-bold capitalize">
+                          {item.entity_type}
+                        </td>
+
+                        <td className="p-3 text-xs">
+                          {item.transaction_type}
+                        </td>
+
+                        <td className="p-3 text-xs text-slate-500">
+                          {item.remarks ||
+                            item.reference_id ||
+                            "—"}
+                        </td>
+
+                        <td className="p-3 text-right font-black text-xs">
+                          {money(item.amount)}
+                        </td>
+                      </tr>
+                    )
+                  )}
+
+                  {ledger.length === 0 && (
+                    <tr>
+                      <td
+                        colSpan={5}
+                        className="p-10 text-center text-sm text-slate-400"
+                      >
+                        No financial ledger entries.
+                      </td>
                     </tr>
-                  ))}
+                  )}
                 </tbody>
               </table>
             </div>
           </div>
-
         </div>
       )}
 
-      {/* SECTION: VENDOR SETTLEMENT */}
-      {activeTab === 'vendor' && (
-        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-3xs animate-in fade-in duration-150">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr className="bg-gray-50 border-b border-gray-200 text-[10px] font-bold uppercase text-slate-400 tracking-wider">
-                  <th className="p-3.5 pl-4">Shop</th>
-                  <th className="p-3.5">Owner</th>
-                  <th className="p-3.5">Wallet Balance</th>
-                  <th className="p-3.5">Orders Included</th>
-                  <th className="p-3.5 text-emerald-600">Pending Amount</th>
-                  <th className="p-3.5">Status</th>
-                  <th className="p-3.5 text-right pr-4">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100 font-medium text-slate-700">
-                {vendorSettlements
-                  .filter(vs => matchesGlobalSearch(vs.vendor_id, 'vendor', vs.utr_number, vs.id))
-                  .map((vs) => {
-                    const vendor = vendors.find(v => v.id === vs.vendor_id);
-                    const wallet = wallets.find(w => w.entity_id === vs.vendor_id && w.entity_type === 'vendor');
-                    const normalizedStatus = vs.status;
-                    return (
-                      <tr 
-                        key={vs.id} 
-                        className="transition-colors duration-200 hover:bg-emerald-50/30 cursor-pointer"
-                      >
-                        <td className="p-3.5 pl-4 font-bold text-slate-900">{vendor?.shop_name || "Unresolved Shop"}</td>
-                        <td className="p-3.5 text-slate-600">{vendor?.owner_name || "—"}</td>
-                        <td className="p-3.5 text-slate-500">₹{wallet?.balance?.toFixed(2) || '0.00'}</td>
-                        <td className="p-3.5 text-slate-400 font-mono">{vs.order_count || vs.order_ids?.length || 0}</td>
-                        <td className="p-3.5 font-bold text-emerald-600">₹{vs.amount?.toFixed(2)}</td>
-                        <td className="p-3.5">
-                          <span className={`inline-block px-2 py-0.5 text-[9px] font-bold rounded border tracking-wider uppercase ${
-                            normalizedStatus === 'PAID' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
-                            normalizedStatus === 'AVAILABLE' ? 'bg-orange-50 text-orange-700 border-orange-200' :
-                            'bg-amber-50 text-amber-700 border-amber-200'
-                          }`}>
-                            {normalizedStatus}
-                          </span>
-                        </td>
-                        <td className="p-3.5 text-right pr-4 space-x-1 whitespace-nowrap">
-                          <button onClick={() => handleOpenDetailsWorkflow(vs, 'vendor')} className="px-2.5 py-1 text-[10px] font-bold border border-gray-200 rounded text-slate-600 hover:bg-gray-50 cursor-pointer">Details</button>
-                          {normalizedStatus === 'REQUESTED' && (
-                            <>
-                              <button onClick={() => handleOpenPayWorkflow(vs, 'vendor')} className="px-2.5 py-1 text-[10px] font-bold bg-emerald-600 text-white rounded hover:bg-emerald-700 cursor-pointer shadow-3xs">Pay</button>
-                              <button onClick={() => handleOpenRejectWorkflow(vs, 'vendor')} className="px-2.5 py-1 text-[10px] font-bold bg-rose-600 text-white rounded hover:bg-rose-700 cursor-pointer shadow-3xs">Reject</button>
-                            </>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
+      {activeTab === "vendor" && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-black text-slate-900">
+                Vendor Settlements
+              </h2>
 
-      {/* SECTION: RIDER SETTLEMENT */}
-      {activeTab === 'rider' && (
-        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-3xs animate-in fade-in duration-150">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr className="bg-gray-50 border-b border-gray-200 text-[10px] font-bold uppercase text-slate-400 tracking-wider">
-                  <th className="p-3.5 pl-4">Rider</th>
-                  <th className="p-3.5">Wallet Balance</th>
-                  <th className="p-3.5">Deliveries Included</th>
-                  <th className="p-3.5 text-emerald-600">Pending Amount</th>
-                  <th className="p-3.5">Status</th>
-                  <th className="p-3.5 text-right pr-4">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100 font-medium text-slate-700">
-                {riderSettlements
-                  .filter(rs => matchesGlobalSearch(rs.rider_id, 'rider', rs.utr_number, rs.id))
-                  .map((rs) => {
-                    const rider = riders.find(r => r.id === rs.rider_id);
-                    const wallet = wallets.find(w => w.entity_id === rs.rider_id && w.entity_type === 'rider');
-                    const normalizedStatus = rs.status;
-                    return (
-                      <tr 
-                        key={rs.id} 
-                        className="transition-colors duration-200 hover:bg-emerald-50/30 cursor-pointer"
-                      >
-                        <td className="p-3.5 pl-4 font-bold text-slate-900">{rider?.rider_name || "Unresolved Rider"}</td>
-                        <td className="p-3.5 text-slate-500">₹{wallet?.balance?.toFixed(2) || '0.00'}</td>
-                        <td className="p-3.5 text-slate-400 font-mono">{rs.delivery_count || rs.order_ids?.length || 0}</td>
-                        <td className="p-3.5 font-bold text-emerald-600">₹{rs.amount?.toFixed(2)}</td>
-                        <td className="p-3.5">
-                          <span className={`inline-block px-2 py-0.5 text-[9px] font-bold rounded border tracking-wider uppercase ${
-                            normalizedStatus === 'PAID' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
-                            normalizedStatus === 'AVAILABLE' ? 'bg-orange-50 text-orange-700 border-orange-200' :
-                            'bg-amber-50 text-amber-700 border-amber-200'
-                          }`}>
-                            {normalizedStatus}
-                          </span>
-                        </td>
-                        <td className="p-3.5 text-right pr-4 space-x-1 whitespace-nowrap">
-                          <button onClick={() => handleOpenDetailsWorkflow(rs, 'rider')} className="px-2.5 py-1 text-[10px] font-bold border border-gray-200 rounded text-slate-600 hover:bg-gray-50 cursor-pointer">Details</button>
-                          {normalizedStatus === 'REQUESTED' && (
-                            <>
-                              <button onClick={() => handleOpenPayWorkflow(rs, 'rider')} className="px-2.5 py-1 text-[10px] font-bold bg-emerald-600 text-white rounded hover:bg-emerald-700 cursor-pointer shadow-3xs">Pay</button>
-                              <button onClick={() => handleOpenRejectWorkflow(rs, 'rider')} className="px-2.5 py-1 text-[10px] font-bold bg-rose-600 text-white rounded hover:bg-rose-700 cursor-pointer shadow-3xs">Reject</button>
-                            </>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* SECTION: FINANCIAL LEDGER */}
-      {activeTab === 'ledger' && (
-        <div className="space-y-4 animate-in fade-in duration-150">
-          <div className="bg-gray-50 p-4 border border-gray-200 rounded-xl flex items-center gap-3 justify-between">
-            <div className="flex items-center gap-2">
-              <Filter size={14} className="text-emerald-600" />
-              <select
-                value={ledgerFilter}
-                onChange={(e) => setLedgerFilter(e.target.value)}
-                className="text-xs p-1.5 bg-white border border-gray-200 rounded-lg text-slate-700 focus:outline-none"
-              >
-                <option value="all">All Transactions</option>
-                <option value="vendor">Vendor Transfers</option>
-                <option value="rider">Rider Transfers</option>
-              </select>
+              <p className="text-[10px] text-slate-400 mt-1">
+                Every settlement and its associated orders.
+              </p>
             </div>
-            
-            <div className="text-[10px] font-bold text-slate-400 bg-white border border-gray-200 px-3 py-1 rounded-md flex items-center gap-1.5">
-              <ShieldCheck size={12} className="text-emerald-600" /> IMMUTABLE CORE JOURNAL FILES ACTIVE
+
+            <span className="text-xs font-bold text-slate-400">
+              {vendorRows.length} records
+            </span>
+          </div>
+
+          {renderSettlementTable(
+            vendorRows,
+            "vendor"
+          )}
+        </div>
+      )}
+
+      {activeTab === "rider" && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-black text-slate-900">
+                Rider Settlements
+              </h2>
+
+              <p className="text-[10px] text-slate-400 mt-1">
+                Every rider payout and its associated deliveries.
+              </p>
+            </div>
+
+            <span className="text-xs font-bold text-slate-400">
+              {riderRows.length} records
+            </span>
+          </div>
+
+          {renderSettlementTable(
+            riderRows,
+            "rider"
+          )}
+        </div>
+      )}
+
+      {activeTab === "ledger" && (
+        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+          <div className="p-5 border-b border-gray-100 flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-black">
+                Financial Ledger
+              </h2>
+
+              <p className="text-[10px] text-slate-400 mt-1">
+                All recorded financial movements.
+              </p>
+            </div>
+
+            <div className="text-xs font-bold text-slate-400">
+              {filteredLedger.length} entries
             </div>
           </div>
 
-          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-3xs">
-            <table className="w-full text-left border-collapse text-xs">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
               <thead>
-                <tr className="bg-gray-50 border-b border-gray-200 text-[10px] font-bold uppercase text-slate-400 tracking-wider">
-                  <th className="p-3.5 pl-4">Date</th>
-                  <th className="p-3.5">Target Account</th>
-                  <th className="p-3.5">Description</th>
-                  <th className="p-3.5">Credit (+ Inflow)</th>
-                  <th className="p-3.5">Debit (- Outflow)</th>
-                  <th className="p-3.5">Remarks</th>
+                <tr className="bg-gray-50 border-b border-gray-200 text-[10px] font-black uppercase tracking-wider text-slate-400">
+                  <th className="p-3">
+                    Date
+                  </th>
+
+                  <th className="p-3">
+                    Entity
+                  </th>
+
+                  <th className="p-3">
+                    Transaction
+                  </th>
+
+                  <th className="p-3">
+                    Reference
+                  </th>
+
+                  <th className="p-3">
+                    Entry
+                  </th>
+
+                  <th className="p-3 text-right">
+                    Amount
+                  </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100 text-slate-700">
-                {ledger
-                  .filter(l => ledgerFilter === 'all' || l.entity_type === ledgerFilter)
-                  .map((item) => (
-                    <tr 
-                      key={item.id} 
-                      className="transition-colors duration-200 hover:bg-emerald-50/30 cursor-pointer font-medium"
-                    >
-                      <td className="p-3.5 pl-4 text-slate-400 font-normal">{new Date(item.created_at).toLocaleString('en-IN')}</td>
-                      <td className="p-3.5 text-slate-900 font-bold uppercase">{item.entity_type}</td>
-                      <td className="p-3.5 text-slate-500">{item.transaction_type}</td>
-                      <td className="p-3.5 text-emerald-600 font-bold">{item.entry_type === 'credit' ? `₹${item.amount.toFixed(2)}` : '—'}</td>
-                      <td className="p-3.5 text-rose-600 font-bold">{item.entry_type === 'debit' ? `₹${item.amount.toFixed(2)}` : '—'}</td>
-                      <td className="p-3.5 text-slate-400 font-normal max-w-sm truncate">{item.remarks}</td>
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
 
-      {/* SECTION: AUDIT LOGS */}
-      {activeTab === 'audit' && (
-        <div className="space-y-4 animate-in fade-in duration-150">
-          <div className="bg-gray-50 p-4 border border-gray-200 rounded-xl flex items-center gap-3">
-            <Filter size={14} className="text-emerald-600" />
-            <select
-              value={auditFilter.entity}
-              onChange={(e) => setAuditFilter({ ...auditFilter, entity: e.target.value })}
-              className="text-xs p-1.5 bg-white border border-gray-200 rounded-lg text-slate-700 focus:outline-none"
-            >
-              <option value="all">All Request Node Profiles</option>
-              <option value="vendor">Vendor Accounts</option>
-              <option value="rider">Rider Accounts</option>
-            </select>
-          </div>
-
-          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-3xs">
-            <table className="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr className="bg-gray-50 border-b border-gray-200 text-[10px] font-bold uppercase text-slate-400 tracking-wider">
-                  <th className="p-3.5 pl-4">Timestamp Trace</th>
-                  <th className="p-3.5">Actor Profile</th>
-                  <th className="p-3.5">Action Narrative</th>
-                  <th className="p-3.5">Amount to Pay</th>
-                  <th className="p-3.5">Reference ID Key</th>
-                  <th className="p-3.5 text-right pr-4">Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100 text-slate-700">
-                {auditLogsTimeline
-                  .filter(a => auditFilter.entity === 'all' || a.type === auditFilter.entity)
-                  .map((log, idx) => (
-                    <tr 
-                      key={idx} 
-                      className="transition-colors duration-200 hover:bg-emerald-50/30 cursor-pointer font-medium"
+              <tbody className="divide-y divide-gray-100">
+                {filteredLedger.map(
+                  (item) => (
+                    <tr
+                      key={item.id}
+                      className="hover:bg-gray-50"
                     >
-                      <td className="p-3.5 pl-4 text-slate-400 font-normal">{new Date(log.ts).toLocaleString('en-IN')}</td>
-                      <td className="p-3.5 text-slate-900 font-bold font-sans">{log.actor}</td>
-                      <td className="p-3.5 text-slate-600 font-sans font-semibold">{log.action}</td>
-                      <td className="p-3.5 text-slate-700 font-bold">₹{log.amount?.toFixed(2)}</td>
-                      <td className="p-3.5 text-slate-400 text-[11px] font-mono tracking-tight">{log.targetId}</td>
-                      <td className="p-3.5 text-right pr-4 uppercase text-[10px] font-extrabold text-slate-500">
-                        {log.status}
+                      <td className="p-3 text-xs text-slate-500">
+                        {formatDateTime(
+                          item.created_at
+                        )}
+                      </td>
+
+                      <td className="p-3">
+                        <div className="text-xs font-bold capitalize">
+                          {item.entity_type}
+                        </div>
+
+                        {item.entity_id && (
+                          <div className="font-mono text-[8px] text-slate-400 mt-1">
+                            {item.entity_id}
+                          </div>
+                        )}
+                      </td>
+
+                      <td className="p-3 text-xs font-semibold">
+                        {item.transaction_type}
+                      </td>
+
+                      <td className="p-3 font-mono text-[9px] text-slate-400">
+                        {item.reference_id ||
+                          "—"}
+                      </td>
+
+                      <td className="p-3">
+                        <span
+                          className={
+                            String(
+                              item.entry_type
+                            ).toLowerCase() ===
+                            "debit"
+                              ? "text-rose-600 font-bold text-[10px] uppercase"
+                              : "text-emerald-600 font-bold text-[10px] uppercase"
+                          }
+                        >
+                          {item.entry_type}
+                        </span>
+                      </td>
+
+                      <td className="p-3 text-right font-black text-xs">
+                        {money(item.amount)}
                       </td>
                     </tr>
-                  ))}
+                  )
+                )}
+
+                {filteredLedger.length ===
+                  0 && (
+                  <tr>
+                    <td
+                      colSpan={6}
+                      className="p-10 text-center text-sm text-slate-400"
+                    >
+                      No ledger entries found.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
         </div>
       )}
 
-      {/* DETAILED ANALYSIS MODAL */}
-      {detailsModalOpen && selectedSettlement && resolvedEntity && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
-          <div className="bg-white border border-gray-200 rounded-2xl max-w-2xl w-full shadow-xl p-6 space-y-5 animate-in fade-in zoom-in-95 duration-150 overflow-y-auto max-h-[90vh]">
-            
-            <div className="flex items-center justify-between pb-3 border-b border-gray-100">
-              <div>
-                <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider">Business Information Summary</h3>
-                <p className="text-[11px] text-slate-400 font-mono mt-0.5">Reference ID: {selectedSettlement.id}</p>
-              </div>
-              <button onClick={() => setDetailsModalOpen(false)} className="text-slate-400 hover:text-slate-600 cursor-pointer p-0.5 rounded hover:bg-gray-50">
-                <X size={16} />
-              </button>
+      {activeTab === "audit" && (
+        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+          <div className="p-5 border-b border-gray-100">
+            <div className="flex items-center gap-2">
+              <FileText
+                size={16}
+                className="text-[#10B981]"
+              />
+
+              <h2 className="text-sm font-black">
+                Complete Order Payment History
+              </h2>
             </div>
 
-            {selectedType === 'vendor' ? (
-              <div className="space-y-4 text-xs font-medium">
-                <div className="grid grid-cols-2 gap-4 bg-gray-50 p-4 rounded-xl border border-gray-100">
-                  <div><span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wide">Shop</span><p className="text-slate-900 font-bold mt-0.5">{resolvedEntity.vendor?.shop_name || "—"}</p></div>
-                  <div><span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wide">Owner</span><p className="text-slate-900 mt-0.5">{resolvedEntity.vendor?.owner_name || "—"}</p></div>
-                  <div><span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wide">Phone</span><p className="text-slate-900 font-mono mt-0.5">{resolvedEntity.vendor?.phone || "—"}</p></div>
-                  <div><span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wide">Email</span><p className="text-slate-900 mt-0.5">{resolvedEntity.vendorProfile?.email || "—"}</p></div>
-                  <div className="col-span-2">
-                    <span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wide">Billing Address</span>
-                    <p className="text-slate-900 mt-0.5">
-                      {resolvedEntity.vendorProfile?.address || resolvedEntity.vendorProfile?.billing_address || `${resolvedEntity.vendorProfile?.address_line1 || ''} ${resolvedEntity.vendorProfile?.address_line2 || ''} ${resolvedEntity.vendorProfile?.city || ''} ${resolvedEntity.vendorProfile?.state || ''} ${resolvedEntity.vendorProfile?.pin_code || ''}`.trim() || "—"}
-                    </p>
-                  </div>
-                </div>
+            <p className="text-[10px] text-slate-400 mt-1">
+              This is the order-level history showing exactly which orders are included in vendor and rider payments.
+            </p>
+          </div>
 
-                <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Bank Details</h4>
-                <div className="grid grid-cols-2 gap-4 bg-gray-50/50 p-4 rounded-xl border border-gray-100 font-mono text-[11px]">
-                  <div><span className="text-[9px] text-slate-400 block font-sans font-bold uppercase">Account Holder</span>{resolvedEntity.vendorProfile?.account_holder_name || "—"}</div>
-                  <div><span className="text-[9px] text-slate-400 block font-sans font-bold uppercase">Bank Name</span>{resolvedEntity.vendorProfile?.bank_name || "—"}</div>
-                  <div>
-                    <span className="text-[9px] text-slate-400 block font-sans font-bold uppercase">Account Number</span>
-                    {resolvedEntity.vendorProfile?.account_number && resolvedEntity.vendorProfile.account_number !== "—" ? `•••• •••• ${resolvedEntity.vendorProfile.account_number.slice(-4)}` : "—"}
-                  </div>
-                  <div><span className="text-[9px] text-slate-400 block font-sans font-bold uppercase">IFSC Code</span>{resolvedEntity.vendorProfile?.ifsc_code || "—"}</div>
-                  <div className="col-span-2"><span className="text-[9px] text-slate-400 block font-sans font-bold uppercase">UPI ID</span>{resolvedEntity.vendorProfile?.upi_id || "—"}</div>
-                </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-200 text-[10px] font-black uppercase tracking-wider text-slate-400">
+                  <th className="p-3">
+                    Order
+                  </th>
 
-                <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Settlement Details</h4>
-                <div className="grid grid-cols-2 gap-4 bg-gray-50 p-4 rounded-xl border border-gray-100 text-xs">
-                  <div><span className="text-[10px] text-slate-400 block font-bold uppercase">Wallet Balance</span>₹{resolvedEntity.wallet?.balance?.toFixed(2) || '0.00'}</div>
-                  <div><span className="text-[10px] text-slate-400 block font-bold uppercase text-emerald-600">Pending Amount</span><span className="font-bold text-emerald-600">₹{selectedSettlement.amount?.toFixed(2)}</span></div>
-                  <div><span className="text-[10px] text-slate-400 block font-bold uppercase">Orders Included</span>{selectedSettlement.order_count || selectedSettlement.order_ids?.length || 0} Orders</div>
-                  <div><span className="text-[10px] text-slate-400 block font-bold uppercase">UTR / Reference Number</span><span className="font-mono">{selectedSettlement.utr_number || "—"}</span></div>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-4 text-xs font-medium">
-                <div className="grid grid-cols-2 gap-4 bg-gray-50 p-4 rounded-xl border border-gray-100">
-                  <div><span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wide">Rider Name</span><p className="text-slate-900 font-bold mt-0.5">{resolvedEntity.rider?.rider_name || "—"}</p></div>
-                  <div><span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wide">Phone</span><p className="text-slate-900 font-mono mt-0.5">{resolvedEntity.rider?.phone || "—"}</p></div>
-                  <div><span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wide">Email</span><p className="text-slate-900 mt-0.5">{resolvedEntity.rider?.email || "—"}</p></div>
-                  <div className="col-span-2"><span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wide">Home Address</span><p className="text-slate-900 mt-0.5">{resolvedEntity.riderProfile?.address || resolvedEntity.riderProfile?.home_address || "—"}</p></div>
-                </div>
+                  <th className="p-3">
+                    Entity
+                  </th>
 
-                <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Bank Details</h4>
-                <div className="grid grid-cols-2 gap-4 bg-gray-50/50 p-4 rounded-xl border border-gray-100 font-mono text-[11px]">
-                  <div><span className="text-[9px] text-slate-400 block font-sans font-bold uppercase">Account Holder</span>{resolvedEntity.riderProfile?.account_holder_name || resolvedEntity.rider?.account_holder_name || "—"}</div>
-                  <div><span className="text-[9px] text-slate-400 block font-sans font-bold uppercase">Bank Name</span>{resolvedEntity.riderProfile?.bank_name || resolvedEntity.rider?.bank_name || "—"}</div>
-                  <div>
-                    <span className="text-[9px] text-slate-400 block font-sans font-bold uppercase">Account Number</span>
-                    {(() => {
-                      const accNum = resolvedEntity.riderProfile?.account_number || resolvedEntity.rider?.account_number;
-                      return accNum && accNum !== "—" ? `•••• •••• ${accNum.slice(-4)}` : "—";
-                    })()}
-                  </div>
-                  <div><span className="text-[9px] text-slate-400 block font-sans font-bold uppercase">IFSC Code</span>{resolvedEntity.riderProfile?.ifsc_code || resolvedEntity.rider?.ifsc_code || "—"}</div>
-                  <div className="col-span-2"><span className="text-[9px] text-slate-400 block font-sans font-bold uppercase">UPI ID</span>{resolvedEntity.riderProfile?.upi_id || resolvedEntity.rider?.upi_id || "—"}</div>
-                </div>
+                  <th className="p-3">
+                    Type
+                  </th>
 
-                <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Settlement Details</h4>
-                <div className="grid grid-cols-2 gap-4 bg-gray-50 p-4 rounded-xl border border-gray-100 text-xs">
-                  <div><span className="text-[10px] text-slate-400 block font-bold uppercase">Wallet Balance</span>₹{resolvedEntity.wallet?.balance?.toFixed(2) || '0.00'}</div>
-                  <div><span className="text-[10px] text-slate-400 block font-bold uppercase text-emerald-600">Pending Amount</span><span className="font-bold text-emerald-600">₹{selectedSettlement.amount?.toFixed(2)}</span></div>
-                  <div><span className="text-[10px] text-slate-400 block font-bold uppercase">Deliveries Included</span>{selectedSettlement.delivery_count || selectedSettlement.order_ids?.length || 0} Deliveries</div>
-                  <div><span className="text-[10px] text-slate-400 block font-bold uppercase">UTR / Reference Number</span><span className="font-mono">{selectedSettlement.utr_number || "—"}</span></div>
-                </div>
-              </div>
-            )}
+                  <th className="p-3">
+                    Order Date
+                  </th>
 
-            <div className="bg-gray-50 p-3 rounded-xl text-slate-400 font-sans border border-gray-100 text-xs leading-relaxed">
-              <strong>Admin Remarks:</strong> {selectedSettlement.remarks || "No supplementary notes appended."}
-            </div>
+                  <th className="p-3">
+                    Settlement
+                  </th>
+
+                  <th className="p-3">
+                    Payment Date
+                  </th>
+
+                  <th className="p-3">
+                    Method / UTR
+                  </th>
+
+                  <th className="p-3 text-right">
+                    Amount
+                  </th>
+                </tr>
+              </thead>
+
+              <tbody className="divide-y divide-gray-100">
+                {historyRows.map((row) => (
+                  <tr
+                    key={row.id}
+                    className="hover:bg-emerald-50/20"
+                  >
+                    <td className="p-3">
+                      <div className="text-xs font-black text-slate-900">
+                        {row.orderNumber}
+                      </div>
+
+                      <div className="font-mono text-[8px] text-slate-400 mt-1">
+                        {row.orderId}
+                      </div>
+                    </td>
+
+                    <td className="p-3">
+                      <div className="text-xs font-bold">
+                        {row.entityName}
+                      </div>
+                    </td>
+
+                    <td className="p-3">
+                      <span
+                        className={`inline-flex px-2 py-1 rounded-full text-[9px] font-black uppercase ${
+                          row.type ===
+                          "vendor"
+                            ? "bg-blue-50 text-blue-700 border border-blue-200"
+                            : "bg-purple-50 text-purple-700 border border-purple-200"
+                        }`}
+                      >
+                        {row.type}
+                      </span>
+                    </td>
+
+                    <td className="p-3 text-xs text-slate-500">
+                      {formatDate(
+                        row.orderDate
+                      )}
+                    </td>
+
+                    <td className="p-3">
+                      {renderStatus(
+                        row.settlementStatus
+                      )}
+                    </td>
+
+                    <td className="p-3 text-xs text-slate-500">
+                      {formatDate(
+                        row.paidDate
+                      )}
+                    </td>
+
+                    <td className="p-3">
+                      <div className="text-[10px] font-bold text-slate-600">
+                        {row.paymentMethod}
+                      </div>
+
+                      <div className="font-mono text-[9px] text-slate-400 mt-1">
+                        {row.utr}
+                      </div>
+                    </td>
+
+                    <td className="p-3 text-right">
+                      <span className="font-black text-xs text-slate-900">
+                        {money(row.amount)}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+
+                {historyRows.length ===
+                  0 && (
+                  <tr>
+                    <td
+                      colSpan={8}
+                      className="p-12 text-center"
+                    >
+                      <History
+                        size={25}
+                        className="mx-auto text-slate-300"
+                      />
+
+                      <p className="text-sm font-bold text-slate-500 mt-3">
+                        No order-level settlement history found.
+                      </p>
+
+                      <p className="text-[10px] text-slate-400 mt-1">
+                        Orders will appear here when they are linked to settlement records through order_ids.
+                      </p>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
 
-      {/* CONFIRM PAY ACTIONS MODAL */}
-      {payModalOpen && selectedSettlement && resolvedEntity && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
-          <div className="bg-white border border-gray-200 rounded-xl max-w-3xl w-full shadow-xl p-5 space-y-4 animate-in fade-in zoom-in-95 duration-150">
-            
-            <div className="flex items-center justify-between pb-2 border-b border-gray-100">
-              <div>
-                <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Record Payout Transfer</h3>
-                <p className="text-xs font-bold text-emerald-600 mt-0.5">Amount to Pay: ₹{selectedSettlement.amount?.toFixed(2)}</p>
-              </div>
-              <button onClick={() => setPayModalOpen(false)} className="text-slate-400 hover:text-slate-600 cursor-pointer">
-                <X size={16} />
-              </button>
-            </div>
+      {detailsModalOpen &&
+        selectedSettlement && (
+          <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-2xl border border-gray-200 w-full max-w-4xl max-h-[90vh] overflow-hidden">
+              <div className="flex items-center justify-between p-5 border-b border-gray-100">
+                <div>
+                  <h2 className="text-sm font-black uppercase tracking-wider">
+                    Settlement Details
+                  </h2>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              
-              <div className="flex flex-col p-4 bg-gray-50 rounded-xl border border-gray-200 space-y-4">
-                <div className="flex flex-col items-center text-center">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2 block">Payment Destination QR</span>
-                  {selectedType === 'vendor' && resolvedEntity.vendorProfile?.qr_code_url ? (
-                    <div className="bg-white p-3 rounded-lg border border-gray-100 shadow-3xs max-w-[160px] w-full aspect-square flex items-center justify-center overflow-hidden">
-                      <img 
-                        src={resolvedEntity.vendorProfile.qr_code_url} 
-                        alt="Vendor QR" 
-                        className="w-full h-full object-contain"
-                        onError={(e) => {
-                          (e.target as HTMLElement).style.display = 'none';
-                          const fallbackSib = (e.target as HTMLElement).nextElementSibling;
-                          if (fallbackSib) fallbackSib.classList.remove('hidden');
-                        }}
-                      />
-                      <div className="hidden flex-col items-center text-slate-400 gap-1">
-                        <QrCode size={32} className="stroke-1" />
-                        <span className="text-[9px]">Failed to render QR</span>
-                      </div>
+                  <p className="text-[10px] text-slate-400 mt-1 font-mono">
+                    {selectedSettlement.id}
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    setDetailsModalOpen(false)
+                  }
+                  className="h-8 w-8 rounded-lg hover:bg-gray-100 flex items-center justify-center text-slate-400"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              <div className="p-5 overflow-y-auto max-h-[75vh] space-y-5">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
+                    <span className="text-[9px] font-black uppercase text-slate-400">
+                      Entity
+                    </span>
+
+                    <div className="text-sm font-black mt-2">
+                      {getEntityName(
+                        selectedSettlement,
+                        selectedType
+                      )}
                     </div>
-                  ) : (
-                    <div className="flex flex-col items-center justify-center text-slate-400 gap-1.5 py-4">
-                      <QrCode size={36} className="stroke-1" />
-                      <span className="text-[10px] font-medium text-slate-400">
-                        {selectedType === 'vendor' ? 'No QR URL on file' : 'QR code not supported for Riders'}
+                  </div>
+
+                  <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
+                    <span className="text-[9px] font-black uppercase text-slate-400">
+                      Amount
+                    </span>
+
+                    <div className="text-sm font-black mt-2 text-[#10B981]">
+                      {money(
+                        selectedSettlement.amount
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
+                    <span className="text-[9px] font-black uppercase text-slate-400">
+                      Orders
+                    </span>
+
+                    <div className="text-sm font-black mt-2">
+                      {Array.isArray(
+                        selectedSettlement.order_ids
+                      )
+                        ? selectedSettlement
+                            .order_ids
+                            .length
+                        : 0}
+                    </div>
+                  </div>
+
+                  <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
+                    <span className="text-[9px] font-black uppercase text-slate-400">
+                      Status
+                    </span>
+
+                    <div className="mt-2">
+                      {renderStatus(
+                        selectedSettlement.status
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                  <div>
+                    <span className="block text-[9px] font-black uppercase text-slate-400">
+                      Created
+                    </span>
+
+                    <span className="font-semibold">
+                      {formatDateTime(
+                        selectedSettlement.created_at
+                      )}
+                    </span>
+                  </div>
+
+                  <div>
+                    <span className="block text-[9px] font-black uppercase text-slate-400">
+                      Paid
+                    </span>
+
+                    <span className="font-semibold">
+                      {formatDateTime(
+                        selectedSettlement.paid_at
+                      )}
+                    </span>
+                  </div>
+
+                  <div>
+                    <span className="block text-[9px] font-black uppercase text-slate-400">
+                      Payment Method
+                    </span>
+
+                    <span className="font-semibold">
+                      {selectedSettlement.payment_method ||
+                        "—"}
+                    </span>
+                  </div>
+
+                  <div>
+                    <span className="block text-[9px] font-black uppercase text-slate-400">
+                      UTR
+                    </span>
+
+                    <span className="font-mono font-semibold">
+                      {selectedSettlement.utr_number ||
+                        "—"}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="border border-gray-200 rounded-xl overflow-hidden">
+                  <div className="p-4 bg-gray-50 border-b border-gray-200">
+                    <h3 className="text-xs font-black uppercase tracking-wider">
+                      Orders Included In This Payment
+                    </h3>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left">
+                      <thead>
+                        <tr className="text-[9px] font-black uppercase tracking-wider text-slate-400 border-b border-gray-100">
+                          <th className="p-3">
+                            Order
+                          </th>
+
+                          <th className="p-3">
+                            Date
+                          </th>
+
+                          <th className="p-3">
+                            Status
+                          </th>
+
+                          <th className="p-3">
+                            Subtotal
+                          </th>
+
+                          <th className="p-3">
+                            Delivery
+                          </th>
+
+                          <th className="p-3 text-right">
+                            Earnings
+                          </th>
+                        </tr>
+                      </thead>
+
+                      <tbody className="divide-y divide-gray-100">
+                        {getSettlementOrders(
+                          selectedSettlement
+                        ).map((order) => {
+                          const earning =
+                            selectedType ===
+                            "vendor"
+                              ? Number(
+                                  order.vendor_earning ||
+                                    0
+                                )
+                              : Number(
+                                  order.rider_earning ||
+                                    0
+                                );
+
+                          return (
+                            <tr
+                              key={order.id}
+                              className="hover:bg-gray-50"
+                            >
+                              <td className="p-3">
+                                <div className="text-xs font-black">
+                                  {order.order_number ||
+                                    order.id}
+                                </div>
+
+                                <div className="font-mono text-[8px] text-slate-400 mt-1">
+                                  {order.id}
+                                </div>
+                              </td>
+
+                              <td className="p-3 text-xs text-slate-500">
+                                {formatDate(
+                                  order.delivered_at ||
+                                    order.created_at
+                                )}
+                              </td>
+
+                              <td className="p-3 text-[10px] font-bold uppercase">
+                                {order.order_status ||
+                                  "—"}
+                              </td>
+
+                              <td className="p-3 text-xs">
+                                {money(
+                                  order.subtotal
+                                )}
+                              </td>
+
+                              <td className="p-3 text-xs">
+                                {money(
+                                  order.delivery_fee
+                                )}
+                              </td>
+
+                              <td className="p-3 text-right text-xs font-black text-[#10B981]">
+                                {money(earning)}
+                              </td>
+                            </tr>
+                          );
+                        })}
+
+                        {getSettlementOrders(
+                          selectedSettlement
+                        ).length === 0 && (
+                          <tr>
+                            <td
+                              colSpan={6}
+                              className="p-8 text-center text-xs text-slate-400"
+                            >
+                              No matching order records found for the stored order IDs.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
+                  <span className="text-[9px] font-black uppercase text-slate-400">
+                    Admin Remarks
+                  </span>
+
+                  <p className="text-xs text-slate-600 mt-2">
+                    {selectedSettlement.remarks ||
+                      "No remarks recorded."}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+      {payModalOpen &&
+        selectedSettlement && (
+          <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-2xl border border-gray-200 w-full max-w-lg">
+              <div className="flex items-center justify-between p-5 border-b border-gray-100">
+                <div>
+                  <h2 className="text-sm font-black uppercase tracking-wider">
+                    Record Payout
+                  </h2>
+
+                  <p className="text-xs text-[#10B981] font-black mt-1">
+                    {getEntityName(
+                      selectedSettlement,
+                      selectedType
+                    )}{" "}
+                    ·{" "}
+                    {money(
+                      selectedSettlement.amount
+                    )}
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    setPayModalOpen(false)
+                  }
+                  className="h-8 w-8 rounded-lg hover:bg-gray-100 flex items-center justify-center text-slate-400"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              <div className="p-5 space-y-4">
+                <div className="bg-gray-50 border border-gray-200 rounded-xl p-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <span className="block text-[9px] font-black uppercase text-slate-400">
+                        Settlement
+                      </span>
+
+                      <span className="text-xs font-mono">
+                        {selectedSettlement.id}
                       </span>
                     </div>
-                  )}
+
+                    <div>
+                      <span className="block text-[9px] font-black uppercase text-slate-400">
+                        Orders
+                      </span>
+
+                      <span className="text-xs font-black">
+                        {Array.isArray(
+                          selectedSettlement.order_ids
+                        )
+                          ? selectedSettlement
+                              .order_ids
+                              .length
+                          : 0}
+                      </span>
+                    </div>
+                  </div>
                 </div>
 
-                <div className="border-t border-gray-200 pt-3 space-y-2 text-xs font-medium">
-                  <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Target Bank Account Info</span>
-                  {selectedType === 'vendor' ? (
-                    <div className="space-y-1 font-mono text-[11px] text-slate-700">
-                      <div><span className="font-sans text-[9px] uppercase text-slate-400 block">Account Holder:</span> {resolvedEntity.vendorProfile?.account_holder_name || "—"}</div>
-                      <div><span className="font-sans text-[9px] uppercase text-slate-400 block">Bank Name:</span> {resolvedEntity.vendorProfile?.bank_name || "—"}</div>
-                      <div><span className="font-sans text-[9px] uppercase text-slate-400 block">Account Number:</span> {resolvedEntity.vendorProfile?.account_number || "—"}</div>
-                      <div><span className="font-sans text-[9px] uppercase text-slate-400 block">IFSC Code:</span> {resolvedEntity.vendorProfile?.ifsc_code || "—"}</div>
-                      <div><span className="font-sans text-[9px] uppercase text-slate-400 block">UPI ID:</span> {resolvedEntity.vendorProfile?.upi_id || "—"}</div>
-                    </div>
-                  ) : (
-                    <div className="space-y-1 font-mono text-[11px] text-slate-700">
-                      <div><span className="font-sans text-[9px] uppercase text-slate-400 block">Account Holder:</span> {resolvedEntity.riderProfile?.account_holder_name || resolvedEntity.rider?.account_holder_name || "—"}</div>
-                      <div><span className="font-sans text-[9px] uppercase text-slate-400 block">Bank Name:</span> {resolvedEntity.riderProfile?.bank_name || resolvedEntity.rider?.bank_name || "—"}</div>
-                      <div><span className="font-sans text-[9px] uppercase text-slate-400 block">Account Number:</span> {resolvedEntity.riderProfile?.account_number || resolvedEntity.rider?.account_number || "—"}</div>
-                      <div><span className="font-sans text-[9px] uppercase text-slate-400 block">IFSC Code:</span> {resolvedEntity.riderProfile?.ifsc_code || resolvedEntity.rider?.ifsc_code || "—"}</div>
-                      <div><span className="font-sans text-[9px] uppercase text-slate-400 block">UPI ID:</span> {resolvedEntity.riderProfile?.upi_id || resolvedEntity.rider?.upi_id || "—"}</div>
-                    </div>
-                  )}
-                </div>
-              </div>
+                <div>
+                  <label className="block text-[10px] font-black uppercase tracking-wider text-slate-500 mb-1.5">
+                    Payment Method
+                  </label>
 
-              <form onSubmit={(e) => { e.preventDefault(); executePayFinalization(); }} className="space-y-4">
-                <div className="space-y-1">
-                  <label className="text-[9px] font-bold text-slate-400 tracking-wider block uppercase">Payment Method</label>
-                  <select 
-                    value={formPaymentMethod} 
-                    onChange={(e) => setFormPaymentMethod(e.target.value)}
-                    className="w-full text-xs p-2 bg-gray-50 border border-gray-200 rounded-lg text-slate-700 focus:outline-none focus:bg-white focus:border-emerald-600 transition-all font-medium"
+                  <select
+                    value={formPaymentMethod}
+                    onChange={(e) =>
+                      setFormPaymentMethod(
+                        e.target.value
+                      )
+                    }
+                    className="w-full h-10 px-3 rounded-lg border border-gray-200 bg-white text-xs outline-none focus:border-[#10B981]"
                   >
-                    <option value="Bank Transfer">Bank Wire IMPS / NEFT</option>
-                    <option value="UPI">UPI Transfer</option>
-                    <option value="Internal Wallet Transfer">Internal Wallet Adjustment</option>
+                    <option>
+                      Bank Transfer
+                    </option>
+                    <option>
+                      UPI
+                    </option>
+                    <option>
+                      Cash
+                    </option>
+                    <option>
+                      Other
+                    </option>
                   </select>
                 </div>
 
-                <div className="space-y-1">
-                  <label className="text-[9px] font-bold text-slate-500 tracking-wider block uppercase">Transaction UTR / Reference Key</label>
+                <div>
+                  <label className="block text-[10px] font-black uppercase tracking-wider text-slate-500 mb-1.5">
+                    UTR / Transaction Reference
+                  </label>
+
                   <input
-                    type="text"
-                    required
-                    placeholder="Enter transaction UTR number"
                     value={formUtr}
-                    onChange={(e) => setFormUtr(e.target.value)}
-                    className="w-full h-9 px-3 border border-gray-200 rounded-lg text-xs bg-gray-50 focus:outline-none focus:bg-white focus:border-emerald-600 transition-all font-mono text-center"
+                    onChange={(e) =>
+                      setFormUtr(
+                        e.target.value
+                      )
+                    }
+                    placeholder="Enter UTR or transaction reference"
+                    className="w-full h-10 px-3 rounded-lg border border-gray-200 bg-white text-xs outline-none focus:border-[#10B981]"
                   />
                 </div>
 
-                <div className="space-y-1">
-                  <label className="text-[9px] font-bold text-slate-500 tracking-wider block uppercase">Remarks / Internal Memo</label>
+                <div>
+                  <label className="block text-[10px] font-black uppercase tracking-wider text-slate-500 mb-1.5">
+                    Remarks
+                  </label>
+
                   <textarea
-                    placeholder="Add payout documentation notes..."
                     value={formRemarks}
-                    onChange={(e) => setFormRemarks(e.target.value)}
-                    rows={2}
-                    className="w-full p-2.5 border border-gray-200 rounded-lg text-xs bg-gray-50 focus:outline-none focus:bg-white focus:border-emerald-600 transition-all"
+                    onChange={(e) =>
+                      setFormRemarks(
+                        e.target.value
+                      )
+                    }
+                    rows={3}
+                    placeholder="Optional payment remarks"
+                    className="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-xs outline-none focus:border-[#10B981] resize-none"
                   />
                 </div>
 
-                <div className="flex items-center gap-2 pt-2 border-t border-gray-100 text-xs font-bold uppercase tracking-wider">
-                  <button type="button" onClick={() => setPayModalOpen(false)} className="flex-1 h-9 border border-gray-200 rounded-lg text-slate-400 hover:bg-gray-50 cursor-pointer">Cancel</button>
-                  <button type="submit" disabled={actionLoading || !formUtr.trim()} className="flex-1 h-9 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg shadow-3xs flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50">
-                    {actionLoading && <Loader2 size={12} className="animate-spin" />} Confirm Payment
+                <div className="flex items-center gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setPayModalOpen(false)
+                    }
+                    disabled={
+                      actionLoading
+                    }
+                    className="flex-1 h-10 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-xs font-bold"
+                  >
+                    Cancel
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={
+                      recordPayment
+                    }
+                    disabled={
+                      actionLoading
+                    }
+                    className="flex-1 h-10 rounded-lg bg-[#10B981] hover:bg-[#059669] text-white text-xs font-black flex items-center justify-center gap-2 disabled:opacity-50"
+                  >
+                    {actionLoading && (
+                      <Loader2
+                        size={14}
+                        className="animate-spin"
+                      />
+                    )}
+
+                    Confirm Payment
                   </button>
                 </div>
-              </form>
-
-            </div>
-
-          </div>
-        </div>
-      )}
-
-      {/* REJECT MODAL */}
-      {rejectModalOpen && selectedSettlement && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
-          <div className="bg-white border border-gray-200 rounded-xl max-w-sm w-full shadow-xl p-5 space-y-4 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-start justify-between">
-              <div className="flex items-center gap-2 text-rose-600">
-                <XCircle size={18} className="shrink-0" />
-                <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Confirm Payout Rejection</h3>
               </div>
-              <button onClick={() => setRejectModalOpen(false)} className="text-slate-400 hover:text-slate-600 cursor-pointer">
-                <X size={16} />
-              </button>
-            </div>
-            
-            <p className="text-xs text-slate-500 font-normal leading-relaxed">
-              Are you sure you want to reject this settlement? Please state reason below.
-            </p>
-
-            <div className="space-y-1">
-              <label className="text-[9px] font-bold text-slate-500 uppercase tracking-wider block">Reason for Rejection</label>
-              <textarea
-                required
-                placeholder="State reason for rejecting the payout..."
-                value={formRemarks}
-                onChange={(e) => setFormRemarks(e.target.value)}
-                rows={3}
-                className="w-full p-2.5 border border-gray-200 rounded-lg text-xs bg-gray-50 focus:outline-none focus:bg-white focus:border-rose-600 transition-all"
-              />
-            </div>
-
-            <div className="flex items-center gap-2 pt-2 border-t border-gray-100 text-xs font-bold uppercase tracking-wider">
-              <button type="button" onClick={() => setRejectModalOpen(false)} className="flex-1 h-9 border border-gray-200 rounded-lg text-slate-400 hover:bg-gray-50 cursor-pointer">Cancel</button>
-              <button type="button" onClick={executeRejectFinalization} disabled={actionLoading || !formRemarks.trim()} className="flex-1 h-9 bg-rose-600 hover:bg-rose-700 text-white rounded-lg shadow-3xs flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50">
-                {actionLoading && <Loader2 size={12} className="animate-spin" />} Confirm Reject
-              </button>
             </div>
           </div>
-        </div>
-      )}
-
+        )}
     </div>
   );
 }
+
+export default Settlements;

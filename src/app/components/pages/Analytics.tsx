@@ -1,19 +1,7 @@
 import React, { useState, useEffect } from "react";
-import {
-  TrendingUp,
-  ShoppingBag,
-  Users,
-  BarChart3,
-  RefreshCcw,
-  ShieldAlert,
-  Activity
-} from "lucide-react";
-import { PageHeader } from "../ui/PageHeader";
+import { RefreshCcw } from "lucide-react";
 import { cn } from "../../../lib/utils";
 import { supabase } from "../../../lib/supabase";
-
-// Estimated default platform commission rate (10%)
-const COMMISSION_RATE = 0.10;
 
 interface FinancialMetrics {
   gmv: number;
@@ -92,138 +80,308 @@ export function Analytics() {
       setIsLoading(true);
 
       const now = new Date();
-      let startDate = new Date();
+      let startDate: Date | null = null;
+
       if (timePeriod !== "all") {
-        startDate.setDate(now.getDate() - parseInt(timePeriod));
+        startDate = new Date(now);
+        startDate.setDate(
+          now.getDate() - Number.parseInt(timePeriod, 10)
+        );
       }
 
-      // 1. Core Orders Query joined with Vendors
+      // Read the actual order-level financial fields used by Rivo.
+      // Do not apply a hard-coded commission percentage here.
       let ordersQuery = supabase
         .from("orders")
         .select(`
-          id, 
-          total_amount, 
-          delivery_fee, 
-          order_status, 
-          created_at, 
+          id,
+          total_amount,
+          subtotal,
+          delivery_fee,
+          platform_fee,
+          rivo_delivery_margin,
+          vendor_earning,
+          rider_earning,
+          order_status,
+          created_at,
           vendor_id,
-          vendors ( shop_name )
+          rider_id
         `);
 
-      if (timePeriod !== "all") {
-        ordersQuery = ordersQuery.gte("created_at", startDate.toISOString());
+      if (startDate) {
+        ordersQuery = ordersQuery.gte(
+          "created_at",
+          startDate.toISOString()
+        );
       }
-      
-      const { data: ordersData, error: ordersError } = await ordersQuery;
-      if (ordersError) throw ordersError;
-      const orders = ordersData || [];
 
-      // 2. Platform Health Counters (Parallelized requests)
-      const [subReq, setReq, refReq, ticketReq] = await Promise.all([
-        supabase.from("subscription_payment_requests").select("id", { count: "exact" }).eq("status", "pending"),
-        supabase.from("vendor_settlements").select("id", { count: "exact" }).eq("status", "pending"),
-        supabase.from("refunds").select("id", { count: "exact" }).eq("status", "pending"),
-        supabase.from("support_tickets").select("id", { count: "exact" }).neq("status", "closed")
-      ]);
+      const { data: ordersData, error: ordersError } =
+        await ordersQuery;
+
+      if (ordersError) throw ordersError;
+
+      const orders = (ordersData || []) as Array<{
+        id: string;
+        total_amount: number | null;
+        subtotal: number | null;
+        delivery_fee: number | null;
+        platform_fee: number | null;
+        rivo_delivery_margin: number | null;
+        vendor_earning: number | null;
+        rider_earning: number | null;
+        order_status: string | null;
+        created_at: string;
+        vendor_id: string;
+        rider_id: string | null;
+      }>;
+
+      // Load vendor names separately so this page does not depend on a
+      // Supabase relationship definition for orders -> vendors.
+      const { data: vendorsData, error: vendorsError } =
+        await supabase
+          .from("vendors")
+          .select("id, shop_name, owner_name");
+
+      if (vendorsError) throw vendorsError;
+
+      const vendorNames: Record<string, string> = {};
+      (vendorsData || []).forEach((vendor: any) => {
+        vendorNames[vendor.id] =
+          vendor.shop_name ||
+          vendor.owner_name ||
+          "Unknown Shop";
+      });
+
+      // Platform health counters.
+      const [subReq, setReq, refReq, ticketReq] =
+        await Promise.all([
+          supabase
+            .from("subscription_payment_requests")
+            .select("id", { count: "exact", head: true })
+            .eq("status", "pending"),
+          supabase
+            .from("vendor_settlements")
+            .select("id", { count: "exact", head: true })
+            .in("status", ["pending", "REQUESTED"]),
+          supabase
+            .from("refunds")
+            .select("id", { count: "exact", head: true })
+            .eq("status", "pending"),
+          supabase
+            .from("support_tickets")
+            .select("id", { count: "exact", head: true })
+            .neq("status", "closed"),
+        ]);
 
       setHealth({
         pendingSubscriptions: subReq.count || 0,
         pendingSettlements: setReq.count || 0,
         pendingRefunds: refReq.count || 0,
-        openTickets: ticketReq.count || 0
+        openTickets: ticketReq.count || 0,
       });
 
-      // 3. Top Riders Query (Global Leaderboard Limit 5)
-      const { data: ridersData, error: ridersError } = await supabase
-        .from("riders")
-        .select("rider_name, orders_completed, rating")
-        .order("orders_completed", { ascending: false })
-        .limit(5);
-      
-      if (ridersError) throw ridersError;
-      setTopRiders(ridersData || []);
+      // Top riders are calculated from actual orders in the selected period.
+      // Do not rely on riders.orders_completed because that field can be stale
+      // or remain zero even when the rider has completed orders.
+      const { data: ridersData, error: ridersError } =
+        await supabase
+          .from("riders")
+          .select("id, rider_name, rating");
 
-      // 4. Financial Metric Calculations
-      const gmv = orders.reduce((acc, o) => acc + (o.total_amount || 0), 0);
-      const deliveryRevenue = orders.reduce((acc, o) => acc + (o.delivery_fee || 0), 0);
-      const commissionRevenue = orders
-        .filter(o => o.order_status === "delivered")
-        .reduce((acc, o) => acc + ((o.total_amount || 0) * COMMISSION_RATE), 0);
-      const netPlatformRevenue = commissionRevenue + deliveryRevenue;
-      const avgOrderValue = orders.length > 0 ? Math.round(gmv / orders.length) : 0;
+      if (ridersError) throw ridersError;
+
+      const riderDirectory: Record<string, { rider_name: string; rating: number }> = {};
+      (ridersData || []).forEach((rider: any) => {
+        riderDirectory[rider.id] = {
+          rider_name: rider.rider_name || "Active Express Rider",
+          rating: Number(rider.rating || 0),
+        };
+      });
+
+      const riderOrderCounts: Record<string, number> = {};
+      orders.forEach((order) => {
+        const riderId = order.rider_id;
+        const status = String(order.order_status || "").toLowerCase();
+
+        if (riderId && status === "delivered" && riderDirectory[riderId]) {
+          riderOrderCounts[riderId] =
+            (riderOrderCounts[riderId] || 0) + 1;
+        }
+      });
+
+      setTopRiders(
+        Object.entries(riderOrderCounts)
+          .map(([riderId, ordersCompleted]) => ({
+            rider_name: riderDirectory[riderId].rider_name,
+            orders_completed: ordersCompleted,
+            rating: riderDirectory[riderId].rating,
+          }))
+          .sort((a, b) => b.orders_completed - a.orders_completed)
+          .slice(0, 5)
+      );
+
+      // Financial metrics use the actual Rivo order economics:
+      // subtotal = merchandise GMV
+      // platform_fee = Rivo platform revenue
+      // delivery_fee = amount charged to customer for delivery
+      // rivo_delivery_margin = Rivo share of delivery fee after rider earning
+      const gmv = orders.reduce(
+        (sum, order) => sum + Number(order.subtotal || 0),
+        0
+      );
+
+      const deliveryRevenue = orders.reduce(
+        (sum, order) => sum + Number(order.delivery_fee || 0),
+        0
+      );
+
+      const commissionRevenue = orders.reduce(
+        (sum, order) =>
+          sum + Number(order.platform_fee || 0),
+        0
+      );
+
+      const deliveryMargin = orders.reduce(
+        (sum, order) =>
+          sum + Number(order.rivo_delivery_margin || 0),
+        0
+      );
+
+      const netPlatformRevenue =
+        commissionRevenue + deliveryMargin;
+
+      const avgOrderValue =
+        orders.length > 0
+          ? Math.round(gmv / orders.length)
+          : 0;
 
       setFinancials({
         gmv,
         commissionRevenue,
         deliveryRevenue,
         netPlatformRevenue,
-        avgOrderValue
+        avgOrderValue,
       });
 
-      // 5. Fulfillment Performance Metrics
       const totalOrders = orders.length;
-      const deliveredOrders = orders.filter(o => o.order_status === "delivered").length;
-      const cancelledOrders = orders.filter(o => o.order_status === "cancelled").length;
-      const successRate = totalOrders > 0 ? Math.round((deliveredOrders / totalOrders) * 100) : 0;
+      const deliveredOrders = orders.filter(
+        (order) =>
+          String(order.order_status || "").toLowerCase() ===
+          "delivered"
+      ).length;
+
+      const cancelledOrders = orders.filter(
+        (order) =>
+          String(order.order_status || "").toLowerCase() ===
+          "cancelled"
+      ).length;
+
+      const successRate =
+        totalOrders > 0
+          ? Math.round(
+              (deliveredOrders / totalOrders) * 100
+            )
+          : 0;
 
       setPerformance({
         totalOrders,
         deliveredOrders,
         cancelledOrders,
-        successRate
+        successRate,
       });
 
-      // 6. Chronological Trend Maps Construction (Last 7 Days Bar charts)
-      const last7Days = Array.from({ length: 7 }).map((_, idx) => {
-        const d = new Date();
-        d.setDate(now.getDate() - idx);
-        return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
-      }).reverse();
-
-      const dynamicTimelineMap: Record<string, Record<string, number>> = {};
-      last7Days.forEach(day => {
-        dynamicTimelineMap[day] = { revenue: 0, orders: 0, commission: 0, delivery: 0 };
-      });
-
-      orders.forEach(o => {
-        const dayKey = new Date(o.created_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
-        if (dynamicTimelineMap[dayKey]) {
-          dynamicTimelineMap[dayKey].orders += 1;
-          dynamicTimelineMap[dayKey].revenue += (o.total_amount || 0);
-          dynamicTimelineMap[dayKey].delivery += (o.delivery_fee || 0);
-          if (o.order_status === "delivered") {
-            dynamicTimelineMap[dayKey].commission += ((o.total_amount || 0) * COMMISSION_RATE);
-          }
+      // Keep the chart fixed to the most recent 7 calendar days.
+      const last7Days = Array.from({ length: 7 }).map(
+        (_, idx) => {
+          const date = new Date(now);
+          date.setDate(now.getDate() - idx);
+          return date.toLocaleDateString("en-GB", {
+            day: "numeric",
+            month: "short",
+          });
         }
+      ).reverse();
+
+      const dynamicTimelineMap: Record<
+        string,
+        Record<string, number>
+      > = {};
+
+      last7Days.forEach((day) => {
+        dynamicTimelineMap[day] = {
+          revenue: 0,
+          orders: 0,
+          commission: 0,
+          delivery: 0,
+        };
       });
 
-      const valuesArray = last7Days.map(d => dynamicTimelineMap[d][activeDataset] || 0);
+      orders.forEach((order) => {
+        const dayKey = new Date(
+          order.created_at
+        ).toLocaleDateString("en-GB", {
+          day: "numeric",
+          month: "short",
+        });
+
+        if (!dynamicTimelineMap[dayKey]) return;
+
+        dynamicTimelineMap[dayKey].orders += 1;
+        dynamicTimelineMap[dayKey].revenue += Number(
+          order.subtotal || 0
+        );
+        dynamicTimelineMap[dayKey].delivery += Number(
+          order.delivery_fee || 0
+        );
+        dynamicTimelineMap[dayKey].commission += Number(
+          order.platform_fee || 0
+        );
+      });
+
+      const valuesArray = last7Days.map(
+        (day) =>
+          dynamicTimelineMap[day][activeDataset] || 0
+      );
+
       const maxVal = Math.max(...valuesArray, 1);
 
-      setChartTrends(last7Days.map(day => {
-        const val = dynamicTimelineMap[day][activeDataset] || 0;
-        return {
-          day,
-          value: val,
-          pct: Math.round((val / maxVal) * 100)
-        };
-      }));
+      setChartTrends(
+        last7Days.map((day) => {
+          const value =
+            dynamicTimelineMap[day][activeDataset] || 0;
 
-      // 7. Aggregate Top 5 Vendors Metrics
+          return {
+            day,
+            value,
+            pct: Math.round((value / maxVal) * 100),
+          };
+        })
+      );
+
+      // Top vendors are ranked by merchandise GMV, not by delivery fees.
       const vendorMap: Record<string, VendorRow> = {};
-      orders.forEach(o => {
-        // Handle Supabase joined object types cleanly
-        const singleVendor: any = o.vendors;
-        const shopName = singleVendor?.shop_name || "Unknown Shop";
-        
-        if (!vendorMap[o.vendor_id]) {
-          vendorMap[o.vendor_id] = { name: shopName, orders: 0, revenue: 0, commission: 0 };
+
+      orders.forEach((order) => {
+        const vendorId = order.vendor_id;
+        const shopName =
+          vendorNames[vendorId] || "Unknown Shop";
+
+        if (!vendorMap[vendorId]) {
+          vendorMap[vendorId] = {
+            name: shopName,
+            orders: 0,
+            revenue: 0,
+            commission: 0,
+          };
         }
-        vendorMap[o.vendor_id].orders += 1;
-        vendorMap[o.vendor_id].revenue += (o.total_amount || 0);
-        if (o.order_status === "delivered") {
-          vendorMap[o.vendor_id].commission += ((o.total_amount || 0) * COMMISSION_RATE);
-        }
+
+        vendorMap[vendorId].orders += 1;
+        vendorMap[vendorId].revenue += Number(
+          order.subtotal || 0
+        );
+        vendorMap[vendorId].commission += Number(
+          order.platform_fee || 0
+        );
       });
 
       setTopVendors(
@@ -231,9 +389,11 @@ export function Analytics() {
           .sort((a, b) => b.revenue - a.revenue)
           .slice(0, 5)
       );
-
     } catch (err) {
-      console.error("Operational analytics query failure:", err);
+      console.error(
+        "Operational analytics query failure:",
+        err
+      );
     } finally {
       setIsLoading(false);
     }
@@ -274,7 +434,7 @@ export function Analytics() {
           <h3 className="text-xl font-bold text-[#0F172A] mt-2">{isLoading ? "—" : `₹${financials.gmv.toLocaleString()}`}</h3>
         </div>
         <div className="bg-white border border-[#E2E8F0] rounded-xl p-4 shadow-sm">
-          <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-wider">Commission Revenue</p>
+          <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-wider">Platform Fee Revenue</p>
           <h3 className="text-xl font-bold text-blue-600 mt-2">{isLoading ? "—" : `₹${financials.commissionRevenue.toLocaleString()}`}</h3>
         </div>
         <div className="bg-white border border-[#E2E8F0] rounded-xl p-4 shadow-sm">
@@ -326,9 +486,9 @@ export function Analytics() {
             onChange={(e) => setActiveDataset(e.target.value as any)}
             className="h-8 px-3 rounded-lg border border-[#E2E8F0] bg-white text-xs font-semibold text-[#334155] focus:outline-none max-w-xs self-start"
           >
-            <option value="revenue">Gross Revenue Flow (GMV)</option>
+            <option value="revenue">Gross Merchandise Value (GMV)</option>
             <option value="orders">Total Order Volume Counts</option>
-            <option value="commission">Commission Yield Logs</option>
+            <option value="commission">Platform Fee Yield Logs</option>
             <option value="delivery">Collected Delivery Inflows</option>
           </select>
         </div>
@@ -381,7 +541,7 @@ export function Analytics() {
                   </div>
                   <div className="text-right">
                     <p className="font-bold text-[#0F172A]">₹{vendor.revenue.toLocaleString()}</p>
-                    <span className="text-[9px] font-semibold text-emerald-600 bg-emerald-50 px-1 rounded">Com: ₹{Math.round(vendor.commission)}</span>
+                    <span className="text-[9px] font-semibold text-emerald-600 bg-emerald-50 px-1 rounded">Platform Fee: ₹{Math.round(vendor.commission)}</span>
                   </div>
                 </div>
               ))
