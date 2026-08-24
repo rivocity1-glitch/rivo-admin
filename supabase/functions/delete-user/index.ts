@@ -1,185 +1,601 @@
-// supabase/functions/delete-user/index.ts
-import { withSupabase } from "../_shared/withSupabase.ts";
+import "@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "npm:@supabase/supabase-js@2";
 
-export default withSupabase(async (req, ctx) => {
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Content-Type": "application/json",
+};
+
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY");
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get(
+  "SUPABASE_SERVICE_ROLE_KEY"
+);
+
+if (
+  !SUPABASE_URL ||
+  !SUPABASE_ANON_KEY ||
+  !SUPABASE_SERVICE_ROLE_KEY
+) {
+  throw new Error(
+    "Required Supabase environment variables are missing."
+  );
+}
+
+const supabaseAdmin = createClient(
+  SUPABASE_URL,
+  SUPABASE_SERVICE_ROLE_KEY,
+  {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  }
+);
+
+const supabaseAuth = createClient(
+  SUPABASE_URL,
+  SUPABASE_ANON_KEY,
+  {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  }
+);
+
+type AccountType =
+  | "customer"
+  | "rider"
+  | "vendor"
+  | "admin";
+
+interface DeleteRequest {
+  account_type: AccountType;
+  account_id: string;
+}
+
+function jsonResponse(
+  body: Record<string, unknown>,
+  status = 200
+) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: corsHeaders,
+  });
+}
+
+function isValidUuid(value: unknown): value is string {
+  if (typeof value !== "string") {
+    return false;
+  }
+
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    value
+  );
+}
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response("ok", {
+      status: 200,
+      headers: corsHeaders,
+    });
+  }
+
+  if (req.method !== "POST") {
+    return jsonResponse(
+      {
+        success: false,
+        error: "Only POST requests are allowed.",
+      },
+      405
+    );
+  }
+
   try {
-    // 1. Keep existing authorization check
-    if (!ctx.user) {
-      return new Response(
-        JSON.stringify({
-          success: false,
-          error: "Unauthorized: Authentication required.",
-        }),
+    /*
+     * ==========================================================
+     * AUTHENTICATE REQUEST
+     * ==========================================================
+     */
+
+    const authorization =
+      req.headers.get("Authorization") ||
+      req.headers.get("authorization");
+
+    if (!authorization) {
+      return jsonResponse(
         {
-          status: 401,
-          headers: { "Content-Type": "application/json" },
-        }
+          success: false,
+          error: "Authorization header is required.",
+        },
+        401
       );
     }
 
-    const { data: adminUser, error: adminError } = await ctx.supabase
+    if (!authorization.startsWith("Bearer ")) {
+      return jsonResponse(
+        {
+          success: false,
+          error: "Invalid authorization header.",
+        },
+        401
+      );
+    }
+
+    const accessToken = authorization
+      .replace(/^Bearer\s+/i, "")
+      .trim();
+
+    if (!accessToken) {
+      return jsonResponse(
+        {
+          success: false,
+          error: "Access token is required.",
+        },
+        401
+      );
+    }
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabaseAuth.auth.getUser(accessToken);
+
+    if (userError || !user) {
+      return jsonResponse(
+        {
+          success: false,
+          error: "Invalid or expired authentication session.",
+        },
+        401
+      );
+    }
+
+    const callerAuthUserId = user.id;
+
+    /*
+     * ==========================================================
+     * VERIFY SUPER ADMIN
+     * ==========================================================
+     */
+
+    const {
+      data: callerAdmin,
+      error: callerAdminError,
+    } = await supabaseAdmin
       .from("admin_users")
-      .select("role")
-      .eq("auth_user_id", ctx.user.id)
-      .maybesingle();
+      .select("id, auth_user_id, email, role")
+      .eq("auth_user_id", callerAuthUserId)
+      .maybeSingle();
 
-    if (adminError || !adminUser) {
-      return new Response(
-        JSON.stringify({
-          success: false,
-          error: "Forbidden: Admin profile not found.",
-        }),
+    if (callerAdminError) {
+      console.error(
+        "Caller admin lookup failed:",
+        callerAdminError
+      );
+
+      return jsonResponse(
         {
-          status: 403,
-          headers: { "Content-Type": "application/json" },
-        }
+          success: false,
+          error: "Unable to verify administrator authority.",
+        },
+        500
       );
     }
 
-    if (adminUser.role !== "super_admin") {
-      return new Response(
-        JSON.stringify({
-          success: false,
-          error: "Forbidden: Super Admin privilege required.",
-        }),
+    if (!callerAdmin || callerAdmin.role !== "super_admin") {
+      return jsonResponse(
         {
-          status: 403,
-          headers: { "Content-Type": "application/json" },
-        }
+          success: false,
+          error:
+            "Super admin authority is required for account deletion.",
+        },
+        403
       );
     }
 
-    // Parse Input Body
-    const body = await req.json();
-    const { user_type, user_id } = body;
+    /*
+     * ==========================================================
+     * VALIDATE REQUEST
+     * ==========================================================
+     */
 
-    if (!user_type || !user_id) {
-      return new Response(
-        JSON.stringify({
-          success: false,
-          error: "Bad Request: Missing user_type or user_id.",
-        }),
+    let payload: DeleteRequest;
+
+    try {
+      payload = await req.json();
+    } catch {
+      return jsonResponse(
         {
-          status: 400,
-          headers: { "Content-Type": "application/json" },
-        }
+          success: false,
+          error: "Invalid JSON request body.",
+        },
+        400
       );
     }
 
-    // Helper: Delete all files in a storage bucket for a specific user folder prefix
-    const deleteFolderInBucket = async (bucketName: string, folderPrefix: string) => {
-      const { data: fileList, error: listError } = await ctx.supabase.storage
-        .from(bucketName)
-        .list(folderPrefix);
+    const accountType = payload?.account_type;
+    const accountId = payload?.account_id;
 
-      if (listError) {
-        // If bucket doesn't exist or listing fails, handle gracefully
-        return;
-      }
+    if (
+      accountType !== "customer" &&
+      accountType !== "rider" &&
+      accountType !== "vendor" &&
+      accountType !== "admin"
+    ) {
+      return jsonResponse(
+        {
+          success: false,
+          error:
+            "account_type must be customer, rider, vendor, or admin.",
+        },
+        400
+      );
+    }
 
-      if (fileList && fileList.length > 0) {
-        const filesToRemove = fileList.map((file) => `${folderPrefix}/${file.name}`);
-        const { error: removeError } = await ctx.supabase.storage
-          .from(bucketName)
-          .remove(filesToRemove);
+    if (!isValidUuid(accountId)) {
+      return jsonResponse(
+        {
+          success: false,
+          error: "A valid account_id is required.",
+        },
+        400
+      );
+    }
 
-        if (removeError) {
-          throw new Error(`Failed to delete files in bucket ${bucketName}: ${removeError.message}`);
-        }
-      }
-    };
+    /*
+     * ==========================================================
+     * RESOLVE TARGET AUTH USER
+     * ==========================================================
+     */
 
-    // Helper: Delete database records safely with immediate error stopping
-    const deleteTableRecords = async (tableName: string, filterColumn: string, filterValue: string) => {
-      const { error } = await ctx.supabase
-        .from(tableName)
-        .delete()
-        .eq(filterColumn, filterValue);
+    let targetAuthUserId: string | null = null;
+
+    if (accountType === "customer") {
+      const { data, error } = await supabaseAdmin
+        .from("customers")
+        .select("id, auth_user_id")
+        .eq("id", accountId)
+        .maybeSingle();
 
       if (error) {
-        throw new Error(`Failed to delete records from ${tableName}: ${error.message}`);
+        console.error(
+          "Customer lookup failed:",
+          error
+        );
+
+        return jsonResponse(
+          {
+            success: false,
+            error: "Unable to find customer account.",
+          },
+          500
+        );
       }
-    };
 
-    // 2. Execute deletion according to user_type
-    if (user_type === "rider") {
-      // Storage Cleanup
-      await deleteFolderInBucket("rider-profiles", user_id);
-      await deleteFolderInBucket("rider-documents", user_id);
-      await deleteFolderInBucket("rider-sos", user_id);
+      if (!data) {
+        return jsonResponse(
+          {
+            success: false,
+            error: "Customer account not found.",
+          },
+          404
+        );
+      }
 
-      // Database Record Cleanup in Safe Order
-      await deleteTableRecords("rider_profiles", "rider_id", user_id);
-      await deleteTableRecords("rider_vendor_assignments", "rider_id", user_id);
-      await deleteTableRecords("rider_support_tickets", "rider_id", user_id);
-      await deleteTableRecords("rider_emergency_reports", "rider_id", user_id);
-      await deleteTableRecords("rider_shifts", "rider_id", user_id);
-      await deleteTableRecords("rider_settlements", "rider_id", user_id);
-      await deleteTableRecords("notifications", "user_id", user_id);
-      await deleteTableRecords("wallets", "user_id", user_id);
-      await deleteTableRecords("riders", "id", user_id);
+      targetAuthUserId = data.auth_user_id;
+    }
 
-    } else if (user_type === "vendor") {
-      // Storage Cleanup
-      await deleteFolderInBucket("vendor-avatars", user_id);
-      await deleteFolderInBucket("vendor-store-images", user_id);
-      await deleteFolderInBucket("vendor-QR", user_id);
+    if (accountType === "rider") {
+      const { data, error } = await supabaseAdmin
+        .from("riders")
+        .select("id, auth_user_id")
+        .eq("id", accountId)
+        .maybeSingle();
 
-      // Database Record Cleanup in Safe Order
-      await deleteTableRecords("vendor_profile_banners", "vendor_id", user_id);
-      await deleteTableRecords("vendor_store_images", "vendor_id", user_id);
-      await deleteTableRecords("subscriptions", "vendor_id", user_id);
-      await deleteTableRecords("products", "vendor_id", user_id);
-      await deleteTableRecords("offers", "vendor_id", user_id);
-      await deleteTableRecords("vendor_profiles", "vendor_id", user_id);
-      await deleteTableRecords("vendor_support_tickets", "vendor_id", user_id);
-      await deleteTableRecords("vendor_settlements", "vendor_id", user_id);
-      await deleteTableRecords("notifications", "user_id", user_id);
-      await deleteTableRecords("wallets", "user_id", user_id);
-      await deleteTableRecords("vendors", "id", user_id);
+      if (error) {
+        console.error(
+          "Rider lookup failed:",
+          error
+        );
 
-    } else if (user_type === "customer") {
-      // Database Record Cleanup in Safe Order
-      await deleteTableRecords("customer_addresses", "customer_id", user_id);
-      await deleteTableRecords("customer_support_tickets", "customer_id", user_id);
-      await deleteTableRecords("notifications", "user_id", user_id);
-      await deleteTableRecords("wallets", "user_id", user_id);
-      await deleteTableRecords("customers", "id", user_id);
+        return jsonResponse(
+          {
+            success: false,
+            error: "Unable to find rider account.",
+          },
+          500
+        );
+      }
 
-    } else {
-      return new Response(
-        JSON.stringify({
-          success: false,
-          error: "Bad Request: Invalid user_type.",
-        }),
+      if (!data) {
+        return jsonResponse(
+          {
+            success: false,
+            error: "Rider account not found.",
+          },
+          404
+        );
+      }
+
+      targetAuthUserId = data.auth_user_id;
+    }
+
+    if (accountType === "vendor") {
+      const { data, error } = await supabaseAdmin
+        .from("vendors")
+        .select("id, auth_user_id")
+        .eq("id", accountId)
+        .maybeSingle();
+
+      if (error) {
+        console.error(
+          "Vendor lookup failed:",
+          error
+        );
+
+        return jsonResponse(
+          {
+            success: false,
+            error: "Unable to find vendor account.",
+          },
+          500
+        );
+      }
+
+      if (!data) {
+        return jsonResponse(
+          {
+            success: false,
+            error: "Vendor account not found.",
+          },
+          404
+        );
+      }
+
+      targetAuthUserId = data.auth_user_id;
+    }
+
+    if (accountType === "admin") {
+      const { data, error } = await supabaseAdmin
+        .from("admin_users")
+        .select("id, auth_user_id, email, role")
+        .eq("id", accountId)
+        .maybeSingle();
+
+      if (error) {
+        console.error(
+          "Admin lookup failed:",
+          error
+        );
+
+        return jsonResponse(
+          {
+            success: false,
+            error: "Unable to find admin account.",
+          },
+          500
+        );
+      }
+
+      if (!data) {
+        return jsonResponse(
+          {
+            success: false,
+            error: "Admin account not found.",
+          },
+          404
+        );
+      }
+
+      /*
+       * Never allow the root/super-admin account to be deleted.
+       */
+      if (data.role === "super_admin") {
+        return jsonResponse(
+          {
+            success: false,
+            error:
+              "Super admin accounts are protected and cannot be deleted.",
+          },
+          403
+        );
+      }
+
+      targetAuthUserId = data.auth_user_id;
+    }
+
+    /*
+     * ==========================================================
+     * PREVENT SELF-DELETION
+     * ==========================================================
+     */
+
+    if (
+      targetAuthUserId &&
+      targetAuthUserId === callerAuthUserId
+    ) {
+      return jsonResponse(
         {
-          status: 400,
-          headers: { "Content-Type": "application/json" },
-        }
+          success: false,
+          error:
+            "You cannot delete the currently authenticated super-admin account.",
+        },
+        403
       );
     }
 
-    // 3. Return completion success response
-    return new Response(
-      JSON.stringify({
+    /*
+     * ==========================================================
+     * CUSTOMER / RIDER / VENDOR PREPARATION
+     * ==========================================================
+     */
+
+    if (
+      accountType === "customer" ||
+      accountType === "rider" ||
+      accountType === "vendor"
+    ) {
+      const {
+        data: preparationResult,
+        error: preparationError,
+      } = await supabaseAdmin.rpc(
+        "prepare_account_deletion",
+        {
+          p_account_type: accountType,
+          p_account_id: accountId,
+          p_auth_user_id: targetAuthUserId,
+        }
+      );
+
+      if (preparationError) {
+        console.error(
+          "Account deletion preparation failed:",
+          preparationError
+        );
+
+        return jsonResponse(
+          {
+            success: false,
+            error:
+              preparationError.message ||
+              "Unable to prepare account deletion.",
+          },
+          500
+        );
+      }
+
+      /*
+       * Delete the Auth account if one exists.
+       */
+      if (targetAuthUserId) {
+        const { error: deleteAuthError } =
+          await supabaseAdmin.auth.admin.deleteUser(
+            targetAuthUserId
+          );
+
+        if (deleteAuthError) {
+          console.error(
+            "Supabase Auth deletion failed:",
+            deleteAuthError
+          );
+
+          return jsonResponse(
+            {
+              success: false,
+              error:
+                "Account data was prepared, but the authentication account could not be deleted.",
+            },
+            500
+          );
+        }
+      }
+
+      return jsonResponse({
         success: true,
-        message: "Database cleanup completed.",
-      }),
-      {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
+        message: `${accountType} account deleted successfully.`,
+        account_type: accountType,
+        account_id: accountId,
+        deleted_auth_user_id: targetAuthUserId,
+        preparation: preparationResult,
+      });
+    }
+
+    /*
+     * ==========================================================
+     * ADMIN DELETION
+     * ==========================================================
+     */
+
+    if (accountType === "admin") {
+      /*
+       * Delete the admin profile first.
+       */
+      const { error: adminDeleteError } =
+        await supabaseAdmin
+          .from("admin_users")
+          .delete()
+          .eq("id", accountId);
+
+      if (adminDeleteError) {
+        console.error(
+          "Admin profile deletion failed:",
+          adminDeleteError
+        );
+
+        return jsonResponse(
+          {
+            success: false,
+            error:
+              adminDeleteError.message ||
+              "Unable to delete admin profile.",
+          },
+          500
+        );
       }
-    );
-  } catch (error: any) {
-    return new Response(
-      JSON.stringify({
+
+      /*
+       * Delete the corresponding Auth account.
+       */
+      if (targetAuthUserId) {
+        const { error: deleteAuthError } =
+          await supabaseAdmin.auth.admin.deleteUser(
+            targetAuthUserId
+          );
+
+        if (deleteAuthError) {
+          console.error(
+            "Admin Auth deletion failed:",
+            deleteAuthError
+          );
+
+          return jsonResponse(
+            {
+              success: false,
+              error:
+                "Admin profile was deleted, but the authentication account could not be deleted. Manual cleanup may be required.",
+            },
+            500
+          );
+        }
+      }
+
+      return jsonResponse({
+        success: true,
+        message: "Admin account deleted successfully.",
+        account_type: "admin",
+        account_id: accountId,
+        deleted_auth_user_id: targetAuthUserId,
+      });
+    }
+
+    return jsonResponse(
+      {
         success: false,
-        error: error.message || "An unexpected error occurred during database cleanup.",
-      }),
+        error: "Unsupported account type.",
+      },
+      400
+    );
+  } catch (error) {
+    console.error(
+      "Unexpected delete-user error:",
+      error
+    );
+
+    return jsonResponse(
       {
-        status: 500,
-        headers: { "Content-Type": "application/json" },
-      }
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unexpected server error.",
+      },
+      500
     );
   }
 });
