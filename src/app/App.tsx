@@ -1,34 +1,36 @@
 import React, { useEffect, useState } from "react";
-import { 
+import {
   AlertTriangle,
-  BarChart3, 
-  Bell, 
-  Bike, 
-  Crown, 
-  CreditCard, 
-  HelpCircle, 
-  LayoutDashboard, 
-  LogOut, 
-  RotateCcw, 
-  Settings as SettingsIcon, 
-  ShoppingBag, 
-  Store, 
-  Users 
+  BarChart3,
+  Bell,
+  Bike,
+  Crown,
+  CreditCard,
+  HelpCircle,
+  LayoutDashboard,
+  LogOut,
+  MessageSquareText,
+  RotateCcw,
+  Settings as SettingsIcon,
+  ShoppingBag,
+  Store,
+  Users,
 } from "lucide-react";
-import { Dashboard } from "./components/pages/Dashboard"; 
-import { Vendors } from "./components/pages/Vendors"; 
-import { Riders } from "./components/pages/Riders"; 
-import { Login } from "./components/pages/Login"; 
-import { Customers } from "./components/pages/Customers"; 
-import { Orders } from "./components/pages/Orders"; 
-import { Settlements } from "./components/pages/Settlements"; 
-import { Refunds } from "./components/pages/Refunds"; 
-import { Supports } from "./components/pages/Support"; 
+import { Dashboard } from "./components/pages/Dashboard";
+import { Vendors } from "./components/pages/Vendors";
+import { Riders } from "./components/pages/Riders";
+import { Login } from "./components/pages/Login";
+import { Customers } from "./components/pages/Customers";
+import { Orders } from "./components/pages/Orders";
+import { Settlements } from "./components/pages/Settlements";
+import { Refunds } from "./components/pages/Refunds";
+import { Supports } from "./components/pages/Support";
+import { Feedback } from "./components/pages/Feedback";
 import { SOS } from "./components/pages/sos";
-import { Subscriptions } from "./components/pages/Subscriptions"; 
-import { Notifications } from "./components/pages/Notifications"; 
-import { Analytics } from "./components/pages/Analytics"; 
-import { Settings } from "./components/pages/Settings"; 
+import { Subscriptions } from "./components/pages/Subscriptions";
+import { Notifications } from "./components/pages/Notifications";
+import { Analytics } from "./components/pages/Analytics";
+import { Settings } from "./components/pages/Settings";
 import { supabase } from "../lib/supabase";
 import RequestsCenter from "./components/pages/RequestsCenter";
 import { NotificationService } from "../services/notificationService";
@@ -45,19 +47,18 @@ export default function App() {
   });
 
   const [supportBadge, setSupportBadge] = useState<{ count: number; bgClass: string } | null>(null);
+  const [feedbackBadge, setFeedbackBadge] = useState<number>(0);
   const [unreadNotificationCount, setUnreadNotificationCount] = useState<number>(0);
 
-  // Fixed Sidebar Badges State (Notifications completely removed)
   const [sidebarCounts, setSidebarCounts] = useState({
     requests: 0,
     settlements: 0,
-    refunds: 0
+    refunds: 0,
   });
 
-  // Theme side effect engine
   useEffect(() => {
     const root = window.document.documentElement;
-    
+
     function applyTheme() {
       root.classList.remove("light", "dark");
       if (theme === "system") {
@@ -79,7 +80,6 @@ export default function App() {
     }
   }, [theme]);
 
-  // Realtime notification initialization and listener engine
   useEffect(() => {
     if (!session) return;
 
@@ -101,15 +101,11 @@ export default function App() {
           const updatedUnread = await NotificationService.getUnreadCount(user.id);
           const updatedCount = Array.isArray(updatedUnread?.data) ? updatedUnread.data.length : 0;
           setUnreadNotificationCount(updatedCount);
-          
+
           if (notification?.title && notification?.message) {
-            BrowserNotification.show(notification.title, {
-              body: notification.message,
-            });
+            BrowserNotification.show(notification.title, { body: notification.message });
           } else {
-            BrowserNotification.show("New Notification", {
-              body: "You have a new notification.",
-            });
+            BrowserNotification.show("New Notification", { body: "You have a new notification." });
           }
         });
       } catch (err) {
@@ -120,9 +116,7 @@ export default function App() {
     initNotifications();
 
     return () => {
-      if (unsubscribe) {
-        unsubscribe();
-      }
+      if (unsubscribe) unsubscribe();
     };
   }, [session]);
 
@@ -135,39 +129,44 @@ export default function App() {
 
       if (error) throw error;
 
-      if (!data || data.length === 0) {
-        setSupportBadge(null);
-        return;
-      }
-
-      const count = data.length;
-      setSupportBadge({
-        count,
-        bgClass: "bg-[#22C55E] text-white"
-      });
+      setSupportBadge(
+        data && data.length > 0
+          ? { count: data.length, bgClass: "bg-[#22C55E] text-white" }
+          : null,
+      );
     } catch (err) {
       console.error("Support badge calculation synchronizer failed:", err);
     }
   }
 
-  // Updated Counter Sync Engine
+  async function syncFeedbackBadgeCount() {
+    try {
+      const { count, error } = await supabase
+        .from("feedback")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "new");
+
+      if (error) throw error;
+      setFeedbackBadge(count || 0);
+    } catch (err) {
+      console.error("Feedback badge calculation synchronizer failed:", err);
+    }
+  }
+
   async function syncSidebarCounts() {
     try {
-      // 1. Request Center Count
       const { count: requestsCount, error: errReq } = await supabase
         .from("subscription_payment_requests")
         .select("*", { count: "exact", head: true })
         .eq("status", "pending");
       if (errReq) throw errReq;
 
-      // 2. Settlements Count
       const { count: settlementsCount, error: errSet } = await supabase
         .from("vendor_settlements")
         .select("*", { count: "exact", head: true })
         .eq("status", "pending");
       if (errSet) throw errSet;
 
-      // 3. Refunds Count
       const { count: refundsCount, error: errRef } = await supabase
         .from("refunds")
         .select("*", { count: "exact", head: true })
@@ -177,7 +176,7 @@ export default function App() {
       setSidebarCounts({
         requests: requestsCount || 0,
         settlements: settlementsCount || 0,
-        refunds: refundsCount || 0
+        refunds: refundsCount || 0,
       });
     } catch (err) {
       console.error("Failed to sync sidebar counts:", err);
@@ -187,9 +186,7 @@ export default function App() {
   useEffect(() => {
     try {
       const localSession = localStorage.getItem("rivo_admin_session");
-      if (localSession) {
-        setSession(JSON.parse(localSession));
-      }
+      if (localSession) setSession(JSON.parse(localSession));
     } catch (err) {
       console.error("Failed to parse admin session:", err);
     } finally {
@@ -198,20 +195,21 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (session) {
+    if (!session) return;
+    syncSupportBadgeCount();
+    syncFeedbackBadgeCount();
+    const interval = setInterval(() => {
       syncSupportBadgeCount();
-      const interval = setInterval(syncSupportBadgeCount, 10000);
-      return () => clearInterval(interval);
-    }
+      syncFeedbackBadgeCount();
+    }, 10000);
+    return () => clearInterval(interval);
   }, [session]);
 
-  // 30-Second Refresh Cycle for operational approvals
   useEffect(() => {
-    if (session) {
-      syncSidebarCounts();
-      const interval = setInterval(syncSidebarCounts, 30000);
-      return () => clearInterval(interval);
-    }
+    if (!session) return;
+    syncSidebarCounts();
+    const interval = setInterval(syncSidebarCounts, 30000);
+    return () => clearInterval(interval);
   }, [session]);
 
   function handleLogout() {
@@ -219,7 +217,7 @@ export default function App() {
     if (confirmation) {
       localStorage.removeItem("rivo_admin_session");
       setSession(null);
-      window.location.reload(); 
+      window.location.reload();
     }
   }
 
@@ -231,9 +229,7 @@ export default function App() {
     );
   }
 
-  if (!session) {
-    return <Login />;
-  }
+  if (!session) return <Login />;
 
   const navItems = [
     { id: "dashboard", label: "Dashboard", icon: <LayoutDashboard className="w-4 h-4" /> },
@@ -243,7 +239,8 @@ export default function App() {
     { id: "orders", label: "Orders", icon: <ShoppingBag className="w-4 h-4" /> },
     { id: "settlements", label: "Settlements", icon: <CreditCard className="w-4 h-4" /> },
     { id: "refunds", label: "Refunds", icon: <RotateCcw className="w-4 h-4" /> },
-    { id: "support", label: "Support", icon: <HelpCircle className="w-4 h-4" /> }, 
+    { id: "support", label: "Support", icon: <HelpCircle className="w-4 h-4" /> },
+    { id: "feedback", label: "Feedback", icon: <MessageSquareText className="w-4 h-4" /> },
     { id: "sos", label: "Emergency SOS", icon: <AlertTriangle className="w-4 h-4" /> },
     { id: "requests", label: "Request Center", icon: <Bell className="w-4 h-4" /> },
     { id: "subscriptions", label: "Subscriptions", icon: <Crown className="w-4 h-4" /> },
@@ -252,10 +249,26 @@ export default function App() {
     { id: "settings", label: "Settings", icon: <SettingsIcon className="w-4 h-4" /> },
   ];
 
+  const knownTabs = [
+    "dashboard",
+    "vendors",
+    "riders",
+    "customers",
+    "orders",
+    "settlements",
+    "refunds",
+    "support",
+    "feedback",
+    "sos",
+    "requests",
+    "subscriptions",
+    "notifications",
+    "analytics",
+    "settings",
+  ];
+
   return (
     <div className="flex bg-[#F8FAFC] dark:bg-slate-950 min-h-screen w-full font-sans antialiased text-[#0F172A] dark:text-slate-200 transition-colors duration-200">
-      
-      {/* 1. SIDEBAR DESIGN */}
       <aside className="w-64 bg-white dark:bg-slate-900 border-r border-[#E2E8F0] dark:border-slate-800 flex flex-col justify-between fixed h-full z-30 transition-colors duration-200">
         <div className="overflow-y-auto flex-1">
           <div className="h-16 flex items-center px-6 border-b border-[#F1F5F9] dark:border-slate-800 gap-3">
@@ -270,6 +283,7 @@ export default function App() {
             {navItems.map((item) => {
               const isActive = currentTab === item.id;
               const isSupportItem = item.id === "support";
+              const isFeedbackItem = item.id === "feedback";
               return (
                 <button
                   key={item.id}
@@ -286,10 +300,16 @@ export default function App() {
                     </span>
                     <span>{item.label}</span>
                   </div>
-                  
+
                   {isSupportItem && supportBadge && (
                     <span className={`h-4 min-w-[16px] px-1 rounded-full text-[9px] font-bold flex items-center justify-center transition-all shadow-sm ${supportBadge.bgClass}`}>
                       {supportBadge.count}
+                    </span>
+                  )}
+
+                  {isFeedbackItem && feedbackBadge > 0 && (
+                    <span className="h-4 min-w-[16px] px-1 rounded-full text-[9px] font-bold flex items-center justify-center bg-amber-500 text-white animate-pulse shadow-sm">
+                      {feedbackBadge > 99 ? "99+" : feedbackBadge}
                     </span>
                   )}
 
@@ -297,9 +317,8 @@ export default function App() {
                     const badgeConfigs: Record<string, { count: number; classes: string }> = {
                       requests: { count: sidebarCounts.requests, classes: "bg-red-500 text-white animate-pulse" },
                       settlements: { count: sidebarCounts.settlements, classes: "bg-orange-500 text-white animate-pulse" },
-                      refunds: { count: sidebarCounts.refunds, classes: "bg-red-500 text-white animate-pulse" }
+                      refunds: { count: sidebarCounts.refunds, classes: "bg-red-500 text-white animate-pulse" },
                     };
-
                     const targetConfig = badgeConfigs[item.id];
                     if (targetConfig && targetConfig.count > 0) {
                       return (
@@ -336,16 +355,14 @@ export default function App() {
         </div>
       </aside>
 
-      {/* 2. MAIN LAYOUT FLEX LAYER CONTAINER */}
       <div className="flex-1 flex flex-col pl-64 min-w-0">
-        
         <header className="h-16 bg-white dark:bg-slate-900 border-b border-[#E2E8F0] dark:border-slate-800 flex items-center justify-between px-8 sticky top-0 z-20 transition-colors duration-200">
           <div className="flex items-center gap-2 text-xs font-medium">
             <span className="text-[#94A3B8]">Rivo</span>
             <span className="text-[#E2E8F0] dark:text-slate-700">/</span>
             <span className="text-[#475569] dark:text-slate-300 capitalize font-semibold">{currentTab}</span>
           </div>
-          
+
           <div className="flex items-center gap-4">
             <button
               onClick={() => setCurrentTab("notifications")}
@@ -361,7 +378,7 @@ export default function App() {
             </button>
 
             <div className="text-right text-xs text-[#64748B] dark:text-slate-400 font-medium bg-[#F8FAFC] dark:bg-slate-800 border border-[#E2E8F0] dark:border-slate-700 px-3 py-1.5 rounded-lg transition-colors duration-200">
-              {new Date().toLocaleDateString("en-US", { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
+              {new Date().toLocaleDateString("en-US", { weekday: "short", day: "numeric", month: "short", year: "numeric" })}
             </div>
           </div>
         </header>
@@ -369,26 +386,26 @@ export default function App() {
         <main className="flex-1 p-8 overflow-y-auto">
           {currentTab === "dashboard" && <Dashboard />}
           {currentTab === "vendors" && <Vendors />}
-          {currentTab === "riders" && <Riders />} 
-          {currentTab === "customers" && <Customers />} 
-          {currentTab === "orders" && <Orders />} 
-          {currentTab === "settlements" && <Settlements />} 
-          {currentTab === "refunds" && <Refunds />} 
-          {currentTab === "support" && <Supports />} 
+          {currentTab === "riders" && <Riders />}
+          {currentTab === "customers" && <Customers />}
+          {currentTab === "orders" && <Orders />}
+          {currentTab === "settlements" && <Settlements />}
+          {currentTab === "refunds" && <Refunds />}
+          {currentTab === "support" && <Supports />}
+          {currentTab === "feedback" && <Feedback />}
           {currentTab === "sos" && <SOS />}
-          {currentTab === "requests" && <RequestsCenter />} 
-          {currentTab === "subscriptions" && <Subscriptions />} 
-          {currentTab === "notifications" && <Notifications />} 
-          {currentTab === "analytics" && <Analytics />} 
-          {currentTab === "settings" && <Settings />} 
+          {currentTab === "requests" && <RequestsCenter />}
+          {currentTab === "subscriptions" && <Subscriptions />}
+          {currentTab === "notifications" && <Notifications />}
+          {currentTab === "analytics" && <Analytics />}
+          {currentTab === "settings" && <Settings />}
 
-          {currentTab !== "dashboard" && currentTab !== "vendors" && currentTab !== "riders" && currentTab !== "customers" && currentTab !== "orders" && currentTab !== "settlements" && currentTab !== "refunds" && currentTab !== "support" && currentTab !== "sos" && currentTab !== "requests" && currentTab !== "subscriptions" && currentTab !== "notifications" && currentTab !== "analytics" && currentTab !== "settings" && (
+          {!knownTabs.includes(currentTab) && (
             <div className="bg-white dark:bg-slate-900 border border-[#E2E8F0] dark:border-slate-800 rounded-xl p-16 text-center text-xs font-medium text-[#94A3B8] dark:text-slate-500 transition-colors duration-200">
               The <span className="capitalize text-[#475569] dark:text-slate-300 font-semibold">"{currentTab}"</span> panel is connected and preparing for production initialization.
             </div>
           )}
         </main>
-
       </div>
     </div>
   );
