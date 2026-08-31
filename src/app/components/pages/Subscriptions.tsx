@@ -1,316 +1,100 @@
-import React, { useState, useEffect } from "react";
-import { 
-  Check, 
-  Store, 
-  ShieldCheck, 
-  RefreshCcw, 
-  Sparkles,
-  Lock,
-  Clock,
-  MapPin,
-  TrendingUp
-} from "lucide-react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { AlertCircle, Check, Lock, RefreshCcw, ShieldCheck, Sparkles } from "lucide-react";
 import { cn } from "../../../lib/utils";
 import { supabase } from "../../../lib/supabase";
 
-interface PlanFeature {
-  text: string;
-  included: boolean;
-}
+type Plan = { id: string; name: string; price: string; description: string; comingSoon?: boolean; popular?: boolean; features: string[] };
 
-interface SubscriptionPlan {
-  id: string;
-  name: string;
-  priceLabel: string;
-  subtext: string;
-  badge?: string;
-  isComingSoon?: boolean;
-  features: PlanFeature[];
+type SubscriptionRow = { vendor_id: string | null; plan_name: string | null };
+
+const PLANS: Plan[] = [
+  { id: "free", name: "FREE", price: "₹0", description: "5% commission per order", features: ["No fixed monthly fee", "Unlimited customer orders", "Basic analytics", "Standard support", "Core settlements ledger"] },
+  { id: "basic", name: "BASIC", price: "₹499", description: "0% commission", popular: true, features: ["Fixed monthly fee", "0% commission on orders", "Unlimited customer orders", "Basic analytics", "Standard support"] },
+  { id: "growth", name: "GROWTH", price: "₹999", description: "0% commission", comingSoon: true, features: ["Advanced analytics", "0% commission on orders", "Priority visibility", "Priority support", "Marketing campaigns"] },
+  { id: "pro", name: "PRO", price: "₹1499", description: "0% commission", comingSoon: true, features: ["Enterprise workspace", "0% commission on orders", "Advanced fleet routing", "Priority account support", "API integration access"] },
+];
+
+function normalizePlan(value: string | null): "free" | "basic" | "growth" | "pro" {
+  const name = String(value || "").trim().toLowerCase();
+  if (name === "basic" || name === "499") return "basic";
+  if (name === "growth" || name === "999") return "growth";
+  if (name === "pro" || name === "1499") return "pro";
+  return "free";
 }
 
 export function Subscriptions() {
-  const [vendorMetrics, setVendorMetrics] = useState({
-    freeTierCount: 0,
-    basicTierCount: 0,
-    growthTierCount: 0,
-    proTierCount: 0,
-    totalVendors: 0
-  });
-  
-  const [subConfig, setSubConfig] = useState<any>(null);
-  const [deliveryConfig, setDeliveryConfig] = useState<any>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [rows, setRows] = useState<SubscriptionRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  async function fetchPlatformData() {
-    try {
-      setIsLoading(true);
-
-      // 1. Fetch Subscription Config Definitions
-      const { data: subData } = await supabase
-        .from("platform_settings")
-        .select("setting_value")
-        .eq("setting_key", "subscription_config")
-        .single();
-      
-      if (subData?.setting_value) {
-        setSubConfig(subData.setting_value);
-      }
-
-      // 2. Fetch Delivery Settings Configurations
-      const { data: deliveryData } = await supabase
-        .from("platform_settings")
-        .select("setting_value")
-        .eq("setting_key", "delivery_config")
-        .single();
-      
-      if (deliveryData?.setting_value) {
-        setDeliveryConfig(deliveryData.setting_value);
-      }
-
-      // 3. Gather Metric Counts from the subscriptions ledger safely
-      const { data: activeSubs, error: subError } = await supabase
-        .from("subscriptions")
-        .select("*");
-
-      if (subError) throw subError;
-
-      const safeSubs = activeSubs || [];
-      
-      let freeCount = 0;
-      let basicCount = 0;
-      let growthCount = 0;
-      let proCount = 0;
-      const vendorIds = new Set<string>();
-
-      safeSubs.forEach((sub: any) => {
-        const vId = sub.vendor_id || sub.merchant_id || sub.id;
-        if (vId) vendorIds.add(vId);
-
-        // Read subscriptions ONLY from subscriptions.plan_name with backward compatibility mapping
-        const rawPlanName = String(sub.plan_name || "").toLowerCase();
-
-        if (rawPlanName === "free") {
-          freeCount++;
-        } else if (rawPlanName === "basic" || rawPlanName === "499") {
-          basicCount++;
-        } else if (rawPlanName === "growth") {
-          growthCount++;
-        } else if (rawPlanName === "pro") {
-          proCount++;
-        } else {
-          // Default unknown or empty records fallback safely to free mapping rules
-          freeCount++;
-        }
-      });
-
-      setVendorMetrics({
-        freeTierCount: freeCount,
-        basicTierCount: basicCount,
-        growthTierCount: growthCount,
-        proTierCount: proCount,
-        totalVendors: vendorIds.size || safeSubs.length
-      });
-
-    } catch (err) {
-      console.error("Failed loading real-time platform distribution context:", err);
-    } finally {
-      setIsLoading(false);
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    const { data, error: queryError } = await supabase.from("subscriptions").select("vendor_id, plan_name");
+    if (queryError) {
+      console.error("Subscription dashboard query failed:", queryError);
+      setRows([]);
+      setError(queryError.message || "Unable to load subscription data.");
+    } else {
+      setRows((data || []) as SubscriptionRow[]);
     }
-  }
-
-  useEffect(() => {
-    fetchPlatformData();
+    setLoading(false);
   }, []);
 
-  // Display exactly four cards matching launch specifications
-  const currentPlans: SubscriptionPlan[] = [
-    {
-      id: "free_tier",
-      name: "FREE",
-      priceLabel: "₹0",
-      subtext: "5% commission per order",
-      features: [
-        { text: "No Fixed Monthly Fee", included: true },
-        { text: "Unlimited Customer Orders", included: true },
-        { text: "Basic Analytics Workspace", included: true },
-        { text: "Standard Support Helpdesk", included: true },
-        { text: "Core Payout Settlements Ledger", included: true }
-      ]
-    },
-    {
-      id: "basic_tier",
-      name: "BASIC",
-      priceLabel: "₹499",
-      subtext: "0% commission layout model",
-      badge: "Most Popular",
-      features: [
-        { text: "Fixed Monthly Fee", included: true },
-        { text: "0% Commission on Orders", included: true },
-        { text: "Unlimited Customer Orders", included: true },
-        { text: "Basic Analytics Workspace", included: true },
-        { text: "Standard Support Helpdesk", included: true }
-      ]
-    },
-    {
-      id: "growth_tier",
-      name: "GROWTH",
-      priceLabel: "₹999",
-      subtext: "0% commission premium model",
-      isComingSoon: true,
-      features: [
-        { text: "Advanced Analytics Toolkit", included: true },
-        { text: "0% Commission on Orders", included: true },
-        { text: "Priority Customer Visibility", included: true },
-        { text: "Dedicated Account Support Desk", included: true },
-        { text: "Custom Marketing Campaigns", included: true }
-      ]
-    },
-    {
-      id: "pro_tier",
-      name: "PRO",
-      priceLabel: "₹1499",
-      subtext: "0% commission enterprise model",
-      isComingSoon: true,
-      features: [
-        { text: "Enterprise Workspace Suite", included: true },
-        { text: "0% Commission on Orders", included: true },
-        { text: "Maximum Fleet Routing Multipliers", included: true },
-        { text: "24/7 VIP Dedicated Account Manager", included: true },
-        { text: "API Integration Access Layer", included: true }
-      ]
-    }
-  ];
+  useEffect(() => { load(); }, [load]);
+
+  const metrics = useMemo(() => {
+    const counts = { free: 0, basic: 0, growth: 0, pro: 0 };
+    const vendorKeys = new Set<string>();
+    const seen = new Set<string>();
+    rows.forEach((row, index) => {
+      const plan = normalizePlan(row.plan_name);
+      const vendorKey = row.vendor_id || `row-${index}`;
+      const key = `${vendorKey}:${plan}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      counts[plan] += 1;
+      if (row.vendor_id) vendorKeys.add(row.vendor_id);
+    });
+    return { ...counts, total: vendorKeys.size || rows.length };
+  }, [rows]);
 
   return (
     <div className="space-y-6">
-      {/* Page Header Component Block */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-[#0F172A]">Platform Subscription Plans</h1>
-          <p className="text-sm text-[#64748B]">Manage Rivo's core commission rules and subscription price points.</p>
+          <p className="text-sm text-[#64748B]">Current subscription model and live vendor distribution.</p>
         </div>
-        <button 
-          onClick={fetchPlatformData}
-          disabled={isLoading}
-          className="h-9 px-3 gap-1.5 inline-flex items-center justify-center text-xs font-medium border border-[#E2E8F0] rounded-lg bg-white text-[#64748B] hover:bg-[#F8FAFC] disabled:opacity-50 transition-colors"
-        >
-          <RefreshCcw className={cn("w-3.5 h-3.5", isLoading && "animate-spin")} />
-          Refresh Stats
+        <button onClick={load} disabled={loading} className="h-9 px-3 inline-flex items-center gap-1.5 text-xs font-medium border border-[#E2E8F0] rounded-lg bg-white text-[#64748B] hover:bg-[#F8FAFC] disabled:opacity-50">
+          <RefreshCcw className={cn("w-3.5 h-3.5", loading && "animate-spin")} /> Refresh
         </button>
       </div>
 
-      {/* DYNAMIC SUBSCRIPTION BREAKDOWN CARDS MATRIX */}
+      {error && <div className="flex gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"><AlertCircle className="w-4 h-4 mt-0.5 shrink-0" /><div><b>Subscription data unavailable.</b><div className="text-xs mt-0.5">{error}</div></div></div>}
+
       <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-        {/* FREE Metrics Card */}
-        <div className="bg-white border border-[#E2E8F0] rounded-xl p-4 flex flex-col justify-between">
-          <div>
-            <p className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider">FREE Members (5%)</p>
-            <h3 className="text-2xl font-bold text-[#0F172A] mt-1">{isLoading ? "..." : vendorMetrics.freeTierCount}</h3>
+        {[['FREE Members (5%)', metrics.free], ['BASIC Members (0%)', metrics.basic], ['GROWTH Members', metrics.growth], ['PRO Members', metrics.pro], ['Total Vendors', metrics.total]].map(([label, value]) => (
+          <div key={String(label)} className="bg-white border border-[#E2E8F0] rounded-xl p-4">
+            <p className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider">{label}</p>
+            <h3 className="text-2xl font-bold text-[#0F172A] mt-1">{loading ? "..." : value}</h3>
+            <p className="text-xs text-[#94A3B8] mt-3">Live subscription records</p>
           </div>
-          <p className="text-xs text-[#94A3B8] mt-3">Live commission contracts</p>
-        </div>
-
-        {/* BASIC Metrics Card */}
-        <div className="bg-white border border-[#E2E8F0] rounded-xl p-4 flex flex-col justify-between border-emerald-100 bg-emerald-50/5">
-          <div>
-            <p className="text-[11px] font-semibold text-[#16A34A] uppercase tracking-wider">BASIC Members (0%)</p>
-            <h3 className="text-2xl font-bold text-[#16A34A] mt-1">{isLoading ? "..." : vendorMetrics.basicTierCount}</h3>
-          </div>
-          <p className="text-xs text-[#16A34A] font-medium mt-3">Active fixed billing models</p>
-        </div>
-
-        {/* GROWTH Metrics Card */}
-        <div className="bg-white border border-[#E2E8F0] rounded-xl p-4 flex flex-col justify-between border-purple-100 bg-purple-50/5">
-          <div>
-            <p className="text-[11px] font-semibold text-purple-600 uppercase tracking-wider">GROWTH Members</p>
-            <h3 className="text-2xl font-bold text-purple-700 mt-1">{isLoading ? "..." : vendorMetrics.growthTierCount}</h3>
-          </div>
-          <p className="text-xs text-purple-600 font-medium mt-3">Future expansion plan</p>
-        </div>
-
-        {/* PRO Metrics Card */}
-        <div className="bg-white border border-[#E2E8F0] rounded-xl p-4 flex flex-col justify-between border-amber-100 bg-amber-50/5">
-          <div>
-            <p className="text-[11px] font-semibold text-amber-600 uppercase tracking-wider">PRO Members</p>
-            <h3 className="text-2xl font-bold text-amber-700 mt-1">{isLoading ? "..." : vendorMetrics.proTierCount}</h3>
-          </div>
-          <p className="text-xs text-amber-600 font-medium mt-3">Enterprise tier track</p>
-        </div>
-
-        {/* Summary Card */}
-        <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl p-4 flex flex-col justify-between">
-          <div>
-            <p className="text-[11px] font-semibold text-[#475569] uppercase tracking-wider">Total Active Merchants</p>
-            <h3 className="text-2xl font-bold text-[#0F172A] mt-1">{isLoading ? "..." : vendorMetrics.totalVendors}</h3>
-          </div>
-          <p className="text-xs text-[#64748B] font-medium mt-3">Unified directory footprint</p>
-        </div>
+        ))}
       </div>
 
-      {/* Subscription Pricing Matrix Cards Grid Layout */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 pt-2">
-        {currentPlans.map((plan) => (
-          <div 
-            key={plan.id}
-            className={cn(
-              "bg-white border rounded-2xl p-6 relative flex flex-col justify-between transition-all",
-              plan.badge ? "border-[#22C55E] shadow-sm ring-1 ring-[#22C55E]/10" : "border-[#E2E8F0]",
-              plan.isComingSoon && "opacity-75 bg-[#FBFCFD]"
-            )}
-          >
-            {/* Top Section */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+        {PLANS.map((plan) => (
+          <div key={plan.id} className={cn("bg-white border rounded-2xl p-6 relative flex flex-col justify-between", plan.popular ? "border-[#22C55E] ring-1 ring-[#22C55E]/10" : "border-[#E2E8F0]", plan.comingSoon && "opacity-75 bg-[#FBFCFD]")}>
+            {plan.popular && <span className="absolute -top-3 right-4 bg-[#22C55E] text-white text-[10px] font-bold uppercase px-2.5 py-1 rounded-full flex items-center gap-1"><Sparkles className="w-3 h-3" /> Most Popular</span>}
             <div>
-              {plan.badge && (
-                <span className="absolute -top-3 right-4 bg-[#22C55E] text-white text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full shadow-sm flex items-center gap-1">
-                  <Sparkles className="w-3 h-3" /> {plan.badge}
-                </span>
-              )}
-
-              <div className="mb-4">
-                <h3 className="text-sm font-bold text-[#64748B] uppercase tracking-wider mb-1">{plan.name}</h3>
-                <div className="flex items-baseline gap-1 mt-2">
-                  <span className="text-3xl font-extrabold text-[#0F172A] tracking-tight">{plan.priceLabel}</span>
-                  {!plan.isComingSoon && plan.priceLabel !== "FREE" && plan.priceLabel !== "₹0" && (
-                    <span className="text-xs font-semibold text-[#64748B]">/ month</span>
-                  )}
-                </div>
-                <p className="text-xs font-semibold text-[#16A34A] mt-2 bg-[#F0FDF4] inline-block px-2 py-0.5 rounded-md border border-[#DCFCE7]">
-                  {plan.subtext}
-                </p>
-              </div>
-
+              <h3 className="text-sm font-bold text-[#64748B] uppercase tracking-wider">{plan.name}</h3>
+              <div className="flex items-baseline gap-1 mt-2"><span className="text-3xl font-extrabold text-[#0F172A]">{plan.price}</span>{plan.id !== "free" && !plan.comingSoon && <span className="text-xs text-[#64748B]">/ month</span>}</div>
+              <p className="text-xs font-semibold text-[#16A34A] mt-2 bg-[#F0FDF4] inline-block px-2 py-0.5 rounded-md border border-[#DCFCE7]">{plan.description}</p>
               <hr className="border-[#F1F5F9] my-4" />
-
-              <ul className="space-y-3 mb-6">
-                {plan.features.map((feature, i) => (
-                  <li key={i} className="flex items-start gap-2.5 text-xs">
-                    <div className={cn(
-                      "w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5",
-                      feature.included ? "bg-[#EFF6FF] text-[#2563EB]" : "bg-slate-100 text-slate-400"
-                    )}>
-                      <Check className="w-3 h-3 stroke-[3]" />
-                    </div>
-                    <span className={cn("font-medium", feature.included ? "text-[#334155]" : "text-[#94A3B8] line-through")}>
-                      {feature.text}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+              <ul className="space-y-3 mb-6">{plan.features.map((feature) => <li key={feature} className="flex items-start gap-2.5 text-xs"><span className="w-4 h-4 rounded-full flex items-center justify-center shrink-0 bg-[#EFF6FF] text-[#2563EB]"><Check className="w-3 h-3 stroke-[3]" /></span><span className="font-medium text-[#334155]">{feature}</span></li>)}</ul>
             </div>
-
-            <div>
-              {plan.isComingSoon ? (
-                <div className="w-full h-9 bg-slate-100 rounded-lg text-xs font-bold text-slate-400 border border-slate-200 inline-flex items-center justify-center gap-1.5 cursor-not-allowed">
-                  <Lock className="w-3.5 h-3.5" /> Coming Soon
-                </div>
-              ) : (
-                <div className={cn(
-                  "w-full h-9 rounded-lg text-xs font-bold border inline-flex items-center justify-center gap-1.5 bg-slate-50 border-slate-200 text-slate-600 select-none"
-                )}>
-                  <ShieldCheck className="w-3.5 h-3.5 text-[#22C55E]" /> Operational Rule Profile
-                </div>
-              )}
-            </div>
+            {plan.comingSoon ? <div className="w-full h-9 bg-slate-100 rounded-lg text-xs font-bold text-slate-400 border border-slate-200 inline-flex items-center justify-center gap-1.5"><Lock className="w-3.5 h-3.5" /> Coming Soon</div> : <div className="w-full h-9 rounded-lg text-xs font-bold border inline-flex items-center justify-center gap-1.5 bg-slate-50 border-slate-200 text-slate-600"><ShieldCheck className="w-3.5 h-3.5 text-[#22C55E]" /> Operational Rule Profile</div>}
           </div>
         ))}
       </div>
