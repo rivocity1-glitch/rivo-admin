@@ -1,13 +1,18 @@
-import React, { useEffect, useState, useMemo, useCallback } from 'react';
-import { supabase } from "../../../lib/supabase";
-import { 
-  Inbox, 
-  CreditCard, 
-  Layers, 
-  Store, 
-  Clock, 
+import React, {
+  useEffect,
+  useState,
+  useMemo,
+  useCallback,
+} from 'react';
+import { supabase } from '../../../lib/supabase';
+import {
+  Inbox,
+  CreditCard,
+  Layers,
+  Store,
+  Clock,
   AlertCircle,
-  Eye, 
+  Eye,
   Loader2,
   Trash2,
   Square,
@@ -16,10 +21,13 @@ import {
   X as XIcon,
   Search,
   RefreshCw,
-  Bell
+  Bell,
 } from 'lucide-react';
 
-// --- TYPES & INTERFACES ---
+// ============================================================
+// TYPES
+// ============================================================
+
 interface Notification {
   id: string;
   title: string;
@@ -55,7 +63,11 @@ interface Vendor {
 interface UnifiedRequest {
   id: string;
   source_table: 'notifications' | 'subscription_payment_requests';
-  type: 'subscription' | 'settlement' | 'vendor_registration' | 'notification';
+  type:
+    | 'subscription'
+    | 'settlement'
+    | 'vendor_registration'
+    | 'notification';
   title: string;
   message: string;
   status: string;
@@ -63,7 +75,6 @@ interface UnifiedRequest {
   vendor_id?: string;
   vendor_shop_name?: string;
   vendor_owner_name?: string;
-  // Specific properties
   plan_name?: string;
   amount?: number;
   utr_number?: string;
@@ -79,70 +90,141 @@ interface SubscriptionPlan {
   is_active: boolean;
 }
 
-type TabType = 'all' | 'subscription' | 'settlement' | 'vendor_registration' | 'notifications';
+type TabType =
+  | 'all'
+  | 'subscription'
+  | 'settlement'
+  | 'vendor_registration'
+  | 'notifications';
+
 type SortOrder = 'desc' | 'asc';
 
+// ============================================================
+// COMPONENT
+// ============================================================
+
 export default function RequestsCenter() {
-  // --- STATE MANAGEMENT ---
+  // ----------------------------------------------------------
+  // STATE
+  // ----------------------------------------------------------
+
   const [loading, setLoading] = useState<boolean>(true);
   const [errorState, setErrorState] = useState<string | null>(null);
-  
-  const [rawNotifications, setRawNotifications] = useState<Notification[]>([]);
-  const [rawPaymentRequests, setRawPaymentRequests] = useState<SubscriptionPaymentRequest[]>([]);
-  const [vendorsMap, setVendorsMap] = useState<Record<string, Vendor>>({});
-  
+
+  const [rawNotifications, setRawNotifications] = useState<
+    Notification[]
+  >([]);
+
+  const [rawPaymentRequests, setRawPaymentRequests] = useState<
+    SubscriptionPaymentRequest[]
+  >([]);
+
+  const [vendorsMap, setVendorsMap] = useState<
+    Record<string, Vendor>
+  >({});
+
   const [activeTab, setActiveTab] = useState<TabType>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
-  
+
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [processingId, setProcessingId] = useState<string | null>(null);
-  const [actionLoading, setActionLoading] = useState<boolean>(false);
-  
-  // Pagination State
+  const [processingId, setProcessingId] = useState<string | null>(
+    null
+  );
+  const [actionLoading, setActionLoading] =
+    useState<boolean>(false);
+
   const [currentPage, setCurrentPage] = useState<number>(1);
+
   const itemsPerPage = 10;
 
-  // --- DATA FETCHING & SYNCHRONIZATION ---
+  // ============================================================
+  // DATA FETCHING
+  // ============================================================
+
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
       setErrorState(null);
 
-      // 1. Fetch notifications
-      const { data: notificationsData, error: notificationsError } = await supabase
+      // --------------------------------------------------------
+      // 1. Notifications
+      // --------------------------------------------------------
+
+      const {
+        data: notificationsData,
+        error: notificationsError,
+      } = await supabase
         .from('notifications')
-        .select('id, title, message, type, is_read, created_at, recipient_id')
+        .select(
+          'id, title, message, type, is_read, created_at, recipient_id'
+        )
         .order('created_at', { ascending: false });
 
-      if (notificationsError) throw notificationsError;
+      if (notificationsError) {
+        throw notificationsError;
+      }
 
-      // 2. Fetch payment requests
-      const { data: paymentRequestsData, error: paymentRequestsError } = await supabase
+      // --------------------------------------------------------
+      // 2. Subscription payment requests
+      // --------------------------------------------------------
+
+      const {
+        data: paymentRequestsData,
+        error: paymentRequestsError,
+      } = await supabase
         .from('subscription_payment_requests')
-        .select('id, vendor_id, plan_name, status, created_at, utr_number, amount, approved_at, remarks')
+        .select(
+          'id, vendor_id, plan_name, status, created_at, utr_number, amount, approved_at, remarks'
+        )
         .order('created_at', { ascending: false });
 
-      if (paymentRequestsError) throw paymentRequestsError;
+      if (paymentRequestsError) {
+        throw paymentRequestsError;
+      }
 
-      // Collect all vendor IDs from both datasets safely
+      // --------------------------------------------------------
+      // 3. Collect vendor IDs
+      // --------------------------------------------------------
+
       const vendorIds = new Set<string>();
-      (notificationsData || []).forEach(n => { if (n.recipient_id) vendorIds.add(n.recipient_id); });
-      (paymentRequestsData || []).forEach(p => { if (p.vendor_id) vendorIds.add(p.vendor_id); });
 
-      // 3. Fetch Vendors separately to respect NO SUPABASE JOINS rule
+      (notificationsData || []).forEach((notification) => {
+        if (notification.recipient_id) {
+          vendorIds.add(notification.recipient_id);
+        }
+      });
+
+      (paymentRequestsData || []).forEach((request) => {
+        if (request.vendor_id) {
+          vendorIds.add(request.vendor_id);
+        }
+      });
+
+      // --------------------------------------------------------
+      // 4. Fetch vendors
+      // --------------------------------------------------------
+
       const vendorMapObj: Record<string, Vendor> = {};
+
       if (vendorIds.size > 0) {
-        const { data: vendorsData, error: vendorsError } = await supabase
+        const {
+          data: vendorsData,
+          error: vendorsError,
+        } = await supabase
           .from('vendors')
-          .select('id, shop_name, owner_name, email, phone, status, created_at')
+          .select(
+            'id, shop_name, owner_name, email, phone, status, created_at'
+          )
           .in('id', Array.from(vendorIds));
 
-        if (vendorsError) throw vendorsError;
+        if (vendorsError) {
+          throw vendorsError;
+        }
 
-        (vendorsData || []).forEach((v: Vendor) => {
-          vendorMapObj[v.id] = v;
+        (vendorsData || []).forEach((vendor: Vendor) => {
+          vendorMapObj[vendor.id] = vendor;
         });
       }
 
@@ -150,43 +232,85 @@ export default function RequestsCenter() {
       setRawPaymentRequests(paymentRequestsData || []);
       setVendorsMap(vendorMapObj);
     } catch (err: any) {
-      console.error("Error loading center requests data:", err);
-      setErrorState(err.message || "Failed to parse dashboard request records.");
+      console.error(
+        'Error loading Requests Center data:',
+        err
+      );
+
+      setErrorState(
+        err?.message ||
+          'Failed to load system operation records.'
+      );
     } finally {
       setLoading(false);
     }
   }, []);
 
-  // --- SUPABASE REALTIME SUBSCRIPTION IMPLEMENTATION ---
+  // ============================================================
+  // REALTIME
+  // ============================================================
+
   useEffect(() => {
     fetchData();
 
     const notificationsChannel = supabase
-      .channel('public:notifications')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications' }, () => {
-        fetchData();
-      })
+      .channel('requests-center-notifications')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'notifications',
+        },
+        () => {
+          fetchData();
+        }
+      )
       .subscribe();
 
     const paymentRequestsChannel = supabase
-      .channel('public:subscription_payment_requests')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'subscription_payment_requests' }, () => {
-        fetchData();
-      })
+      .channel('requests-center-payment-requests')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'subscription_payment_requests',
+        },
+        () => {
+          fetchData();
+        }
+      )
       .subscribe();
 
     const vendorSettlementsChannel = supabase
-      .channel('public:vendor_settlements')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'vendor_settlements' }, () => {
-        fetchData();
-      })
+      .channel('requests-center-vendor-settlements')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'vendor_settlements',
+        },
+        () => {
+          fetchData();
+        }
+      )
       .subscribe();
 
     const vendorsChannel = supabase
-      .channel('public:vendors')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'vendors' }, () => {
-        fetchData();
-      })
+      .channel('requests-center-vendors')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'vendors',
+        },
+        () => {
+          fetchData();
+        }
+      )
       .subscribe();
 
     return () => {
@@ -197,464 +321,1239 @@ export default function RequestsCenter() {
     };
   }, [fetchData]);
 
-  // --- MEMOIZED MEMORY MAPPER & TRANSFORMATION ---
-  const unifiedRequestsList = useMemo((): UnifiedRequest[] => {
-    const records: UnifiedRequest[] = [];
+  // ============================================================
+  // UNIFIED REQUEST LIST
+  // ============================================================
 
-    // Transform payment requests
-    rawPaymentRequests.forEach(req => {
-      const vendor = vendorsMap[req.vendor_id];
-      records.push({
-        id: req.id,
-        source_table: 'subscription_payment_requests',
-        type: 'subscription',
-        title: `Plan Upgrade Request: ${req.plan_name}`,
-        message: `Amount: ₹${req.amount} | UTR: ${req.utr_number} ${req.remarks ? `| Remarks: ${req.remarks}` : ''}`,
-        status: req.status,
-        created_at: req.created_at,
-        vendor_id: req.vendor_id,
-        vendor_shop_name: vendor?.shop_name || 'Unknown Shop',
-        vendor_owner_name: vendor?.owner_name || 'Unknown Owner',
-        plan_name: req.plan_name,
-        amount: req.amount,
-        utr_number: req.utr_number
+  const unifiedRequestsList = useMemo(
+    (): UnifiedRequest[] => {
+      const records: UnifiedRequest[] = [];
+
+      // --------------------------------------------------------
+      // Subscription payment requests
+      // --------------------------------------------------------
+
+      rawPaymentRequests.forEach((request) => {
+        const vendor = vendorsMap[request.vendor_id];
+
+        records.push({
+          id: request.id,
+          source_table: 'subscription_payment_requests',
+          type: 'subscription',
+          title: `Plan Upgrade Request: ${request.plan_name}`,
+          message: [
+            `Amount: ₹${request.amount}`,
+            `UTR: ${request.utr_number || 'Not provided'}`,
+            request.remarks
+              ? `Remarks: ${request.remarks}`
+              : '',
+          ]
+            .filter(Boolean)
+            .join(' | '),
+          status: request.status,
+          created_at: request.created_at,
+          vendor_id: request.vendor_id,
+          vendor_shop_name:
+            vendor?.shop_name || 'Unknown Shop',
+          vendor_owner_name:
+            vendor?.owner_name || 'Unknown Owner',
+          plan_name: request.plan_name,
+          amount: request.amount,
+          utr_number: request.utr_number,
+        });
       });
-    });
 
-    // Transform system notification logs
-    rawNotifications.forEach(notif => {
-      const vendor = notif.recipient_id ? vendorsMap[notif.recipient_id] : undefined;
-      let calculatedType: 'subscription' | 'settlement' | 'vendor_registration' | 'notification' = 'notification';
-      
-      if (notif.type === 'subscription') calculatedType = 'subscription';
-      else if (notif.type === 'settlement') calculatedType = 'settlement';
-      else if (notif.type === 'vendor_registration') calculatedType = 'vendor_registration';
+      // --------------------------------------------------------
+      // Notifications
+      // --------------------------------------------------------
 
-      records.push({
-        id: notif.id,
-        source_table: 'notifications',
-        type: calculatedType,
-        title: notif.title,
-        message: notif.message,
-        status: notif.is_read ? 'read' : 'unread',
-        created_at: notif.created_at,
-        vendor_id: notif.recipient_id,
-        vendor_shop_name: vendor?.shop_name || 'System / Platform',
-        vendor_owner_name: vendor?.owner_name || 'Administrator',
-        is_read: notif.is_read
+      rawNotifications.forEach((notification) => {
+        const vendor = notification.recipient_id
+          ? vendorsMap[notification.recipient_id]
+          : undefined;
+
+        let calculatedType:
+          | 'subscription'
+          | 'settlement'
+          | 'vendor_registration'
+          | 'notification' = 'notification';
+
+        if (notification.type === 'subscription') {
+          calculatedType = 'subscription';
+        } else if (notification.type === 'settlement') {
+          calculatedType = 'settlement';
+        } else if (
+          notification.type === 'vendor_registration'
+        ) {
+          calculatedType = 'vendor_registration';
+        }
+
+        records.push({
+          id: notification.id,
+          source_table: 'notifications',
+          type: calculatedType,
+          title: notification.title,
+          message: notification.message,
+          status: notification.is_read ? 'read' : 'unread',
+          created_at: notification.created_at,
+          vendor_id: notification.recipient_id,
+          vendor_shop_name:
+            vendor?.shop_name || 'System / Platform',
+          vendor_owner_name:
+            vendor?.owner_name || 'Administrator',
+          is_read: notification.is_read,
+        });
       });
-    });
 
-    // Sort operations
-    return records.sort((a, b) => {
-      const timeA = new Date(a.created_at).getTime();
-      const timeB = new Date(b.created_at).getTime();
-      return sortOrder === 'desc' ? timeB - timeA : timeA - timeB;
-    });
-  }, [rawNotifications, rawPaymentRequests, vendorsMap, sortOrder]);
+      // --------------------------------------------------------
+      // Sort
+      // --------------------------------------------------------
 
-  // --- SEARCH AND FILTERS EXTENSION ---
+      return records.sort((a, b) => {
+        const timeA = new Date(a.created_at).getTime();
+        const timeB = new Date(b.created_at).getTime();
+
+        return sortOrder === 'desc'
+          ? timeB - timeA
+          : timeA - timeB;
+      });
+    },
+    [
+      rawNotifications,
+      rawPaymentRequests,
+      vendorsMap,
+      sortOrder,
+    ]
+  );
+
+  // ============================================================
+  // FILTERING
+  // ============================================================
+
   const filteredRequests = useMemo(() => {
-    return unifiedRequestsList.filter(req => {
-      // Tab categorization logic
-      if (activeTab === 'subscription' && req.type !== 'subscription') return false;
-      if (activeTab === 'settlement' && req.type !== 'settlement') return false;
-      if (activeTab === 'vendor_registration' && req.type !== 'vendor_registration') return false;
-      if (activeTab === 'notifications' && req.source_table !== 'notifications') return false;
+    return unifiedRequestsList.filter((request) => {
+      // --------------------------------------------------------
+      // Tab
+      // --------------------------------------------------------
 
-      // Status selector filters logic
-      if (statusFilter !== 'all') {
-        if (req.status !== statusFilter) return false;
+      if (
+        activeTab === 'subscription' &&
+        request.type !== 'subscription'
+      ) {
+        return false;
       }
 
-      // Query String match logic
+      if (
+        activeTab === 'settlement' &&
+        request.type !== 'settlement'
+      ) {
+        return false;
+      }
+
+      if (
+        activeTab === 'vendor_registration' &&
+        request.type !== 'vendor_registration'
+      ) {
+        return false;
+      }
+
+      if (
+        activeTab === 'notifications' &&
+        request.source_table !== 'notifications'
+      ) {
+        return false;
+      }
+
+      // --------------------------------------------------------
+      // Status
+      // --------------------------------------------------------
+
+      if (
+        statusFilter !== 'all' &&
+        request.status !== statusFilter
+      ) {
+        return false;
+      }
+
+      // --------------------------------------------------------
+      // Search
+      // --------------------------------------------------------
+
       if (searchQuery.trim() !== '') {
-        const query = searchQuery.toLowerCase();
-        const matchTitle = req.title?.toLowerCase().includes(query);
-        const matchMsg = req.message?.toLowerCase().includes(query);
-        const matchShop = req.vendor_shop_name?.toLowerCase().includes(query);
-        const matchOwner = req.vendor_owner_name?.toLowerCase().includes(query);
-        const matchUtr = req.utr_number?.toLowerCase().includes(query);
-        return matchTitle || matchMsg || matchShop || matchOwner || matchUtr;
+        const query = searchQuery.trim().toLowerCase();
+
+        const matchTitle = request.title
+          ?.toLowerCase()
+          .includes(query);
+
+        const matchMessage = request.message
+          ?.toLowerCase()
+          .includes(query);
+
+        const matchShop = request.vendor_shop_name
+          ?.toLowerCase()
+          .includes(query);
+
+        const matchOwner = request.vendor_owner_name
+          ?.toLowerCase()
+          .includes(query);
+
+        const matchUtr = request.utr_number
+          ?.toLowerCase()
+          .includes(query);
+
+        const matchPlan = request.plan_name
+          ?.toLowerCase()
+          .includes(query);
+
+        if (
+          !matchTitle &&
+          !matchMessage &&
+          !matchShop &&
+          !matchOwner &&
+          !matchUtr &&
+          !matchPlan
+        ) {
+          return false;
+        }
       }
 
       return true;
     });
-  }, [unifiedRequestsList, activeTab, statusFilter, searchQuery]);
+  }, [
+    unifiedRequestsList,
+    activeTab,
+    statusFilter,
+    searchQuery,
+  ]);
 
-  // --- STATISTICAL SUMMARY METRICS ---
+  // ============================================================
+  // METRICS
+  // ============================================================
+
   const metrics = useMemo(() => {
     return {
       total: unifiedRequestsList.length,
-      pendingSubscriptions: rawPaymentRequests.filter(p => p.status === 'pending').length,
-      unreadNotifications: rawNotifications.filter(n => !n.is_read).length,
-      vendorRegs: unifiedRequestsList.filter(r => r.type === 'vendor_registration').length
-    };
-  }, [unifiedRequestsList, rawPaymentRequests, rawNotifications]);
 
-  // --- PAGINATION COMPUTE HANDLER ---
+      pendingSubscriptions:
+        rawPaymentRequests.filter(
+          (request) => request.status === 'pending'
+        ).length,
+
+      unreadNotifications:
+        rawNotifications.filter(
+          (notification) => !notification.is_read
+        ).length,
+
+      vendorRegs: unifiedRequestsList.filter(
+        (request) =>
+          request.type === 'vendor_registration'
+      ).length,
+    };
+  }, [
+    unifiedRequestsList,
+    rawPaymentRequests,
+    rawNotifications,
+  ]);
+
+  // ============================================================
+  // PAGINATION
+  // ============================================================
+
+  const totalPages =
+    Math.ceil(
+      filteredRequests.length / itemsPerPage
+    ) || 1;
+
   const paginatedRequests = useMemo(() => {
-    const offset = (currentPage - 1) * itemsPerPage;
-    return filteredRequests.slice(offset, offset + itemsPerPage);
+    const offset =
+      (currentPage - 1) * itemsPerPage;
+
+    return filteredRequests.slice(
+      offset,
+      offset + itemsPerPage
+    );
   }, [filteredRequests, currentPage]);
 
-  const totalPages = Math.ceil(filteredRequests.length / itemsPerPage) || 1;
-
-  // Reset page marker when filters fluctuate
   useEffect(() => {
     setCurrentPage(1);
   }, [activeTab, searchQuery, statusFilter]);
 
-  // --- CORE WORKFLOW OPERATIONS (APPROVE / REJECT / BATCH) ---
-  const handleApproveSubscription = async (req: UnifiedRequest) => {
-    if (!req.plan_name || !req.vendor_id) return;
-    const confirmApprove = window.confirm(`Approve subscription upgrade request for Plan: "${req.plan_name}"?`);
-    if (!confirmApprove) return;
+  // ============================================================
+  // VENDOR NOTIFICATION HELPER
+  // ============================================================
 
-    try {
-      setProcessingId(req.id);
-      setActionLoading(true);
+  const createVendorNotification = async (
+    vendorId: string,
+    title: string,
+    message: string
+  ) => {
+    const { error } = await supabase
+      .from('notifications')
+      .insert([
+        {
+          recipient_id: vendorId,
+          title,
+          message,
+          type: 'subscription',
+          is_read: false,
+        },
+      ]);
 
-      // STEP 1: Load requested plan configuration parameters
-      const { data: planData, error: planError } = await supabase
-        .from('subscription_plans')
-        .select('plan_name, commission_percent, monthly_settlement_request_limit, max_profile_banners, monthly_price, is_active')
-        .eq('plan_name', req.plan_name)
-        .eq('is_active', true)
-        .maybeSingle();
-
-      if (planError || !planData) {
-        throw new Error(planError?.message || `The requested subscription plan "${req.plan_name}" is currently inactive or invalid.`);
-      }
-
-      // STEP 2: Approve target pending billing log record entries
-      const { error: patchRequestError } = await supabase
-        .from('subscription_payment_requests')
-        .update({
-          status: 'approved',
-          approved_at: new Date().toISOString()
-        })
-        .eq('id', req.id);
-
-      if (patchRequestError) throw patchRequestError;
-
-      // Calculate calendar dates limits
-      const isFreePlan = planData.monthly_price === 0 || planData.plan_name.toLowerCase() === 'free';
-      let computedExpiryDate: string | null = null;
-      if (!isFreePlan) {
-        const boundaryDate = new Date();
-        boundaryDate.setDate(boundaryDate.getDate() + 30);
-        computedExpiryDate = boundaryDate.toISOString();
-      }
-
-      // STEP 3: Upsert into active profiles subscriptions mapping engine
-      const { data: existingSub } = await supabase
-        .from('subscriptions')
-        .select('vendor_id')
-        .eq('vendor_id', req.vendor_id)
-        .maybeSingle();
-
-      if (existingSub) {
-        const { error: updateSubError } = await supabase
-          .from('subscriptions')
-          .update({
-            plan_name: planData.plan_name,
-            commission_percent: planData.commission_percent,
-            monthly_settlement_request_limit: planData.monthly_settlement_request_limit,
-            max_profile_banners: planData.max_profile_banners,
-            status: 'active',
-            start_date: new Date().toISOString(),
-            end_date: computedExpiryDate,
-            updated_at: new Date().toISOString()
-          })
-          .eq('vendor_id', req.vendor_id);
-
-        if (updateSubError) throw updateSubError;
-      } else {
-        const { error: insertSubError } = await supabase
-          .from('subscriptions')
-          .insert([{
-            vendor_id: req.vendor_id,
-            plan_name: planData.plan_name,
-            commission_percent: planData.commission_percent,
-            monthly_settlement_request_limit: planData.monthly_settlement_request_limit,
-            max_profile_banners: planData.max_profile_banners,
-            status: 'active',
-            start_date: new Date().toISOString(),
-            end_date: computedExpiryDate,
-            updated_at: new Date().toISOString()
-          }]);
-
-        if (insertSubError) throw insertSubError;
-      }
-
-      alert(`Subscription plan tier successfully provisioned to ${planData.plan_name}.`);
-      await fetchData();
-    } catch (err: any) {
-      console.error("Approve subscription transaction rejected:", err);
-      alert(err.message || "An operational error occurred during plan deployment provisioning setup.");
-    } finally {
-      setProcessingId(null);
-      setActionLoading(false);
+    if (error) {
+      throw error;
     }
   };
 
-  const handleRejectSubscription = async (req: UnifiedRequest) => {
-    const adminRemarks = window.prompt("Enter context notes/remarks for this request rejection cancellation:", "Invalid UTR / Payment confirmation missing");
-    if (adminRemarks === null) return; // User cancelled prompt
+  // ============================================================
+  // LOAD SUBSCRIPTION PLAN
+  // ============================================================
 
-    try {
-      setProcessingId(req.id);
-      setActionLoading(true);
+  const loadRequestedPlan = async (
+    requestedPlanName: string
+  ): Promise<SubscriptionPlan> => {
+    const normalizedPlanName =
+      requestedPlanName.trim();
 
-      const { error } = await supabase
-        .from('subscription_payment_requests')
-        .update({
-          status: 'rejected',
-          remarks: adminRemarks || 'Rejected by System Admin'
-        })
-        .eq('id', req.id);
-
-      if (error) throw error;
-
-      alert("Subscription request rejected successfully.");
-      await fetchData();
-    } catch (err: any) {
-      console.error("Failed executing entry denial state mutation:", err);
-      alert(err.message || "Failed execution of transaction denial state.");
-    } finally {
-      setProcessingId(null);
-      setActionLoading(false);
+    if (!normalizedPlanName) {
+      throw new Error(
+        'Subscription plan name is missing.'
+      );
     }
+
+    // ----------------------------------------------------------
+    // IMPORTANT:
+    // Do NOT require is_active for FREE.
+    //
+    // Free is the automatic 5% fallback plan and must remain
+    // usable even when the catalog row is marked inactive.
+    // ----------------------------------------------------------
+
+    const {
+      data: planData,
+      error: planError,
+    } = await supabase
+      .from('subscription_plans')
+      .select(
+        'plan_name, commission_percent, monthly_settlement_request_limit, max_profile_banners, monthly_price, is_active'
+      )
+      .ilike('plan_name', normalizedPlanName)
+      .maybeSingle();
+
+    if (planError) {
+      throw planError;
+    }
+
+    if (!planData) {
+      throw new Error(
+        `Subscription plan "${normalizedPlanName}" could not be found.`
+      );
+    }
+
+    const isFreePlan =
+      String(planData.plan_name)
+        .trim()
+        .toLowerCase() === 'free';
+
+    if (!isFreePlan && planData.is_active !== true) {
+      throw new Error(
+        `The requested subscription plan "${normalizedPlanName}" is currently inactive or invalid.`
+      );
+    }
+
+    return planData as SubscriptionPlan;
   };
 
-  const toggleReadState = async (id: string, currentIsRead: boolean) => {
-    try {
-      const { error } = await supabase
-        .from('notifications')
-        .update({ is_read: !currentIsRead })
-        .eq('id', id);
+  // ============================================================
+  // APPROVE SUBSCRIPTION
+  // ============================================================
 
-      if (error) throw error;
-      await fetchData();
-    } catch (err: any) {
-      console.error("Failed executing entry modification toggle read state:", err);
-    }
-  };
-
-  const handleBulkNotificationDelete = async () => {
-    const filterNotificationTargets = selectedIds.filter(id => {
-      const item = unifiedRequestsList.find(r => r.id === id);
-      return item?.source_table === 'notifications';
-    });
-
-    if (filterNotificationTargets.length === 0) {
-      alert("No disposable system operational notifications selected. Core ledger financial data rows cannot be bulk purged.");
+  const handleApproveSubscription = async (
+    request: UnifiedRequest
+  ) => {
+    if (
+      !request.plan_name ||
+      !request.vendor_id
+    ) {
+      alert(
+        'This subscription request is missing the vendor or plan information.'
+      );
       return;
     }
 
-    const confirmPurge = window.confirm(`Permanently remove ${filterNotificationTargets.length} selected notification logs from database history?`);
-    if (!confirmPurge) return;
+    if (
+      request.source_table !==
+      'subscription_payment_requests'
+    ) {
+      return;
+    }
+
+    if (request.status !== 'pending') {
+      alert(
+        `This request is already ${request.status} and cannot be approved again.`
+      );
+      return;
+    }
+
+    const confirmApprove = window.confirm(
+      `Approve subscription request?\n\nPlan: ${request.plan_name}\nVendor: ${
+        request.vendor_shop_name || 'Unknown Vendor'
+      }\nAmount: ₹${request.amount ?? 0}\n\nThe subscription will become active immediately.`
+    );
+
+    if (!confirmApprove) {
+      return;
+    }
 
     try {
+      setProcessingId(request.id);
       setActionLoading(true);
-      const { error } = await supabase
-        .from('notifications')
-        .delete()
-        .in('id', filterNotificationTargets);
+      setErrorState(null);
 
-      if (error) throw error;
+      // --------------------------------------------------------
+      // STEP 1: Load plan configuration
+      // --------------------------------------------------------
 
-      alert("Selected notification entries completely purged.");
-      setSelectedIds([]);
+      const planData = await loadRequestedPlan(
+        request.plan_name
+      );
+
+      const now = new Date();
+
+      const isFreePlan =
+        String(planData.plan_name)
+          .trim()
+          .toLowerCase() === 'free' ||
+        Number(planData.monthly_price) === 0;
+
+      let computedExpiryDate: string | null =
+        null;
+
+      // Paid plans are valid for 30 days.
+      // Free fallback has no expiry.
+      if (!isFreePlan) {
+        const expiryDate = new Date(now);
+        expiryDate.setDate(
+          expiryDate.getDate() + 30
+        );
+
+        computedExpiryDate =
+          expiryDate.toISOString();
+      }
+
+      // --------------------------------------------------------
+      // STEP 2:
+      // Re-read request status immediately before processing.
+      // Prevents accidental double processing from two tabs.
+      // --------------------------------------------------------
+
+      const {
+        data: currentRequest,
+        error: currentRequestError,
+      } = await supabase
+        .from('subscription_payment_requests')
+        .select(
+          'id, vendor_id, plan_name, status'
+        )
+        .eq('id', request.id)
+        .maybeSingle();
+
+      if (currentRequestError) {
+        throw currentRequestError;
+      }
+
+      if (!currentRequest) {
+        throw new Error(
+          'The subscription payment request no longer exists.'
+        );
+      }
+
+      if (currentRequest.status !== 'pending') {
+        throw new Error(
+          `This request has already been processed as "${currentRequest.status}".`
+        );
+      }
+
+      // --------------------------------------------------------
+      // STEP 3:
+      // Approve payment request
+      // --------------------------------------------------------
+
+      const {
+        error: patchRequestError,
+      } = await supabase
+        .from('subscription_payment_requests')
+        .update({
+          status: 'approved',
+          approved_at: now.toISOString(),
+        })
+        .eq('id', request.id)
+        .eq('status', 'pending');
+
+      if (patchRequestError) {
+        throw patchRequestError;
+      }
+
+      // --------------------------------------------------------
+      // STEP 4:
+      // Find existing subscription
+      // --------------------------------------------------------
+
+      const {
+        data: existingSub,
+        error: existingSubError,
+      } = await supabase
+        .from('subscriptions')
+        .select('vendor_id')
+        .eq('vendor_id', request.vendor_id)
+        .maybeSingle();
+
+      if (existingSubError) {
+        throw existingSubError;
+      }
+
+      // --------------------------------------------------------
+      // STEP 5:
+      // Build subscription values
+      // --------------------------------------------------------
+
+      const subscriptionValues = {
+        plan_name: planData.plan_name,
+        commission_percent:
+          planData.commission_percent,
+        monthly_settlement_request_limit:
+          planData.monthly_settlement_request_limit,
+        max_profile_banners:
+          planData.max_profile_banners,
+        status: 'active',
+        start_date: now.toISOString(),
+        end_date: computedExpiryDate,
+        updated_at: now.toISOString(),
+      };
+
+      // --------------------------------------------------------
+      // STEP 6:
+      // Activate subscription
+      // --------------------------------------------------------
+
+      if (existingSub) {
+        const {
+          error: updateSubError,
+        } = await supabase
+          .from('subscriptions')
+          .update(subscriptionValues)
+          .eq('vendor_id', request.vendor_id);
+
+        if (updateSubError) {
+          throw updateSubError;
+        }
+      } else {
+        const {
+          error: insertSubError,
+        } = await supabase
+          .from('subscriptions')
+          .insert([
+            {
+              vendor_id: request.vendor_id,
+              ...subscriptionValues,
+            },
+          ]);
+
+        if (insertSubError) {
+          throw insertSubError;
+        }
+      }
+
+      // --------------------------------------------------------
+      // STEP 7:
+      // Notify vendor
+      //
+      // Notification failure must not make the already completed
+      // subscription activation appear to have failed.
+      // --------------------------------------------------------
+
+      let notificationWarning = '';
+
+      try {
+        const expiryText = computedExpiryDate
+          ? new Date(
+              computedExpiryDate
+            ).toLocaleDateString('en-IN', {
+              day: 'numeric',
+              month: 'short',
+              year: 'numeric',
+            })
+          : 'No expiry';
+
+        await createVendorNotification(
+          request.vendor_id,
+          'Subscription Approved',
+          `Your ${planData.plan_name} subscription has been approved by RivoCity Admin and is now active. ${
+            isFreePlan
+              ? 'You are now on the Free plan with 5% commission.'
+              : `Your subscription is active until ${expiryText}.`
+          }`
+        );
+      } catch (notificationError: any) {
+        console.error(
+          'Subscription activated but vendor notification failed:',
+          notificationError
+        );
+
+        notificationWarning =
+          '\n\nWarning: Subscription was activated, but the vendor notification could not be created.';
+      }
+
+      // --------------------------------------------------------
+      // SUCCESS
+      // --------------------------------------------------------
+
+      alert(
+        `Subscription approved successfully.\n\nPlan: ${planData.plan_name}\nVendor: ${
+          request.vendor_shop_name ||
+          'Unknown Vendor'
+        }${notificationWarning}`
+      );
+
       await fetchData();
     } catch (err: any) {
-      console.error("Failed executing targeted logs block deletion sequence:", err);
-      alert(err.message || "Error experienced clearing select records logs queues indices.");
+      console.error(
+        'Approve subscription transaction rejected:',
+        err
+      );
+
+      const message =
+        err?.message ||
+        'An error occurred while approving the subscription.';
+
+      setErrorState(message);
+
+      alert(message);
+    } finally {
+      setProcessingId(null);
+      setActionLoading(false);
+    }
+  };
+
+  // ============================================================
+  // REJECT SUBSCRIPTION
+  // ============================================================
+
+  const handleRejectSubscription = async (
+    request: UnifiedRequest
+  ) => {
+    if (
+      request.source_table !==
+      'subscription_payment_requests'
+    ) {
+      return;
+    }
+
+    if (!request.vendor_id) {
+      alert(
+        'This request does not contain a valid vendor.'
+      );
+      return;
+    }
+
+    if (request.status !== 'pending') {
+      alert(
+        `This request is already ${request.status} and cannot be rejected again.`
+      );
+      return;
+    }
+
+    const adminRemarks = window.prompt(
+      'Enter the reason for rejecting this subscription request:',
+      'Invalid UTR / Payment confirmation missing'
+    );
+
+    if (adminRemarks === null) {
+      return;
+    }
+
+    const rejectionReason =
+      adminRemarks.trim() ||
+      'Subscription payment request rejected by RivoCity Admin.';
+
+    const confirmReject = window.confirm(
+      `Reject subscription request?\n\nVendor: ${
+        request.vendor_shop_name ||
+        'Unknown Vendor'
+      }\nPlan: ${
+        request.plan_name || 'Unknown Plan'
+      }\n\nReason:\n${rejectionReason}`
+    );
+
+    if (!confirmReject) {
+      return;
+    }
+
+    try {
+      setProcessingId(request.id);
+      setActionLoading(true);
+      setErrorState(null);
+
+      // --------------------------------------------------------
+      // STEP 1:
+      // Update only a still-pending request.
+      // --------------------------------------------------------
+
+      const {
+        data: updatedRequest,
+        error: updateError,
+      } = await supabase
+        .from('subscription_payment_requests')
+        .update({
+          status: 'rejected',
+          remarks: rejectionReason,
+        })
+        .eq('id', request.id)
+        .eq('status', 'pending')
+        .select(
+          'id, vendor_id, plan_name, status'
+        )
+        .maybeSingle();
+
+      if (updateError) {
+        throw updateError;
+      }
+
+      if (!updatedRequest) {
+        throw new Error(
+          'This request was already processed or could not be found.'
+        );
+      }
+
+      // --------------------------------------------------------
+      // STEP 2:
+      // Notify vendor
+      // --------------------------------------------------------
+
+      let notificationWarning = '';
+
+      try {
+        await createVendorNotification(
+          request.vendor_id,
+          'Subscription Request Rejected',
+          `Your ${
+            request.plan_name || 'subscription'
+          } payment request was rejected by RivoCity Admin. Reason: ${rejectionReason}`
+        );
+      } catch (notificationError: any) {
+        console.error(
+          'Subscription rejection saved but vendor notification failed:',
+          notificationError
+        );
+
+        notificationWarning =
+          '\n\nWarning: The rejection was saved, but the vendor notification could not be created.';
+      }
+
+      // --------------------------------------------------------
+      // SUCCESS
+      // --------------------------------------------------------
+
+      alert(
+        `Subscription request rejected successfully.${notificationWarning}`
+      );
+
+      await fetchData();
+    } catch (err: any) {
+      console.error(
+        'Failed rejecting subscription request:',
+        err
+      );
+
+      const message =
+        err?.message ||
+        'Failed to reject the subscription request.';
+
+      setErrorState(message);
+
+      alert(message);
+    } finally {
+      setProcessingId(null);
+      setActionLoading(false);
+    }
+  };
+
+  // ============================================================
+  // NOTIFICATION READ STATE
+  // ============================================================
+
+  const toggleReadState = async (
+    id: string,
+    currentIsRead: boolean
+  ) => {
+    try {
+      setActionLoading(true);
+
+      const { error } = await supabase
+        .from('notifications')
+        .update({
+          is_read: !currentIsRead,
+        })
+        .eq('id', id);
+
+      if (error) {
+        throw error;
+      }
+
+      await fetchData();
+    } catch (err: any) {
+      console.error(
+        'Failed updating notification read state:',
+        err
+      );
+
+      alert(
+        err?.message ||
+          'Failed to update notification status.'
+      );
     } finally {
       setActionLoading(false);
     }
   };
 
-  // --- MULTI-SELECT HANDLER ROW STATE INTERSECTIONS ---
+  // ============================================================
+  // BULK NOTIFICATION DELETE
+  // ============================================================
+
+  const handleBulkNotificationDelete = async () => {
+    const notificationIds = selectedIds.filter(
+      (id) => {
+        const item = unifiedRequestsList.find(
+          (request) => request.id === id
+        );
+
+        return (
+          item?.source_table === 'notifications'
+        );
+      }
+    );
+
+    if (notificationIds.length === 0) {
+      alert(
+        'Only notification records can be deleted. Subscription payment records are protected.'
+      );
+      return;
+    }
+
+    const confirmPurge = window.confirm(
+      `Permanently delete ${notificationIds.length} selected notification record(s)?\n\nSubscription payment records will not be deleted.`
+    );
+
+    if (!confirmPurge) {
+      return;
+    }
+
+    try {
+      setActionLoading(true);
+
+      const { error } = await supabase
+        .from('notifications')
+        .delete()
+        .in('id', notificationIds);
+
+      if (error) {
+        throw error;
+      }
+
+      setSelectedIds([]);
+
+      alert(
+        'Selected notification records deleted successfully.'
+      );
+
+      await fetchData();
+    } catch (err: any) {
+      console.error(
+        'Failed deleting notifications:',
+        err
+      );
+
+      alert(
+        err?.message ||
+          'Failed to delete selected notifications.'
+      );
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // ============================================================
+  // SELECTION
+  // ============================================================
+
   const selectRowToggle = (id: string) => {
-    setSelectedIds(prev => 
-      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
+    setSelectedIds((previous) =>
+      previous.includes(id)
+        ? previous.filter(
+            (item) => item !== id
+          )
+        : [...previous, id]
     );
   };
 
   const selectAllPageToggle = () => {
-    const pageItemIds = paginatedRequests.map(r => r.id);
-    const allSelectedOnPage = pageItemIds.every(id => selectedIds.includes(id));
+    const pageItemIds = paginatedRequests.map(
+      (request) => request.id
+    );
+
+    if (pageItemIds.length === 0) {
+      return;
+    }
+
+    const allSelectedOnPage =
+      pageItemIds.every((id) =>
+        selectedIds.includes(id)
+      );
 
     if (allSelectedOnPage) {
-      setSelectedIds(prev => prev.filter(id => !pageItemIds.includes(id)));
+      setSelectedIds((previous) =>
+        previous.filter(
+          (id) => !pageItemIds.includes(id)
+        )
+      );
     } else {
-      setSelectedIds(prev => {
-        const combined = [...prev];
-        pageItemIds.forEach(id => {
-          if (!combined.includes(id)) combined.push(id);
+      setSelectedIds((previous) => {
+        const combined = [...previous];
+
+        pageItemIds.forEach((id) => {
+          if (!combined.includes(id)) {
+            combined.push(id);
+          }
         });
+
         return combined;
       });
     }
   };
 
-  // --- PRESENTATIONAL CUSTOM COMPONENT HELPERS ---
+  // ============================================================
+  // STYLING HELPERS
+  // ============================================================
+
   const getTypeStyles = (type: string) => {
     switch (type) {
-      case 'subscription': return 'bg-amber-50 text-amber-800 border-amber-200';
-      case 'settlement': return 'bg-emerald-50 text-emerald-800 border-emerald-200';
-      case 'vendor_registration': return 'bg-purple-50 text-purple-800 border-purple-200';
-      default: return 'bg-blue-50 text-blue-800 border-blue-200';
+      case 'subscription':
+        return 'bg-amber-50 text-amber-800 border-amber-200';
+
+      case 'settlement':
+        return 'bg-emerald-50 text-emerald-800 border-emerald-200';
+
+      case 'vendor_registration':
+        return 'bg-purple-50 text-purple-800 border-purple-200';
+
+      default:
+        return 'bg-blue-50 text-blue-800 border-blue-200';
     }
   };
 
   const getStatusStyles = (status: string) => {
     switch (status) {
       case 'approved':
+        return 'bg-emerald-100 text-emerald-700 font-bold';
+
       case 'read':
         return 'bg-slate-100 text-slate-700 font-medium';
+
       case 'pending':
-      case 'unread':
         return 'bg-amber-600 text-white font-bold';
+
+      case 'unread':
+        return 'bg-blue-600 text-white font-bold';
+
       case 'rejected':
-        return 'bg-rose-100 text-rose-700 font-medium';
+        return 'bg-rose-100 text-rose-700 font-bold';
+
       default:
         return 'bg-slate-100 text-slate-600';
     }
   };
 
+  // ============================================================
+  // LOADING
+  // ============================================================
+
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-slate-50 p-6 space-y-4">
         <Loader2 className="h-12 w-12 animate-spin text-emerald-600" />
-        <p className="text-sm font-bold text-slate-500 animate-pulse">Assembling system infrastructure framework models...</p>
+
+        <p className="text-sm font-bold text-slate-500">
+          Loading system operations...
+        </p>
       </div>
     );
   }
 
+  // ============================================================
+  // RENDER
+  // ============================================================
+
   return (
     <div className="min-h-screen bg-slate-50 p-4 sm:p-6 lg:p-8 text-slate-800 font-sans antialiased space-y-6">
-      
-      {/* ERROR HEADER BANNER INDICATOR DISMISSIBLE PLATFORM BAR */}
+      {/* ======================================================
+          ERROR BANNER
+      ======================================================= */}
+
       {errorState && (
-        <div className="bg-rose-50 border-l-4 border-rose-600 p-4 rounded-r-xl flex items-start gap-3 shadow-xs">
-          <AlertCircle className="text-rose-600 shrink-0 mt-0.5" size={18} />
+        <div className="bg-rose-50 border border-rose-200 p-4 rounded-xl flex items-start gap-3 shadow-sm">
+          <AlertCircle
+            className="text-rose-600 shrink-0 mt-0.5"
+            size={18}
+          />
+
           <div className="grow">
-            <h3 className="text-sm font-bold text-rose-900">Database Context Error Resolution Failure</h3>
-            <p className="text-xs text-rose-700 mt-0.5">{errorState}</p>
+            <h3 className="text-sm font-bold text-rose-900">
+              Operation Error
+            </h3>
+
+            <p className="text-xs text-rose-700 mt-1">
+              {errorState}
+            </p>
           </div>
-          <button onClick={() => setErrorState(null)} className="text-rose-400 hover:text-rose-900 font-bold text-xs px-2 py-1 transition-all">Dismiss</button>
+
+          <button
+            onClick={() =>
+              setErrorState(null)
+            }
+            className="text-rose-400 hover:text-rose-900 font-bold text-xs px-2 py-1"
+          >
+            Dismiss
+          </button>
         </div>
       )}
 
-      {/* PRIMARY MODULE HEADER */}
+      {/* ======================================================
+          HEADER
+      ======================================================= */}
+
       <div className="flex flex-col md:flex-row md:items-center md:justify-between border-b border-slate-200 pb-4 gap-4">
         <div>
-          <h1 className="text-2xl font-black text-slate-900 tracking-tight">System Operations Center</h1>
-          <p className="text-xs font-medium text-slate-500 mt-1">Unified administrative routing cockpit for system requests records validation arrays</p>
+          <h1 className="text-2xl font-black text-slate-900 tracking-tight">
+            System Operations Center
+          </h1>
+
+          <p className="text-xs font-medium text-slate-500 mt-1">
+            Manage subscription requests, system notifications,
+            settlements and vendor operations.
+          </p>
         </div>
-        <button 
-          onClick={fetchData} 
+
+        <button
+          onClick={fetchData}
           disabled={actionLoading}
-          className="self-start md:self-auto h-9 px-4 bg-white border border-slate-200 hover:bg-slate-50 active:bg-slate-100 disabled:opacity-40 text-slate-700 rounded-xl text-xs font-bold flex items-center gap-2 shadow-2xs transition-all"
+          className="self-start md:self-auto h-9 px-4 bg-white border border-slate-200 hover:bg-slate-50 active:bg-slate-100 disabled:opacity-40 text-slate-700 rounded-xl text-xs font-bold flex items-center gap-2 shadow-sm transition-all"
         >
-          <RefreshCw size={14} className={actionLoading ? 'animate-spin' : ''} />
-          Force Synchronization Update
+          <RefreshCw
+            size={14}
+            className={
+              actionLoading
+                ? 'animate-spin'
+                : ''
+            }
+          />
+
+          Refresh
         </button>
       </div>
 
-      {/* METRICS & PERFORMANCE KANBAN METERS GRID */}
+      {/* ======================================================
+          METRICS
+      ======================================================= */}
+
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-2xs flex items-center justify-between border-l-4 border-l-slate-800">
+        {/* Total */}
+        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between border-l-4 border-l-slate-800">
           <div>
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Aggregate Records</p>
-            <p className="text-2xl font-black text-slate-900 mt-1">{metrics.total}</p>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+              Total Records
+            </p>
+
+            <p className="text-2xl font-black text-slate-900 mt-1">
+              {metrics.total}
+            </p>
           </div>
-          <div className="p-3 bg-slate-100 text-slate-700 rounded-xl"><Inbox size={20} /></div>
+
+          <div className="p-3 bg-slate-100 text-slate-700 rounded-xl">
+            <Inbox size={20} />
+          </div>
         </div>
 
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-2xs flex items-center justify-between border-l-4 border-l-amber-500">
+        {/* Pending */}
+        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between border-l-4 border-l-amber-500">
           <div>
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Pending Subscriptions</p>
-            <p className="text-2xl font-black text-amber-600 mt-1">{metrics.pendingSubscriptions}</p>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+              Pending Subscriptions
+            </p>
+
+            <p className="text-2xl font-black text-amber-600 mt-1">
+              {metrics.pendingSubscriptions}
+            </p>
           </div>
-          <div className="p-3 bg-amber-50 text-amber-600 rounded-xl"><CreditCard size={20} /></div>
+
+          <div className="p-3 bg-amber-50 text-amber-600 rounded-xl">
+            <CreditCard size={20} />
+          </div>
         </div>
 
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-2xs flex items-center justify-between border-l-4 border-l-blue-500">
+        {/* Notifications */}
+        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between border-l-4 border-l-blue-500">
           <div>
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Unread System Logs</p>
-            <p className="text-2xl font-black text-blue-600 mt-1">{metrics.unreadNotifications}</p>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+              Unread Notifications
+            </p>
+
+            <p className="text-2xl font-black text-blue-600 mt-1">
+              {metrics.unreadNotifications}
+            </p>
           </div>
-          <div className="p-3 bg-blue-50 text-blue-600 rounded-xl"><Bell size={20} /></div>
+
+          <div className="p-3 bg-blue-50 text-blue-600 rounded-xl">
+            <Bell size={20} />
+          </div>
         </div>
 
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-2xs flex items-center justify-between border-l-4 border-l-purple-500">
+        {/* Vendors */}
+        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between border-l-4 border-l-purple-500">
           <div>
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Vendor Registrations</p>
-            <p className="text-2xl font-black text-purple-600 mt-1">{metrics.vendorRegs}</p>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+              Vendor Registrations
+            </p>
+
+            <p className="text-2xl font-black text-purple-600 mt-1">
+              {metrics.vendorRegs}
+            </p>
           </div>
-          <div className="p-3 bg-purple-50 text-purple-600 rounded-xl"><Store size={20} /></div>
+
+          <div className="p-3 bg-purple-50 text-purple-600 rounded-xl">
+            <Store size={20} />
+          </div>
         </div>
       </div>
 
-      {/* CONTROLS FILTERS DYNAMIC HOVER ANCHORS TOOLBAR BANNER HUB */}
-      <div className="bg-white border border-slate-200 rounded-xl shadow-2xs p-4 flex flex-col gap-4">
-        
-        {/* ROW 1: CONTROLS INPUTS SEARCH SEARCHING CONFIGS */}
+      {/* ======================================================
+          FILTERS
+      ======================================================= */}
+
+      <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col gap-4">
         <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4">
+          {/* Search */}
           <div className="relative grow max-w-xl">
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-            <input 
-              type="text" 
-              placeholder="Query matching matrix values (UTR, Shop, Title, Owner)..." 
+            <Search
+              className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400"
+              size={16}
+            />
+
+            <input
+              type="text"
+              placeholder="Search UTR, shop, owner, plan or title..."
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full h-10 pl-10 pr-4 bg-slate-50 border border-slate-200 hover:border-slate-300 focus:border-emerald-500 rounded-xl text-xs font-semibold shadow-2xs focus:outline-none transition-all placeholder:text-slate-400"
+              onChange={(event) =>
+                setSearchQuery(
+                  event.target.value
+                )
+              }
+              className="w-full h-10 pl-10 pr-4 bg-slate-50 border border-slate-200 hover:border-slate-300 focus:border-emerald-500 rounded-xl text-xs font-semibold shadow-sm focus:outline-none transition-all placeholder:text-slate-400"
             />
           </div>
 
+          {/* Filters */}
           <div className="flex flex-wrap items-center gap-3">
             <select
               value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="h-10 px-3.5 bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-xl text-xs font-bold text-slate-700 shadow-2xs focus:outline-none focus:border-emerald-500 transition-all"
+              onChange={(event) =>
+                setStatusFilter(
+                  event.target.value
+                )
+              }
+              className="h-10 px-3.5 bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-xl text-xs font-bold text-slate-700 shadow-sm focus:outline-none focus:border-emerald-500 transition-all"
             >
-              <option value="all">All Operational Statuses</option>
-              <option value="pending">Pending Validation</option>
-              <option value="approved">Approved / Read</option>
-              <option value="rejected">Rejected Status</option>
-              <option value="unread">Unread Logs</option>
+              <option value="all">
+                All Statuses
+              </option>
+
+              <option value="pending">
+                Pending
+              </option>
+
+              <option value="approved">
+                Approved
+              </option>
+
+              <option value="rejected">
+                Rejected
+              </option>
+
+              <option value="unread">
+                Unread
+              </option>
+
+              <option value="read">
+                Read
+              </option>
             </select>
 
             <select
               value={sortOrder}
-              onChange={(e) => setSortOrder(e.target.value as SortOrder)}
-              className="h-10 px-3.5 bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-xl text-xs font-bold text-slate-700 shadow-2xs focus:outline-none focus:border-emerald-500 transition-all"
+              onChange={(event) =>
+                setSortOrder(
+                  event.target.value as SortOrder
+                )
+              }
+              className="h-10 px-3.5 bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-xl text-xs font-bold text-slate-700 shadow-sm focus:outline-none focus:border-emerald-500 transition-all"
             >
-              <option value="desc">Sort: Chronological Descending</option>
-              <option value="asc">Sort: Chronological Ascending</option>
+              <option value="desc">
+                Newest First
+              </option>
+
+              <option value="asc">
+                Oldest First
+              </option>
             </select>
           </div>
         </div>
 
         <hr className="border-slate-100" />
 
-        {/* ROW 2: CATEGORY CATEGORIZATION SEGMENTED NAVIGATION TABS */}
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between border-transparent gap-4">
-          <div className="flex border-b border-transparent gap-1 overflow-x-auto scrollbar-none">
-            {([
-              { key: 'all', label: 'All Operations Matrix' },
-              { key: 'subscription', label: 'Subscription Payment Queue' },
-              { key: 'settlement', label: 'Settlement Logs' },
-              { key: 'vendor_registration', label: 'Registrations' },
-              { key: 'notifications', label: 'System Notifications Hub' }
-            ] as { key: TabType; label: string }[]).map((tab) => (
+        {/* Tabs */}
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+          <div className="flex gap-1 overflow-x-auto scrollbar-none">
+            {(
+              [
+                {
+                  key: 'all',
+                  label: 'All Operations',
+                },
+                {
+                  key: 'subscription',
+                  label: 'Subscription Requests',
+                },
+                {
+                  key: 'settlement',
+                  label: 'Settlement Logs',
+                },
+                {
+                  key: 'vendor_registration',
+                  label: 'Registrations',
+                },
+                {
+                  key: 'notifications',
+                  label: 'Notifications',
+                },
+              ] as {
+                key: TabType;
+                label: string;
+              }[]
+            ).map((tab) => (
               <button
                 key={tab.key}
-                onClick={() => setActiveTab(tab.key)}
+                onClick={() =>
+                  setActiveTab(tab.key)
+                }
                 className={`px-4 py-2.5 text-xs font-extrabold border-b-2 transition-all shrink-0 whitespace-nowrap rounded-t-lg ${
                   activeTab === tab.key
                     ? 'border-emerald-600 text-emerald-600 bg-emerald-50/50'
@@ -666,23 +1565,29 @@ export default function RequestsCenter() {
             ))}
           </div>
 
-          {/* BULK SELECTION TRASH ROUTINE TRIGGER BUTTON BLOCK */}
+          {/* Bulk delete */}
           {selectedIds.length > 0 && (
             <button
-              onClick={handleBulkNotificationDelete}
+              onClick={
+                handleBulkNotificationDelete
+              }
               disabled={actionLoading}
-              className="h-9 px-4 self-end lg:self-auto bg-rose-600 hover:bg-rose-700 text-white disabled:opacity-50 text-xs font-extrabold flex items-center gap-2 rounded-xl shadow-xs transition-all animate-in fade-in zoom-in-95 duration-100"
+              className="h-9 px-4 self-end lg:self-auto bg-rose-600 hover:bg-rose-700 text-white disabled:opacity-50 text-xs font-extrabold flex items-center gap-2 rounded-xl shadow-sm transition-all"
             >
               <Trash2 size={13} />
-              Purge Selected System Logs ({selectedIds.length})
+
+              Delete Notifications (
+              {selectedIds.length})
             </button>
           )}
         </div>
-
       </div>
 
-      {/* CORE INFRASTRUCTURE MATRIX DATA PRESENTATION TABLE CONTAINER GRID */}
-      <div className="bg-white border border-slate-200 rounded-xl shadow-2xs overflow-hidden">
+      {/* ======================================================
+          TABLE
+      ======================================================= */}
+
+      <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
@@ -690,133 +1595,296 @@ export default function RequestsCenter() {
                 <th className="px-5 py-4 w-12 text-center">
                   <button
                     type="button"
-                    onClick={selectAllPageToggle}
-                    disabled={paginatedRequests.length === 0}
+                    onClick={
+                      selectAllPageToggle
+                    }
+                    disabled={
+                      paginatedRequests.length ===
+                      0
+                    }
                     className="text-slate-400 hover:text-slate-600 transition-colors focus:outline-none disabled:opacity-30 inline-block align-middle"
                   >
-                    {paginatedRequests.length > 0 && paginatedRequests.map(r => r.id).every(id => selectedIds.includes(id)) ? (
-                      <CheckSquare size={16} className="text-emerald-600" />
+                    {paginatedRequests.length >
+                      0 &&
+                    paginatedRequests
+                      .map(
+                        (request) =>
+                          request.id
+                      )
+                      .every((id) =>
+                        selectedIds.includes(id)
+                      ) ? (
+                      <CheckSquare
+                        size={16}
+                        className="text-emerald-600"
+                      />
                     ) : (
                       <Square size={16} />
                     )}
                   </button>
                 </th>
-                <th className="px-4 py-4">Origin Type</th>
-                <th className="px-5 py-4">Title Identification</th>
-                <th className="px-5 py-4">Message Body Parameters</th>
-                <th className="px-5 py-4">Associated Vendor / Owner Profile</th>
-                <th className="px-5 py-4">Created Timestamp</th>
-                <th className="px-5 py-4">Operational Status</th>
-                <th className="px-5 py-4 text-center">Process Pipeline Actions</th>
+
+                <th className="px-4 py-4">
+                  Type
+                </th>
+
+                <th className="px-5 py-4">
+                  Request
+                </th>
+
+                <th className="px-5 py-4">
+                  Details
+                </th>
+
+                <th className="px-5 py-4">
+                  Vendor
+                </th>
+
+                <th className="px-5 py-4">
+                  Created
+                </th>
+
+                <th className="px-5 py-4">
+                  Status
+                </th>
+
+                <th className="px-5 py-4 text-center">
+                  Actions
+                </th>
               </tr>
             </thead>
+
             <tbody className="divide-y divide-slate-100 text-xs font-medium text-slate-600">
               {paginatedRequests.length > 0 ? (
-                paginatedRequests.map((req) => {
-                  const isChecked = selectedIds.includes(req.id);
-                  const isPendingSub = req.source_table === 'subscription_payment_requests' && req.status === 'pending';
-                  const isRowProcessing = processingId === req.id;
+                paginatedRequests.map((request) => {
+                  const isChecked =
+                    selectedIds.includes(
+                      request.id
+                    );
+
+                  const isPendingSubscription =
+                    request.source_table ===
+                      'subscription_payment_requests' &&
+                    request.status ===
+                      'pending';
+
+                  const isRowProcessing =
+                    processingId ===
+                    request.id;
 
                   return (
-                    <tr 
-                      key={req.id} 
-                      className={`hover:bg-slate-50/60 transition-colors ${isChecked ? 'bg-emerald-50/20' : ''} ${isPendingSub ? 'bg-amber-50/20 font-semibold' : ''}`}
+                    <tr
+                      key={request.id}
+                      className={`hover:bg-slate-50/60 transition-colors ${
+                        isChecked
+                          ? 'bg-emerald-50/20'
+                          : ''
+                      } ${
+                        isPendingSubscription
+                          ? 'bg-amber-50/20'
+                          : ''
+                      }`}
                     >
-                      {/* Selection Control Box Column */}
+                      {/* Selection */}
                       <td className="px-5 py-4 whitespace-nowrap text-center">
                         <button
                           type="button"
-                          onClick={() => selectRowToggle(req.id)}
+                          onClick={() =>
+                            selectRowToggle(
+                              request.id
+                            )
+                          }
                           className="text-slate-400 hover:text-slate-600 transition-colors focus:outline-none inline-block align-middle"
                         >
                           {isChecked ? (
-                            <CheckSquare size={16} className="text-emerald-600" />
+                            <CheckSquare
+                              size={16}
+                              className="text-emerald-600"
+                            />
                           ) : (
                             <Square size={16} />
                           )}
                         </button>
                       </td>
 
-                      {/* Origin Type Segment Label */}
+                      {/* Type */}
                       <td className="px-4 py-4 whitespace-nowrap">
-                        <span className={`px-2 py-0.5 border text-[10px] uppercase font-extrabold rounded-md ${getTypeStyles(req.type)}`}>
-                          {req.type.replace('_', ' ')}
+                        <span
+                          className={`px-2 py-0.5 border text-[10px] uppercase font-extrabold rounded-md ${getTypeStyles(
+                            request.type
+                          )}`}
+                        >
+                          {request.type.replace(
+                            '_',
+                            ' '
+                          )}
                         </span>
                       </td>
 
-                      {/* Record Parameter Title */}
-                      <td className="px-5 py-4 text-slate-900 max-w-[160px] truncate font-bold">
-                        {req.title || '—'}
+                      {/* Title */}
+                      <td className="px-5 py-4 text-slate-900 max-w-[220px]">
+                        <div className="font-bold truncate">
+                          {request.title ||
+                            '—'}
+                        </div>
+
+                        {request.plan_name && (
+                          <div className="text-[10px] text-slate-400 mt-1">
+                            Plan:{' '}
+                            <span className="font-bold text-slate-500">
+                              {
+                                request.plan_name
+                              }
+                            </span>
+                          </div>
+                        )}
                       </td>
 
-                      {/* Core Content Messaging Parameters Text */}
-                      <td className="px-5 py-4 text-slate-500 max-w-[280px] break-words font-medium">
-                        {req.message || '—'}
+                      {/* Message */}
+                      <td className="px-5 py-4 text-slate-500 max-w-[320px]">
+                        <div className="break-words leading-relaxed">
+                          {request.message ||
+                            '—'}
+                        </div>
                       </td>
 
-                      {/* Associated Enterprise Entity Profiles Mapping Block */}
+                      {/* Vendor */}
                       <td className="px-5 py-4 whitespace-nowrap">
                         <div className="flex flex-col">
-                          <span className="text-slate-900 font-bold">{req.vendor_shop_name}</span>
-                          <span className="text-[10px] text-slate-400 font-mono mt-0.5">{req.vendor_owner_name || 'System Level User'}</span>
+                          <span className="text-slate-900 font-bold">
+                            {
+                              request.vendor_shop_name
+                            }
+                          </span>
+
+                          <span className="text-[10px] text-slate-400 mt-0.5">
+                            {
+                              request.vendor_owner_name ||
+                              'System Level User'
+                            }
+                          </span>
                         </div>
                       </td>
 
-                      {/* Epoch Execution Date Time Label */}
+                      {/* Created */}
                       <td className="px-5 py-4 text-slate-500 whitespace-nowrap">
                         <div className="flex items-center gap-1.5 text-[11px]">
-                          <Clock size={12} className="text-slate-400" />
-                          {new Date(req.created_at).toLocaleString('en-IN', {
-                            day: 'numeric', 
-                            month: 'short', 
-                            year: 'numeric',
-                            hour: '2-digit',
-                            minute: '2-digit'
-                          })}
+                          <Clock
+                            size={12}
+                            className="text-slate-400"
+                          />
+
+                          {new Date(
+                            request.created_at
+                          ).toLocaleString(
+                            'en-IN',
+                            {
+                              day: 'numeric',
+                              month: 'short',
+                              year: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            }
+                          )}
                         </div>
                       </td>
 
-                      {/* Operational Metrics Component Badge */}
+                      {/* Status */}
                       <td className="px-5 py-4 whitespace-nowrap">
-                        <span className={`px-2 py-0.5 rounded-md text-[10px] uppercase font-bold tracking-wider ${getStatusStyles(req.status)}`}>
-                          {req.status}
+                        <span
+                          className={`px-2 py-0.5 rounded-md text-[10px] uppercase font-bold tracking-wider ${getStatusStyles(
+                            request.status
+                          )}`}
+                        >
+                          {request.status}
                         </span>
                       </td>
 
-                      {/* Orchestration Pipeline Workflow Controls Triggers Column */}
+                      {/* Actions */}
                       <td className="px-5 py-4 whitespace-nowrap text-center">
-                        {req.source_table === 'subscription_payment_requests' ? (
-                          req.status === 'pending' ? (
+                        {request.source_table ===
+                        'subscription_payment_requests' ? (
+                          request.status ===
+                          'pending' ? (
                             <div className="flex items-center justify-center gap-1.5">
+                              {/* Approve */}
                               <button
-                                disabled={isRowProcessing}
-                                onClick={() => handleApproveSubscription(req)}
-                                className="p-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white rounded-lg shadow-2xs transition-all"
-                                title="Approve Upgrade Flow"
+                                disabled={
+                                  isRowProcessing ||
+                                  actionLoading
+                                }
+                                onClick={() =>
+                                  handleApproveSubscription(
+                                    request
+                                  )
+                                }
+                                className="p-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white rounded-lg shadow-sm transition-all"
+                                title="Approve Subscription"
                               >
-                                {isRowProcessing ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+                                {isRowProcessing ? (
+                                  <Loader2
+                                    size={13}
+                                    className="animate-spin"
+                                  />
+                                ) : (
+                                  <Check
+                                    size={13}
+                                  />
+                                )}
                               </button>
+
+                              {/* Reject */}
                               <button
-                                disabled={isRowProcessing}
-                                onClick={() => handleRejectSubscription(req)}
-                                className="p-1.5 bg-rose-600 hover:bg-rose-700 disabled:opacity-40 text-white rounded-lg shadow-2xs transition-all"
-                                title="Reject Denial Flow"
+                                disabled={
+                                  isRowProcessing ||
+                                  actionLoading
+                                }
+                                onClick={() =>
+                                  handleRejectSubscription(
+                                    request
+                                  )
+                                }
+                                className="p-1.5 bg-rose-600 hover:bg-rose-700 disabled:opacity-40 text-white rounded-lg shadow-sm transition-all"
+                                title="Reject Subscription"
                               >
-                                {isRowProcessing ? <Loader2 size={13} className="animate-spin" /> : <XIcon size={13} />}
+                                {isRowProcessing ? (
+                                  <Loader2
+                                    size={13}
+                                    className="animate-spin"
+                                  />
+                                ) : (
+                                  <XIcon
+                                    size={13}
+                                  />
+                                )}
                               </button>
                             </div>
                           ) : (
-                            <span className="text-[10px] font-bold italic text-slate-400 select-none">Archived Pipeline</span>
+                            <span className="text-[10px] font-bold italic text-slate-400 select-none">
+                              Processed
+                            </span>
                           )
                         ) : (
                           <button
-                            onClick={() => toggleReadState(req.id, !!req.is_read)}
+                            onClick={() =>
+                              toggleReadState(
+                                request.id,
+                                !!request.is_read
+                              )
+                            }
+                            disabled={
+                              actionLoading
+                            }
                             className={`p-1.5 rounded-lg border transition-all ${
-                              req.is_read 
-                                ? 'bg-white text-slate-400 border-slate-200 hover:text-slate-800' 
-                                : 'bg-blue-600 text-white border-transparent hover:bg-blue-700 shadow-2xs'
+                              request.is_read
+                                ? 'bg-white text-slate-400 border-slate-200 hover:text-slate-800'
+                                : 'bg-blue-600 text-white border-transparent hover:bg-blue-700 shadow-sm'
                             }`}
-                            title={req.is_read ? "Mark Unread Log" : "Mark Read Log"}
+                            title={
+                              request.is_read
+                                ? 'Mark Unread'
+                                : 'Mark Read'
+                            }
                           >
                             <Eye size={13} />
                           </button>
@@ -827,11 +1895,24 @@ export default function RequestsCenter() {
                 })
               ) : (
                 <tr>
-                  <td colSpan={8} className="px-6 py-16 text-center text-slate-400 font-bold bg-white select-none">
+                  <td
+                    colSpan={8}
+                    className="px-6 py-16 text-center text-slate-400 font-bold bg-white select-none"
+                  >
                     <div className="flex flex-col items-center justify-center gap-2 max-w-xs mx-auto">
-                      <Layers size={32} className="text-slate-300 stroke-[1.5]" />
-                      <p className="text-sm text-slate-800 mt-1">No Operational Queue Matches Found</p>
-                      <p className="text-[11px] font-medium text-slate-400">There are no operational records matched with the filtered context criteria elements.</p>
+                      <Layers
+                        size={32}
+                        className="text-slate-300 stroke-[1.5]"
+                      />
+
+                      <p className="text-sm text-slate-800 mt-1">
+                        No Records Found
+                      </p>
+
+                      <p className="text-[11px] font-medium text-slate-400">
+                        No records match the
+                        current filters.
+                      </p>
                     </div>
                   </td>
                 </tr>
@@ -840,37 +1921,78 @@ export default function RequestsCenter() {
           </table>
         </div>
 
-        {/* COMPONENT INTERACTION CONTROLS PAGINATION FOOTER PANEL SECTION */}
+        {/* ====================================================
+            PAGINATION
+        ===================================================== */}
+
         <div className="bg-slate-50 border-t border-slate-200 px-5 py-4 flex flex-col sm:flex-row items-center justify-between gap-4 select-none">
           <span className="text-xs font-semibold text-slate-500">
-            Presenting index rows <strong className="text-slate-900">{filteredRequests.length > 0 ? (currentPage - 1) * itemsPerPage + 1 : 0}</strong> through <strong className="text-slate-900">{Math.min(currentPage * itemsPerPage, filteredRequests.length)}</strong> of <strong className="text-slate-900">{filteredRequests.length}</strong> catalog records filtered
+            Showing{' '}
+            <strong className="text-slate-900">
+              {filteredRequests.length > 0
+                ? (currentPage - 1) *
+                    itemsPerPage +
+                  1
+                : 0}
+            </strong>{' '}
+            to{' '}
+            <strong className="text-slate-900">
+              {Math.min(
+                currentPage *
+                  itemsPerPage,
+                filteredRequests.length
+              )}
+            </strong>{' '}
+            of{' '}
+            <strong className="text-slate-900">
+              {filteredRequests.length}
+            </strong>{' '}
+            records
           </span>
 
           <div className="flex items-center gap-1">
             <button
               disabled={currentPage === 1}
-              onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+              onClick={() =>
+                setCurrentPage(
+                  (previous) =>
+                    Math.max(
+                      previous - 1,
+                      1
+                    )
+                )
+              }
               className="px-3 h-8 bg-white border border-slate-200 hover:bg-slate-50 active:bg-slate-100 disabled:opacity-40 text-xs font-bold rounded-lg transition-all"
             >
-              Previous Queue
+              Previous
             </button>
-            
+
             <div className="px-3 text-xs font-bold text-slate-700">
-              Page {currentPage} of {totalPages}
+              Page {currentPage} of{' '}
+              {totalPages}
             </div>
 
             <button
-              disabled={currentPage === totalPages}
-              onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+              disabled={
+                currentPage ===
+                totalPages
+              }
+              onClick={() =>
+                setCurrentPage(
+                  (previous) =>
+                    Math.min(
+                      previous + 1,
+                      totalPages
+                    )
+                )
+              }
               className="px-3 h-8 bg-white border border-slate-200 hover:bg-slate-50 active:bg-slate-100 disabled:opacity-40 text-xs font-bold rounded-lg transition-all"
             >
-              Next Page Stack
+              Next
             </button>
           </div>
         </div>
-
       </div>
-
     </div>
   );
 }
