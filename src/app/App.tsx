@@ -42,9 +42,7 @@ export default function App() {
   const [session, setSession] = useState<any>(null);
   const [isInitializing, setIsInitializing] = useState(true);
   const [currentTab, setCurrentTab] = useState("dashboard");
-  const [theme, setTheme] = useState<ThemeType>(() => {
-    return (localStorage.getItem("rivo-theme") as ThemeType) || "system";
-  });
+  const [theme] = useState<ThemeType>("light");
 
   const [supportBadge, setSupportBadge] = useState<{
     count: number;
@@ -61,41 +59,13 @@ export default function App() {
     refunds: 0,
   });
 
-  // Theme side effect engine
+  // Rivo Admin uses the light theme only. Do not inherit the browser/OS dark preference.
   useEffect(() => {
     const root = window.document.documentElement;
-
-    function applyTheme() {
-      root.classList.remove("light", "dark");
-
-      if (theme === "system") {
-        const systemDark = window.matchMedia(
-          "(prefers-color-scheme: dark)"
-        ).matches;
-
-        root.classList.add(systemDark ? "dark" : "light");
-      } else {
-        root.classList.add(theme);
-      }
-    }
-
-    applyTheme();
-
-    localStorage.setItem("rivo-theme", theme);
-
-    if (theme === "system") {
-      const mediaQuery = window.matchMedia(
-        "(prefers-color-scheme: dark)"
-      );
-
-      const listener = () => applyTheme();
-
-      mediaQuery.addEventListener("change", listener);
-
-      return () =>
-        mediaQuery.removeEventListener("change", listener);
-    }
-  }, [theme]);
+    root.classList.remove("dark");
+    root.classList.add("light");
+    localStorage.setItem("rivo-theme", "light");
+  }, []);
 
   // Realtime notification initialization and listener engine
   useEffect(() => {
