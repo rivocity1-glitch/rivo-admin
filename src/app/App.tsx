@@ -36,14 +36,10 @@ import RequestsCenter from "./components/pages/RequestsCenter";
 import { NotificationService } from "../services/notificationService";
 import { BrowserNotification } from "../services/browserNotification";
 
-export type ThemeType = "light" | "dark" | "system";
-
 export default function App() {
   const [session, setSession] = useState<any>(null);
   const [isInitializing, setIsInitializing] = useState(true);
   const [currentTab, setCurrentTab] = useState("dashboard");
-  const [theme] = useState<ThemeType>("light");
-
   const [supportBadge, setSupportBadge] = useState<{
     count: number;
     bgClass: string;
