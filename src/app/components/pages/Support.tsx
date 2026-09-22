@@ -434,6 +434,37 @@ export function Supports() {
   useEffect(() => {
     autoDeleteOldClosedTickets();
     fetchTickets();
+
+    const channels = [
+      supabase
+        .channel("admin-customer-support-tickets")
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "customer_support_tickets" },
+          () => fetchTickets()
+        )
+        .subscribe(),
+      supabase
+        .channel("admin-vendor-support-tickets")
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "vendor_support_tickets" },
+          () => fetchTickets()
+        )
+        .subscribe(),
+      supabase
+        .channel("admin-rider-support-tickets")
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "rider_support_tickets" },
+          () => fetchTickets()
+        )
+        .subscribe(),
+    ];
+
+    return () => {
+      channels.forEach((channel) => supabase.removeChannel(channel));
+    };
   }, []);
 
   const filtered = tickets.filter((ticket) => {

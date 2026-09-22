@@ -591,6 +591,29 @@ export function Feedback() {
 
   useEffect(() => {
     load();
+
+    const channels = [
+      supabase
+        .channel("admin-customer-feedback")
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "customer_feedback" },
+          () => load()
+        )
+        .subscribe(),
+      supabase
+        .channel("admin-customer-support-feedback")
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "customer_support_tickets" },
+          () => load()
+        )
+        .subscribe(),
+    ];
+
+    return () => {
+      channels.forEach((channel) => supabase.removeChannel(channel));
+    };
   }, []);
 
   /*
