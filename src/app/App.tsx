@@ -55,14 +55,6 @@ export default function App() {
     refunds: 0,
   });
 
-  // Rivo Admin uses the light theme only. Do not inherit the browser/OS dark preference.
-  useEffect(() => {
-    const root = window.document.documentElement;
-    root.classList.remove("dark");
-    root.classList.add("light");
-    localStorage.setItem("rivo-theme", "light");
-  }, []);
-
   // Realtime notification initialization and listener engine
   useEffect(() => {
     if (!session) return;
@@ -263,7 +255,7 @@ export default function App() {
 
   if (isInitializing) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#F8FAFC] transition-colors duration-200">
+      <div className="min-h-screen flex items-center justify-center bg-[#F8FAFC]">
         <div className="w-8 h-8 border-4 border-[#22C55E] border-t-transparent rounded-full animate-spin" />
       </div>
     );
@@ -352,9 +344,9 @@ export default function App() {
   ];
 
   return (
-    <div className="flex bg-[#F8FAFC] min-h-screen w-full font-sans antialiased text-[#0F172A] transition-colors duration-200">
+    <div className="flex bg-[#F8FAFC] min-h-screen w-full font-sans antialiased text-[#0F172A]">
       {/* 1. SIDEBAR DESIGN */}
-      <aside className="w-64 bg-white border-r border-[#E2E8F0] flex flex-col justify-between fixed h-full z-30 transition-colors duration-200">
+      <aside className="w-64 bg-white border-r border-[#E2E8F0] flex flex-col justify-between fixed h-full z-30">
         <div className="overflow-y-auto flex-1">
           <div className="h-16 flex items-center px-6 border-b border-[#F1F5F9] gap-3">
             <div className="w-7 h-7 rounded-lg bg-[#22C55E] flex items-center justify-center text-white font-bold text-sm shadow-sm shadow-[#22C55E]/20">
@@ -386,7 +378,7 @@ export default function App() {
                   onClick={() =>
                     setCurrentTab(item.id)
                   }
-                  className={`w-full h-9 px-3 rounded-lg text-xs font-semibold flex items-center justify-between transition-all duration-200 group ${
+                  className={`w-full h-9 px-3 rounded-lg text-xs font-semibold flex items-center justify-between group ${
                     isActive
                       ? "bg-[#F0FDF4] text-[#16A34A]"
                       : "text-[#64748B] hover:text-[#0F172A] hover:bg-[#F8FAFC]"
@@ -409,7 +401,7 @@ export default function App() {
                   {isSupportItem &&
                     supportBadge && (
                       <span
-                        className={`h-4 min-w-[16px] px-1 rounded-full text-[9px] font-bold flex items-center justify-center transition-all shadow-sm ${supportBadge.bgClass}`}
+                        className={`h-4 min-w-[16px] px-1 rounded-full text-[9px] font-bold flex items-center justify-center shadow-sm ${supportBadge.bgClass}`}
                       >
                         {supportBadge.count}
                       </span>
@@ -452,7 +444,7 @@ export default function App() {
                     ) {
                       return (
                         <span
-                          className={`h-4 min-w-[16px] px-1 rounded-full text-[9px] font-bold flex items-center justify-center transition-all shadow-sm ${targetConfig.classes}`}
+                          className={`h-4 min-w-[16px] px-1 rounded-full text-[9px] font-bold flex items-center justify-center shadow-sm ${targetConfig.classes}`}
                         >
                           {targetConfig.count}
                         </span>
@@ -467,7 +459,7 @@ export default function App() {
           </nav>
         </div>
 
-        <div className="p-3 border-t border-[#F1F5F9] bg-white space-y-2 transition-colors duration-200">
+        <div className="p-3 border-t border-[#F1F5F9] bg-white space-y-2">
           <div className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg bg-[#F8FAFC] border border-[#F1F5F9]">
             <div className="w-8 h-8 rounded-full bg-[#E8FBF0] border border-[#DCFCE7] flex items-center justify-center text-xs font-bold text-[#16A34A]">
               {session.name
@@ -488,9 +480,9 @@ export default function App() {
 
           <button
             onClick={handleLogout}
-            className="w-full h-9 px-3 text-xs font-semibold text-[#64748B] hover:text-red-600 hover:bg-red-50 rounded-lg flex items-center gap-2.5 transition-colors duration-200 group"
+            className="w-full h-9 px-3 text-xs font-semibold text-[#64748B] hover:text-red-600 hover:bg-red-50 rounded-lg flex items-center gap-2.5 group"
           >
-            <LogOut className="w-4 h-4 text-[#94A3B8] group-hover:text-red-500 transition-colors duration-200" />
+            <LogOut className="w-4 h-4 text-[#94A3B8] group-hover:text-red-500" />
             <span>Sign Out Session</span>
           </button>
         </div>
@@ -498,7 +490,7 @@ export default function App() {
 
       {/* 2. MAIN LAYOUT FLEX LAYER CONTAINER */}
       <div className="flex-1 flex flex-col pl-64 min-w-0">
-        <header className="h-16 bg-white border-b border-[#E2E8F0] flex items-center justify-between px-8 sticky top-0 z-20 transition-colors duration-200">
+        <header className="h-16 bg-white border-b border-[#E2E8F0] flex items-center justify-between px-8 sticky top-0 z-20">
           <div className="flex items-center gap-2 text-xs font-medium">
             <span className="text-[#94A3B8]">
               Rivo
@@ -518,7 +510,7 @@ export default function App() {
               onClick={() =>
                 setCurrentTab("notifications")
               }
-              className="relative p-2 text-[#64748B] hover:text-[#0F172A] transition-colors duration-200 focus:outline-none"
+              className="relative p-2 text-[#64748B] hover:text-[#0F172A] focus:outline-none"
               aria-label="Notifications"
             >
               <Bell className="w-5 h-5" />
@@ -533,7 +525,7 @@ export default function App() {
               )}
             </button>
 
-            <div className="text-right text-xs text-[#64748B] font-medium bg-[#F8FAFC] border border-[#E2E8F0] px-3 py-1.5 rounded-lg transition-colors duration-200">
+            <div className="text-right text-xs text-[#64748B] font-medium bg-[#F8FAFC] border border-[#E2E8F0] px-3 py-1.5 rounded-lg">
               {new Date().toLocaleDateString(
                 "en-US",
                 {
@@ -623,7 +615,7 @@ export default function App() {
             currentTab !== "notifications" &&
             currentTab !== "analytics" &&
             currentTab !== "settings" && (
-              <div className="bg-white border border-[#E2E8F0] rounded-xl p-16 text-center text-xs font-medium text-[#94A3B8] transition-colors duration-200">
+              <div className="bg-white border border-[#E2E8F0] rounded-xl p-16 text-center text-xs font-medium text-[#94A3B8]">
                 The{" "}
                 <span className="capitalize text-[#475569] font-semibold">
                   "{currentTab}"
