@@ -120,24 +120,38 @@ export default function App() {
 
   async function syncSupportBadgeCount() {
     try {
-      const { data, error } = await supabase
-        .from("support_tickets")
-        .select("id")
-        .in("status", ["open", "in_progress"]);
+      const [customer, vendor, rider] = await Promise.all([
+        supabase
+          .from("customer_support_tickets")
+          .select("id")
+          .in("status", ["open", "in_progress"]),
+        supabase
+          .from("vendor_support_tickets")
+          .select("id")
+          .in("status", ["open", "in_progress"]),
+        supabase
+          .from("rider_support_tickets")
+          .select("id")
+          .in("status", ["open", "in_progress"]),
+      ]);
 
-      if (error) throw error;
+      if (customer.error) throw customer.error;
+      if (vendor.error) throw vendor.error;
+      if (rider.error) throw rider.error;
 
-      if (!data || data.length === 0) {
-        setSupportBadge(null);
-        return;
-      }
+      const count =
+        (customer.data?.length || 0) +
+        (vendor.data?.length || 0) +
+        (rider.data?.length || 0);
 
-      const count = data.length;
-
-      setSupportBadge({
-        count,
-        bgClass: "bg-[#22C55E] text-white",
-      });
+      setSupportBadge(
+        count > 0
+          ? {
+              count,
+              bgClass: "bg-[#22C55E] text-white",
+            }
+          : null
+      );
     } catch (err) {
       console.error(
         "Support badge calculation synchronizer failed:",
