@@ -207,6 +207,10 @@ export function Supports() {
         console.error(`${source} support fetch failed:`, error);
       });
 
+      if (errors.length === 3) {
+        throw new Error("Admin could not read any support queues from Supabase. Check Admin Supabase credentials/RLS.");
+      }
+
       (customer.data || []).forEach((t: any) => allTickets.push({
         id: t.id,
         user_type: "customer",
