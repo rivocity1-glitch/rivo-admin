@@ -397,7 +397,7 @@ export default function App() {
                       className={`transition-colors duration-200 ${
                         isActive
                           ? "text-[#22C55E]"
-                          : "text-[#94A3B8] group-hover:text-[#64748B] dark:group-hover:text-slate-300"
+                          : "text-[#94A3B8] group-hover:text-[#64748B]"
                       }`}
                     >
                       {item.icon}
@@ -468,8 +468,8 @@ export default function App() {
         </div>
 
         <div className="p-3 border-t border-[#F1F5F9] bg-white space-y-2 transition-colors duration-200">
-          <div className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg bg-[#F8FAFC] dark:bg-slate-800/50 border border-[#F1F5F9]">
-            <div className="w-8 h-8 rounded-full bg-[#E8FBF0] border border-[#DCFCE7] dark:border-emerald-900/40 flex items-center justify-center text-xs font-bold text-[#16A34A]">
+          <div className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg bg-[#F8FAFC] border border-[#F1F5F9]">
+            <div className="w-8 h-8 rounded-full bg-[#E8FBF0] border border-[#DCFCE7] flex items-center justify-center text-xs font-bold text-[#16A34A]">
               {session.name
                 ? session.name[0]
                 : "A"}
@@ -504,7 +504,7 @@ export default function App() {
               Rivo
             </span>
 
-            <span className="text-[#E2E8F0] dark:text-slate-700">
+            <span className="text-[#E2E8F0]">
               /
             </span>
 
@@ -524,7 +524,7 @@ export default function App() {
               <Bell className="w-5 h-5" />
 
               {unreadNotificationCount > 0 && (
-                <span className="absolute -top-0.5 -right-0.5 bg-red-500 text-white text-[10px] font-bold h-4 min-w-[16px] px-1 rounded-full flex items-center justify-center leading-none border-2 border-white dark:border-slate-900 shadow-sm">
+                <span className="absolute -top-0.5 -right-0.5 bg-red-500 text-white text-[10px] font-bold h-4 min-w-[16px] px-1 rounded-full flex items-center justify-center leading-none border-2 border-white shadow-sm">
                   {unreadNotificationCount >
                   99
                     ? "99+"
@@ -533,7 +533,7 @@ export default function App() {
               )}
             </button>
 
-            <div className="text-right text-xs text-[#64748B] font-medium bg-[#F8FAFC] dark:bg-slate-800 border border-[#E2E8F0] px-3 py-1.5 rounded-lg transition-colors duration-200">
+            <div className="text-right text-xs text-[#64748B] font-medium bg-[#F8FAFC] border border-[#E2E8F0] px-3 py-1.5 rounded-lg transition-colors duration-200">
               {new Date().toLocaleDateString(
                 "en-US",
                 {
