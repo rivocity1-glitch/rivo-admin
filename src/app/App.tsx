@@ -263,7 +263,7 @@ export default function App() {
 
   if (isInitializing) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#F8FAFC] dark:bg-slate-950 transition-colors duration-200">
+      <div className="min-h-screen flex items-center justify-center bg-[#F8FAFC] transition-colors duration-200">
         <div className="w-8 h-8 border-4 border-[#22C55E] border-t-transparent rounded-full animate-spin" />
       </div>
     );
@@ -352,21 +352,21 @@ export default function App() {
   ];
 
   return (
-    <div className="flex bg-[#F8FAFC] dark:bg-slate-950 min-h-screen w-full font-sans antialiased text-[#0F172A] dark:text-slate-200 transition-colors duration-200">
+    <div className="flex bg-[#F8FAFC] min-h-screen w-full font-sans antialiased text-[#0F172A] transition-colors duration-200">
       {/* 1. SIDEBAR DESIGN */}
-      <aside className="w-64 bg-white dark:bg-slate-900 border-r border-[#E2E8F0] dark:border-slate-800 flex flex-col justify-between fixed h-full z-30 transition-colors duration-200">
+      <aside className="w-64 bg-white border-r border-[#E2E8F0] flex flex-col justify-between fixed h-full z-30 transition-colors duration-200">
         <div className="overflow-y-auto flex-1">
-          <div className="h-16 flex items-center px-6 border-b border-[#F1F5F9] dark:border-slate-800 gap-3">
+          <div className="h-16 flex items-center px-6 border-b border-[#F1F5F9] gap-3">
             <div className="w-7 h-7 rounded-lg bg-[#22C55E] flex items-center justify-center text-white font-bold text-sm shadow-sm shadow-[#22C55E]/20">
               R
             </div>
 
             <div>
-              <span className="font-bold text-sm text-[#0F172A] dark:text-slate-200 block leading-none">
+              <span className="font-bold text-sm text-[#0F172A] block leading-none">
                 Rivo
               </span>
 
-              <span className="text-[10px] text-[#64748B] dark:text-slate-400 font-medium mt-0.5 block">
+              <span className="text-[10px] text-[#64748B] font-medium mt-0.5 block">
                 Admin
               </span>
             </div>
@@ -388,8 +388,8 @@ export default function App() {
                   }
                   className={`w-full h-9 px-3 rounded-lg text-xs font-semibold flex items-center justify-between transition-all duration-200 group ${
                     isActive
-                      ? "bg-[#F0FDF4] dark:bg-emerald-950/40 text-[#16A34A] dark:text-[#22C55E]"
-                      : "text-[#64748B] dark:text-slate-400 hover:text-[#0F172A] dark:hover:text-slate-200 hover:bg-[#F8FAFC] dark:hover:bg-slate-800/60"
+                      ? "bg-[#F0FDF4] text-[#16A34A]"
+                      : "text-[#64748B] hover:text-[#0F172A] hover:bg-[#F8FAFC]"
                   }`}
                 >
                   <div className="flex items-center gap-2.5">
@@ -467,20 +467,20 @@ export default function App() {
           </nav>
         </div>
 
-        <div className="p-3 border-t border-[#F1F5F9] dark:border-slate-800 bg-white dark:bg-slate-900 space-y-2 transition-colors duration-200">
-          <div className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg bg-[#F8FAFC] dark:bg-slate-800/50 border border-[#F1F5F9] dark:border-slate-800">
-            <div className="w-8 h-8 rounded-full bg-[#E8FBF0] dark:bg-emerald-950/40 border border-[#DCFCE7] dark:border-emerald-900/40 flex items-center justify-center text-xs font-bold text-[#16A34A] dark:text-[#22C55E]">
+        <div className="p-3 border-t border-[#F1F5F9] bg-white space-y-2 transition-colors duration-200">
+          <div className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg bg-[#F8FAFC] dark:bg-slate-800/50 border border-[#F1F5F9]">
+            <div className="w-8 h-8 rounded-full bg-[#E8FBF0] border border-[#DCFCE7] dark:border-emerald-900/40 flex items-center justify-center text-xs font-bold text-[#16A34A]">
               {session.name
                 ? session.name[0]
                 : "A"}
             </div>
 
             <div className="min-w-0 flex-1">
-              <p className="text-xs font-bold text-[#0F172A] dark:text-slate-200 truncate leading-tight">
+              <p className="text-xs font-bold text-[#0F172A] truncate leading-tight">
                 {session.name || "Admin User"}
               </p>
 
-              <p className="text-[10px] text-[#94A3B8] dark:text-slate-400 truncate font-medium capitalize mt-0.5">
+              <p className="text-[10px] text-[#94A3B8] truncate font-medium capitalize mt-0.5">
                 {session.role?.replace("_", " ")}
               </p>
             </div>
@@ -488,7 +488,7 @@ export default function App() {
 
           <button
             onClick={handleLogout}
-            className="w-full h-9 px-3 text-xs font-semibold text-[#64748B] dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/20 rounded-lg flex items-center gap-2.5 transition-colors duration-200 group"
+            className="w-full h-9 px-3 text-xs font-semibold text-[#64748B] hover:text-red-600 hover:bg-red-50 rounded-lg flex items-center gap-2.5 transition-colors duration-200 group"
           >
             <LogOut className="w-4 h-4 text-[#94A3B8] group-hover:text-red-500 transition-colors duration-200" />
             <span>Sign Out Session</span>
@@ -498,7 +498,7 @@ export default function App() {
 
       {/* 2. MAIN LAYOUT FLEX LAYER CONTAINER */}
       <div className="flex-1 flex flex-col pl-64 min-w-0">
-        <header className="h-16 bg-white dark:bg-slate-900 border-b border-[#E2E8F0] dark:border-slate-800 flex items-center justify-between px-8 sticky top-0 z-20 transition-colors duration-200">
+        <header className="h-16 bg-white border-b border-[#E2E8F0] flex items-center justify-between px-8 sticky top-0 z-20 transition-colors duration-200">
           <div className="flex items-center gap-2 text-xs font-medium">
             <span className="text-[#94A3B8]">
               Rivo
@@ -508,7 +508,7 @@ export default function App() {
               /
             </span>
 
-            <span className="text-[#475569] dark:text-slate-300 capitalize font-semibold">
+            <span className="text-[#475569] capitalize font-semibold">
               {currentTab}
             </span>
           </div>
@@ -518,7 +518,7 @@ export default function App() {
               onClick={() =>
                 setCurrentTab("notifications")
               }
-              className="relative p-2 text-[#64748B] dark:text-slate-400 hover:text-[#0F172A] dark:hover:text-slate-200 transition-colors duration-200 focus:outline-none"
+              className="relative p-2 text-[#64748B] hover:text-[#0F172A] transition-colors duration-200 focus:outline-none"
               aria-label="Notifications"
             >
               <Bell className="w-5 h-5" />
@@ -533,7 +533,7 @@ export default function App() {
               )}
             </button>
 
-            <div className="text-right text-xs text-[#64748B] dark:text-slate-400 font-medium bg-[#F8FAFC] dark:bg-slate-800 border border-[#E2E8F0] dark:border-slate-700 px-3 py-1.5 rounded-lg transition-colors duration-200">
+            <div className="text-right text-xs text-[#64748B] font-medium bg-[#F8FAFC] dark:bg-slate-800 border border-[#E2E8F0] px-3 py-1.5 rounded-lg transition-colors duration-200">
               {new Date().toLocaleDateString(
                 "en-US",
                 {
@@ -623,9 +623,9 @@ export default function App() {
             currentTab !== "notifications" &&
             currentTab !== "analytics" &&
             currentTab !== "settings" && (
-              <div className="bg-white dark:bg-slate-900 border border-[#E2E8F0] dark:border-slate-800 rounded-xl p-16 text-center text-xs font-medium text-[#94A3B8] dark:text-slate-500 transition-colors duration-200">
+              <div className="bg-white border border-[#E2E8F0] rounded-xl p-16 text-center text-xs font-medium text-[#94A3B8] transition-colors duration-200">
                 The{" "}
-                <span className="capitalize text-[#475569] dark:text-slate-300 font-semibold">
+                <span className="capitalize text-[#475569] font-semibold">
                   "{currentTab}"
                 </span>{" "}
                 panel is connected and preparing for production initialization.
