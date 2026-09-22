@@ -406,9 +406,16 @@ export function Supports() {
       if (notificationError) console.error("Status notification failed:", notificationError);
 
       showSuccess(`Ticket marked ${statusConfig[nextStatus].label.toLowerCase()}.`);
+      const updatedTicket = {
+        ...selectedTicket,
+        status: nextStatus,
+        unread_for_admin:
+          nextStatus === "closed" || nextStatus === "resolved"
+            ? false
+            : selectedTicket.unread_for_admin,
+      };
+      setSelectedTicket(updatedTicket);
       await fetchTickets();
-      const updated = tickets.find((t) => t.id === selectedTicket.id && t.user_type === selectedTicket.user_type);
-      if (updated) setSelectedTicket({ ...updated, status: nextStatus });
     } catch (error: any) {
       console.error("Support status update failed:", error);
       showError(error?.message || "Unable to update ticket status.");
