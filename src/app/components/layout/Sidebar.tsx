@@ -62,16 +62,16 @@ interface SidebarProps {
 
 export function Sidebar({ activePage, onNavigate }: SidebarProps) {
   return (
-    <aside className="fixed left-0 top-0 h-full w-[220px] bg-white dark:bg-slate-900 border-r border-[#E2E8F0] dark:border-slate-800 flex flex-col z-10 transition-colors duration-200">
+    <aside className="fixed left-0 top-0 h-full w-[220px] bg-white border-r border-[#E2E8F0] flex flex-col z-10 transition-colors duration-200">
       {/* Logo */}
-      <div className="h-14 flex items-center px-5 border-b border-[#E2E8F0] dark:border-slate-800">
+      <div className="h-14 flex items-center px-5 border-b border-[#E2E8F0]">
         <div className="flex items-center gap-2">
           <div className="w-7 h-7 bg-[#22C55E] rounded-lg flex items-center justify-center">
             <Leaf className="w-4 h-4 text-white" />
           </div>
           <div className="flex flex-col">
-            <span className="text-sm font-semibold text-[#0F172A] dark:text-slate-200 leading-none">Rivo</span>
-            <span className="text-[10px] text-[#64748B] dark:text-slate-400 leading-none mt-0.5">Admin</span>
+            <span className="text-sm font-semibold text-[#0F172A] leading-none">Rivo</span>
+            <span className="text-[10px] text-[#64748B] leading-none mt-0.5">Admin</span>
           </div>
         </div>
       </div>
@@ -88,11 +88,11 @@ export function Sidebar({ activePage, onNavigate }: SidebarProps) {
                   className={cn(
                     "w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 text-left",
                     isActive
-                      ? "bg-[#F0FDF4] dark:bg-emerald-950/40 text-[#16A34A] dark:text-[#22C55E]"
-                      : "text-[#64748B] dark:text-slate-400 hover:bg-[#F8FAFC] dark:hover:bg-slate-800/60 hover:text-[#0F172A] dark:hover:text-slate-200"
+                      ? "bg-[#F0FDF4] text-[#16A34A]"
+                      : "text-[#64748B] hover:bg-[#F8FAFC]/60 hover:text-[#0F172A]"
                   )}
                 >
-                  <span className={cn(isActive ? "text-[#22C55E]" : "text-[#94A3B8] dark:text-slate-500")}>
+                  <span className={cn(isActive ? "text-[#22C55E]" : "text-[#94A3B8]")}>
                     {item.icon}
                   </span>
                   <span className="flex-1">{item.label}</span>
@@ -109,14 +109,14 @@ export function Sidebar({ activePage, onNavigate }: SidebarProps) {
       </nav>
 
       {/* Footer */}
-      <div className="p-3 border-t border-[#E2E8F0] dark:border-slate-800">
-        <div className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-[#F8FAFC] dark:hover:bg-slate-800 cursor-pointer transition-colors duration-200">
+      <div className="p-3 border-t border-[#E2E8F0]">
+        <div className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-[#F8FAFC] cursor-pointer transition-colors duration-200">
           <div className="w-7 h-7 bg-[#22C55E] rounded-full flex items-center justify-center flex-shrink-0">
             <span className="text-white text-xs font-semibold">A</span>
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-xs font-medium text-[#0F172A] dark:text-slate-200 truncate">Admin</p>
-            <p className="text-[10px] text-[#64748B] dark:text-slate-400 truncate">admin@rivo.app</p>
+            <p className="text-xs font-medium text-[#0F172A] truncate">Admin</p>
+            <p className="text-[10px] text-[#64748B] truncate">admin@rivo.app</p>
           </div>
         </div>
       </div>
