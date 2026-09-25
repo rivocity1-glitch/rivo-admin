@@ -247,6 +247,9 @@ export function Settlements() {
 
   const [actionLoading, setActionLoading] = useState(false);
 
+  const vendorSettlementCutoffLabel = 'Daily at 9:00 PM IST';
+  const riderSettlementCadenceLabel = 'Weekly';
+
   const [toast, setToast] = useState<{
     message: string;
     type: "success" | "error";
@@ -1043,6 +1046,18 @@ export function Settlements() {
     type: SettlementType
   ) => {
     return (
+      <div className="mb-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="bg-white border border-[#E2E8F0] rounded-xl px-4 py-3">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-[#64748B]">Vendor settlement</p>
+          <p className="text-sm font-bold text-[#0F172A] mt-1">${vendorSettlementCutoffLabel}</p>
+          <p className="text-[11px] text-[#64748B] mt-1">Orders after the cutoff roll into the next cycle.</p>
+        </div>
+        <div className="bg-white border border-[#E2E8F0] rounded-xl px-4 py-3">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-[#64748B]">Rider settlement</p>
+          <p className="text-sm font-bold text-[#0F172A] mt-1">${riderSettlementCadenceLabel}</p>
+          <p className="text-[11px] text-[#64748B] mt-1">Rider earnings remain available until the weekly payout cycle.</p>
+        </div>
+      </div>
       <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left">

@@ -508,6 +508,46 @@ export function Orders() {
 
   const paginated = filtered.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
+  const verifyUpiPayment = async (order: Order) => {
+    if (String(order.payment_method || '').toLowerCase() !== 'upi') return;
+    if (String(order.payment_status || '').toLowerCase() === 'paid') return;
+
+    try {
+      const paidAt = new Date().toISOString();
+
+      const { error: paymentError } = await supabase
+        .from('payments')
+        .update({
+          payment_status: 'paid',
+          paid_at: paidAt,
+          gateway_response: {
+            verification_status: 'admin_verified',
+            verified_at: paidAt,
+            verified_from: 'Admin Orders',
+          },
+        })
+        .eq('order_id', order.id);
+
+      if (paymentError) throw paymentError;
+
+      const { error: orderError } = await supabase
+        .from('orders')
+        .update({ payment_status: 'paid' })
+        .eq('id', order.id);
+
+      if (orderError) throw orderError;
+
+      setSelectedOrder({
+        ...order,
+        payment_status: 'paid',
+      });
+      await fetchOrders();
+    } catch (error: any) {
+      console.error('UPI verification error:', error);
+      alert(error?.message || 'Failed to verify UPI payment.');
+    }
+  };
+
   const handleExportCSV = () => {
     const headers = ["Order ID,Customer,Store,Vendor Business,Rider,Amount,Status,Payment Method,Payment Status,Placed Time"];
     const rows = filtered.map(o => `"${o.order_number}","${o.customer_name}","${o.store_name}","${o.vendor_name}","${o.rider_name}",${o.total_amount},"${o.order_status}","${o.payment_method}","${o.payment_status}","${o.created_at}"`);
@@ -801,6 +841,15 @@ export function Orders() {
                 <div>
                   <span className="text-[#64748B] block font-medium mb-0.5">Payment Method</span>
                   <span className="font-bold uppercase text-[#334155]">{selectedOrder.payment_method}</span>
+                  {String(selectedOrder.payment_method || '').toLowerCase() === 'upi' &&
+                    String(selectedOrder.payment_status || '').toLowerCase() !== 'paid' && (
+                      <button
+                        onClick={() => verifyUpiPayment(selectedOrder)}
+                        className="mt-2 px-3 py-1.5 rounded-lg bg-[#22C55E] text-white text-[11px] font-bold"
+                      >
+                        Verify UPI Payment
+                      </button>
+                    )}
                 </div>
                 <div>
                   <span className="text-[#64748B] block font-medium mb-0.5">Placed Time</span>
