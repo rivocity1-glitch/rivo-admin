@@ -271,6 +271,66 @@ export function Settlements() {
     []
   );
 
+  const ensureScheduledSettlements = useCallback(async () => {
+    const now = new Date();
+    const istNow = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+    const cutoffToday = new Date(istNow);
+    cutoffToday.setHours(21, 0, 0, 0);
+    const completedEnd = istNow >= cutoffToday ? cutoffToday : new Date(cutoffToday.getTime() - 86400000);
+    const completedStart = new Date(completedEnd.getTime() - 86400000);
+
+    const { data: vendorOrders, error: vendorOrdersError } = await supabase
+      .from('orders')
+      .select('id,vendor_id,vendor_earning')
+      .eq('order_status','delivered')
+      .eq('payment_status','paid')
+      .eq('settled_vendor',false)
+      .gte('delivered_at',completedStart.toISOString())
+      .lt('delivered_at',completedEnd.toISOString());
+    if (vendorOrdersError) throw vendorOrdersError;
+
+    const { data: vendorPending, error: vendorPendingError } = await supabase
+      .from('vendor_settlements').select('order_ids').neq('status','PAID');
+    if (vendorPendingError) throw vendorPendingError;
+    const vendorLinked = new Set((vendorPending || []).flatMap((x:any)=>Array.isArray(x.order_ids)?x.order_ids:[]));
+    const vendorGroups = new Map<string, any[]>();
+    (vendorOrders || []).forEach((o:any)=>{ if(!o.vendor_id || vendorLinked.has(o.id)) return; const list=vendorGroups.get(o.vendor_id)||[]; list.push(o); vendorGroups.set(o.vendor_id,list); });
+    for (const [vendorId, list] of vendorGroups) {
+      const orderIds=list.map((o:any)=>o.id);
+      const amount=list.reduce((sum:number,o:any)=>sum+Number(o.vendor_earning||0),0);
+      if(amount<=0) continue;
+      const {error}=await supabase.from('vendor_settlements').insert({vendor_id:vendorId,amount,order_count:orderIds.length,order_ids:orderIds,status:'pending',settlement_type:'daily_9pm',request_date:new Date().toISOString()});
+      if(error) throw error;
+    }
+
+    const day=istNow.getDay();
+    const daysSinceMonday=(day+6)%7;
+    const currentMonday=new Date(istNow);
+    currentMonday.setDate(istNow.getDate()-daysSinceMonday);
+    currentMonday.setHours(0,0,0,0);
+    const previousMonday=new Date(currentMonday);
+    previousMonday.setDate(currentMonday.getDate()-7);
+
+    const {data:riderOrders,error:riderOrdersError}=await supabase.from('orders')
+      .select('id,rider_id,rider_earning')
+      .eq('order_status','delivered').eq('payment_status','paid').eq('settled_rider',false)
+      .gte('delivered_at',previousMonday.toISOString()).lt('delivered_at',currentMonday.toISOString());
+    if(riderOrdersError) throw riderOrdersError;
+
+    const {data:riderPending,error:riderPendingError}=await supabase.from('rider_settlements').select('order_ids').neq('status','PAID');
+    if(riderPendingError) throw riderPendingError;
+    const riderLinked=new Set((riderPending||[]).flatMap((x:any)=>Array.isArray(x.order_ids)?x.order_ids:[]));
+    const riderGroups=new Map<string,any[]>();
+    (riderOrders||[]).forEach((o:any)=>{if(!o.rider_id||riderLinked.has(o.id))return;const list=riderGroups.get(o.rider_id)||[];list.push(o);riderGroups.set(o.rider_id,list);});
+    for(const [riderId,list] of riderGroups){
+      const orderIds=list.map((o:any)=>o.id);
+      const amount=list.reduce((sum:number,o:any)=>sum+Number(o.rider_earning||0),0);
+      if(amount<=0)continue;
+      const {error}=await supabase.from('rider_settlements').insert({rider_id:riderId,amount,delivery_count:orderIds.length,order_ids:orderIds,status:'pending',settlement_type:'weekly',request_date:new Date().toISOString()});
+      if(error)throw error;
+    }
+  }, []);
+
   const loadData = useCallback(
     async (showLoader = true) => {
       if (realtimeLock.current) return;
@@ -281,6 +341,8 @@ export function Settlements() {
         if (showLoader) {
           setLoading(true);
         }
+
+        await ensureScheduledSettlements();
 
         const [
           vendorSettlementResult,
@@ -390,7 +452,7 @@ export function Settlements() {
         realtimeLock.current = false;
       }
     },
-    [showToast]
+    [showToast, ensureScheduledSettlements]
   );
 
   useEffect(() => {
@@ -1049,12 +1111,12 @@ export function Settlements() {
       <div className="mb-4 grid grid-cols-1 md:grid-cols-2 gap-3">
         <div className="bg-white border border-[#E2E8F0] rounded-xl px-4 py-3">
           <p className="text-[10px] font-bold uppercase tracking-wide text-[#64748B]">Vendor settlement</p>
-          <p className="text-sm font-bold text-[#0F172A] mt-1">${vendorSettlementCutoffLabel}</p>
+          <p className="text-sm font-bold text-[#0F172A] mt-1">{vendorSettlementCutoffLabel}</p>
           <p className="text-[11px] text-[#64748B] mt-1">Orders after the cutoff roll into the next cycle.</p>
         </div>
         <div className="bg-white border border-[#E2E8F0] rounded-xl px-4 py-3">
           <p className="text-[10px] font-bold uppercase tracking-wide text-[#64748B]">Rider settlement</p>
-          <p className="text-sm font-bold text-[#0F172A] mt-1">${riderSettlementCadenceLabel}</p>
+          <p className="text-sm font-bold text-[#0F172A] mt-1">{riderSettlementCadenceLabel}</p>
           <p className="text-[11px] text-[#64748B] mt-1">Rider earnings remain available until the weekly payout cycle.</p>
         </div>
       </div>
