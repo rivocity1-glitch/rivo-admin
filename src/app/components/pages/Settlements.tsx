@@ -116,6 +116,11 @@ interface Vendor {
   email?: string | null;
 }
 
+interface VendorProfile {
+  vendor_id: string;
+  qr_code_url?: string | null;
+}
+
 interface Rider {
   id: string;
   rider_name?: string | null;
@@ -223,6 +228,7 @@ export function Settlements() {
   >([]);
 
   const [vendors, setVendors] = useState<Vendor[]>([]);
+  const [vendorProfiles, setVendorProfiles] = useState<VendorProfile[]>([]);
   const [riders, setRiders] = useState<Rider[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
@@ -348,6 +354,7 @@ export function Settlements() {
           vendorSettlementResult,
           riderSettlementResult,
           vendorsResult,
+          vendorProfilesResult,
           ridersResult,
           ordersResult,
           ledgerResult,
@@ -363,6 +370,10 @@ export function Settlements() {
             .order("created_at", { ascending: false }),
 
           supabase.from("vendors").select("*"),
+
+          supabase
+            .from("vendor_profiles")
+            .select("vendor_id,qr_code_url"),
 
           supabase.from("riders").select("*"),
 
@@ -415,6 +426,10 @@ export function Settlements() {
           throw vendorsResult.error;
         }
 
+        if (vendorProfilesResult.error) {
+          throw vendorProfilesResult.error;
+        }
+
         if (ridersResult.error) {
           throw ridersResult.error;
         }
@@ -436,6 +451,9 @@ export function Settlements() {
         );
 
         setVendors((vendorsResult.data || []) as Vendor[]);
+        setVendorProfiles(
+          (vendorProfilesResult.data || []) as VendorProfile[]
+        );
         setRiders((ridersResult.data || []) as Rider[]);
         setOrders((ordersResult.data || []) as Order[]);
         setLedger((ledgerResult.data || []) as LedgerEntry[]);
@@ -835,6 +853,14 @@ export function Settlements() {
     ledger,
     historyRows.length,
   ]);
+
+  const getVendorQrUrl = (vendorId: string) => {
+    return (
+      vendorProfiles.find(
+        (profile) => profile.vendor_id === vendorId
+      )?.qr_code_url || null
+    );
+  };
 
   const getEntityName = (
     settlement: VendorSettlement | RiderSettlement,
@@ -2002,6 +2028,77 @@ export function Settlements() {
               </div>
 
               <div className="p-5 overflow-y-auto max-h-[75vh] space-y-5">
+                {selectedType === "vendor" && (
+                  <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <p className="text-xs font-black uppercase tracking-wider text-slate-500">
+                          Vendor Payment QR
+                        </p>
+                        <p className="text-[10px] text-slate-400 mt-1">
+                          Use the uploaded vendor QR as the payout destination.
+                        </p>
+                      </div>
+                      {getVendorQrUrl(
+                        (selectedSettlement as VendorSettlement).vendor_id
+                      ) ? (
+                        <span className="text-[9px] font-black uppercase tracking-wider text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-1">
+                          QR available
+                        </span>
+                      ) : (
+                        <span className="text-[9px] font-black uppercase tracking-wider text-rose-700 bg-rose-50 border border-rose-200 rounded-full px-2 py-1">
+                          QR missing
+                        </span>
+                      )}
+                    </div>
+
+                    {getVendorQrUrl(
+                      (selectedSettlement as VendorSettlement).vendor_id
+                    ) ? (
+                      <img
+                        src={getVendorQrUrl(
+                          (selectedSettlement as VendorSettlement).vendor_id
+                        ) || ""}
+                        alt="Vendor settlement payment QR"
+                        className="mt-4 w-40 h-40 object-contain rounded-xl border border-gray-200 bg-white p-2"
+                      />
+                    ) : (
+                      <p className="mt-3 text-xs text-rose-600">
+                        Vendor payment QR has not been uploaded. Verify the payout destination before transferring funds.
+                      </p>
+                    )}
+                  </div>
+                )}
+
+
+                {selectedType === "vendor" &&
+                  getVendorQrUrl(
+                    (selectedSettlement as VendorSettlement).vendor_id
+                  ) && (
+                    <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4 flex flex-col sm:flex-row sm:items-center gap-4">
+                      <div className="w-28 h-28 bg-white rounded-xl border border-gray-200 p-2 flex items-center justify-center shrink-0">
+                        <img
+                          src={getVendorQrUrl(
+                            (selectedSettlement as VendorSettlement).vendor_id
+                          ) || ""}
+                          alt="Vendor settlement payment QR"
+                          className="max-w-full max-h-full object-contain"
+                        />
+                      </div>
+                      <div>
+                        <p className="text-xs font-black uppercase tracking-wider text-emerald-700">
+                          Vendor Payment QR
+                        </p>
+                        <p className="text-sm font-bold text-slate-900 mt-1">
+                          Use this QR for the vendor settlement transfer.
+                        </p>
+                        <p className="text-[10px] text-slate-500 mt-1">
+                          This QR was uploaded by the vendor and is stored in the vendor profile.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
                     <span className="text-[9px] font-black uppercase text-slate-400">
