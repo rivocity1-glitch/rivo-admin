@@ -15,10 +15,12 @@ import {
   ShoppingBag,
   Store,
   Users,
+  UserPlus,
 } from "lucide-react";
 import { Dashboard } from "./components/pages/Dashboard";
 import { Vendors } from "./components/pages/Vendors";
 import { Riders } from "./components/pages/Riders";
+import { Pickers } from "./components/pages/Pickers";
 import { Login } from "./components/pages/Login";
 import { Customers } from "./components/pages/Customers";
 import { Orders } from "./components/pages/Orders";
@@ -296,6 +298,11 @@ export default function App() {
       icon: <Bike className="w-4 h-4" />,
     },
     {
+      id: "pickers",
+      label: "Pickers",
+      icon: <UserPlus className="w-4 h-4" />,
+    },
+    {
       id: "customers",
       label: "Customers",
       icon: <Users className="w-4 h-4" />,
@@ -566,6 +573,10 @@ export default function App() {
             <Riders />
           )}
 
+          {currentTab === "pickers" && (
+            <Pickers />
+          )}
+
           {currentTab === "customers" && (
             <Customers />
           )}
@@ -617,6 +628,7 @@ export default function App() {
           {currentTab !== "dashboard" &&
             currentTab !== "vendors" &&
             currentTab !== "riders" &&
+            currentTab !== "pickers" &&
             currentTab !== "customers" &&
             currentTab !== "orders" &&
             currentTab !== "settlements" &&
