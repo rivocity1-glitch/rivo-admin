@@ -1,5 +1,5 @@
 import React,{useEffect,useState}from"react";
-import{Check,Clock,MapPin,RefreshCw,X,Eye,Mail,UserRound,Building2}from"lucide-react";
+import{Check,Clock,MapPin,RefreshCw,X,Eye,Building2,LifeBuoy}from"lucide-react";
 import{supabase}from"../../../lib/supabase";
 
 type Picker={
@@ -7,9 +7,10 @@ type Picker={
  city:string;locality:string|null;pincode:string|null;latitude:number|null;longitude:number|null;
  availability_status:string;application_status:string;registration_source:string|null;created_by_vendor_id:string|null;created_at:string;updated_at:string|null;address:string|null;documents_submitted:any;
 };
+type HelperRequest={id:string;vendor_id:string;title:string;description:string;status:string;priority:string;created_at:string;};
 
 export function Pickers(){
- const[rows,setRows]=useState<Picker[]>([]);const[vendorNames,setVendorNames]=useState<Record<string,string>>({});
+ const[rows,setRows]=useState<Picker[]>([]);const[vendorNames,setVendorNames]=useState<Record<string,string>>({});const[helperRequests,setHelperRequests]=useState<HelperRequest[]>([]);const[helperVendors,setHelperVendors]=useState<Record<string,string>>({});const[helperPickers,setHelperPickers]=useState<Picker[]>([]);const[helperLanes,setHelperLanes]=useState<Record<string,{id:string;lane_name:string}[]>>({});const[selectedPicker,setSelectedPicker]=useState<Record<string,string>>({});const[selectedLane,setSelectedLane]=useState<Record<string,string>>({});const[assigningHelper,setAssigningHelper]=useState<string|null>(null);
  const[filter,setFilter]=useState("pending");const[selected,setSelected]=useState<Picker|null>(null);const[loading,setLoading]=useState(true);const[error,setError]=useState<string|null>(null);
 
  const load=async()=>{
@@ -19,6 +20,12 @@ export function Pickers(){
   const pickers=(data||[]) as Picker[];setRows(pickers);
   const vendorIds=[...new Set(pickers.map(p=>p.created_by_vendor_id).filter(Boolean))] as string[];
   if(vendorIds.length){const{data:vendors,error:ve}=await supabase.from("vendors").select("id,shop_name").in("id",vendorIds);if(!ve)setVendorNames(Object.fromEntries((vendors||[]).map((v:any)=>[v.id,v.shop_name||"Vendor"])));}
+  const{data:helperData,error:helperError}=await supabase.from("vendor_support_tickets").select("id,vendor_id,title,description,status,priority,issue_type,created_at").eq("issue_type","picker_helper").in("status",["open","in_progress"]).order("created_at",{ascending:false});
+  if(helperError)console.error("Picker helper queue load failed:",helperError);
+  const helpers=(helperData||[]) as HelperRequest[];setHelperRequests(helpers);
+  const helperVendorIds=[...new Set(helpers.map(h=>h.vendor_id))];
+  if(helperVendorIds.length){const{data:hv}=await supabase.from("vendors").select("id,shop_name").in("id",helperVendorIds);setHelperVendors(Object.fromEntries((hv||[]).map((v:any)=>[v.id,v.shop_name||"Vendor"])));const{data:hl}=await supabase.from("vendor_lanes").select("id,vendor_id,lane_name").in("vendor_id",helperVendorIds).eq("status","active");const grouped:Record<string,{id:string;lane_name:string}[]>={};(hl||[]).forEach((l:any)=>{(grouped[l.vendor_id] ||= []).push({id:l.id,lane_name:l.lane_name})});setHelperLanes(grouped);}
+  setHelperPickers(pickers.filter(p=>p.application_status==="approved"));
   setLoading(false);
  };
  useEffect(()=>{load()},[]);
@@ -28,12 +35,31 @@ export function Pickers(){
   if(error){setError(error.message);return}await load();
   setSelected(prev=>prev?.id===id?{...prev,application_status:status}:prev);
  };
+ const assignHelper=async(ticket:HelperRequest)=>{
+  const pickerId=selectedPicker[ticket.id];
+  if(!pickerId){setError("Select an approved Picker.");return;}
+  setAssigningHelper(ticket.id);setError(null);
+  const{error}=await supabase.rpc("admin_assign_picker_helper",{p_vendor_id:ticket.vendor_id,p_picker_id:pickerId,p_ticket_id:ticket.id,p_lane_id:selectedLane[ticket.id]||null});
+  if(error){setError(error.message);setAssigningHelper(null);return;}
+  await load();setAssigningHelper(null);
+ };
  const filtered=filter==="all"?rows:rows.filter(p=>p.application_status===filter);
 
  return <div className="space-y-5">
   <div className="flex items-center justify-between gap-3"><div><h1 className="text-xl font-bold text-[#0F172A]">RivoCity Pickers</h1><p className="text-xs text-[#64748B] mt-1">Review Picker applications, vendor-created Pickers and account details.</p></div><button onClick={load} className="h-9 px-3 rounded-lg border border-[#E2E8F0] bg-white text-xs font-semibold flex items-center gap-2"><RefreshCw className="w-4 h-4"/>Refresh</button></div>
   <div className="flex gap-2 flex-wrap">{["pending","approved","rejected","suspended","all"].map(v=><button key={v} onClick={()=>setFilter(v)} className={"px-3 py-2 rounded-lg text-xs font-semibold capitalize "+(filter===v?"bg-[#22C55E] text-white":"bg-white border border-[#E2E8F0] text-[#64748B]")}>{v}</button>)}</div>
   {error&&<div className="rounded-lg border border-red-200 bg-red-50 text-red-600 px-4 py-3 text-xs">{error}</div>}
+  <section className="bg-white border border-[#E2E8F0] rounded-xl p-4 space-y-3">
+   <div className="flex items-center justify-between"><div><h2 className="font-bold text-sm flex items-center gap-2"><LifeBuoy className="w-4 h-4 text-emerald-600"/>Picker / Helper Requests</h2><p className="text-xs text-[#64748B] mt-1">Vendors request help here. Admin assigns an approved Picker to the vendor and optionally to a lane.</p></div><span className="text-xs font-bold text-amber-700">{helperRequests.length} open</span></div>
+   {helperRequests.length===0?<div className="rounded-lg border bg-slate-50 p-4 text-xs text-[#64748B]">No open Picker/helper requests.</div>:<div className="space-y-3">{helperRequests.map(ticket=><div key={ticket.id} className="rounded-xl border border-[#E2E8F0] p-4">
+    <div className="flex items-start justify-between gap-3"><div><p className="text-sm font-bold">{helperVendors[ticket.vendor_id]||"Vendor"}</p><p className="text-xs text-[#64748B] mt-1">{ticket.description}</p></div><span className="text-[10px] font-bold rounded-full bg-amber-50 text-amber-700 px-2 py-1">{ticket.status}</span></div>
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mt-3">
+      <select value={selectedPicker[ticket.id]||""} onChange={e=>setSelectedPicker(v=>({...v,[ticket.id]:e.target.value}))} className="h-9 rounded-lg border px-3 text-xs bg-white"><option value="">Select approved Picker</option>{helperPickers.map(p=><option key={p.id} value={p.id}>{p.full_name} · {p.picker_login_id||"Picker"}</option>)}</select>
+      <select value={selectedLane[ticket.id]||""} onChange={e=>setSelectedLane(v=>({...v,[ticket.id]:e.target.value}))} className="h-9 rounded-lg border px-3 text-xs bg-white"><option value="">Vendor-wide helper</option>{(helperLanes[ticket.vendor_id]||[]).map(l=><option key={l.id} value={l.id}>{l.lane_name}</option>)}</select>
+      <button onClick={()=>assignHelper(ticket)} disabled={assigningHelper===ticket.id} className="h-9 rounded-lg bg-[#22C55E] text-white text-xs font-bold">{assigningHelper===ticket.id?"Assigning…":"Assign Picker / Helper"}</button>
+    </div>
+   </div>)}</div>}
+  </section>
   {loading?<div className="py-16 flex justify-center"><RefreshCw className="animate-spin text-[#22C55E]"/></div>:filtered.length===0?<div className="bg-white border border-[#E2E8F0] rounded-xl p-12 text-center text-xs text-[#94A3B8]">No Picker registrations in this view.</div>:
   <div className="grid gap-3">{filtered.map(p=><div key={p.id} className="bg-white border border-[#E2E8F0] rounded-xl p-4">
    <div className="flex items-start justify-between gap-4"><div className="min-w-0"><h2 className="font-bold text-sm text-[#0F172A]">{p.full_name}</h2><p className="text-xs text-emerald-700 font-bold mt-1">{p.picker_login_id||"Picker ID pending"}</p><p className="text-xs text-[#64748B] mt-1">{p.email||"No email"} · {p.phone} · {p.city}{p.locality?" · "+p.locality:""}</p><p className="text-[11px] text-[#94A3B8] mt-1 flex items-center gap-1"><MapPin className="w-3 h-3"/>{p.pincode||"Pincode not provided"} · {p.availability_status}</p></div><div className="flex flex-col items-end gap-2"><span className={"text-[10px] font-bold px-2 py-1 rounded-full "+(p.application_status==="approved"?"bg-green-50 text-green-700":p.application_status==="pending"?"bg-amber-50 text-amber-700":"bg-red-50 text-red-700")}>{p.application_status}</span><span className="text-[10px] font-bold px-2 py-1 rounded-full bg-slate-100 text-slate-600">{p.registration_source==="vendor"?"Vendor Created":"PWA Application"}</span></div></div>
