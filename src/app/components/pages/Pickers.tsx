@@ -8,9 +8,11 @@ type Picker={
  availability_status:string;application_status:string;registration_source:string|null;created_by_vendor_id:string|null;created_at:string;updated_at:string|null;address:string|null;documents_submitted:any;
 };
 type HelperRequest={id:string;vendor_id:string;title:string;description:string;status:string;priority:string;created_at:string;};
+type VendorOption={id:string;shop_name:string};
+type LaneOption={id:string;vendor_id:string;lane_name:string};
 
 export function Pickers(){
- const[rows,setRows]=useState<Picker[]>([]);const[vendorNames,setVendorNames]=useState<Record<string,string>>({});const[helperRequests,setHelperRequests]=useState<HelperRequest[]>([]);const[helperVendors,setHelperVendors]=useState<Record<string,string>>({});const[helperPickers,setHelperPickers]=useState<Picker[]>([]);const[helperLanes,setHelperLanes]=useState<Record<string,{id:string;lane_name:string}[]>>({});const[selectedPicker,setSelectedPicker]=useState<Record<string,string>>({});const[selectedLane,setSelectedLane]=useState<Record<string,string>>({});const[assigningHelper,setAssigningHelper]=useState<string|null>(null);
+ const[rows,setRows]=useState<Picker[]>([]);const[vendorNames,setVendorNames]=useState<Record<string,string>>({});const[allVendors,setAllVendors]=useState<VendorOption[]>([]);const[allLanes,setAllLanes]=useState<LaneOption[]>([]);const[manualVendor,setManualVendor]=useState("");const[manualPicker,setManualPicker]=useState("");const[manualLane,setManualLane]=useState("");const[manualAssigning,setManualAssigning]=useState(false);const[helperRequests,setHelperRequests]=useState<HelperRequest[]>([]);const[helperVendors,setHelperVendors]=useState<Record<string,string>>({});const[helperPickers,setHelperPickers]=useState<Picker[]>([]);const[helperLanes,setHelperLanes]=useState<Record<string,{id:string;lane_name:string}[]>>({});const[selectedPicker,setSelectedPicker]=useState<Record<string,string>>({});const[selectedLane,setSelectedLane]=useState<Record<string,string>>({});const[assigningHelper,setAssigningHelper]=useState<string|null>(null);
  const[filter,setFilter]=useState("pending");const[selected,setSelected]=useState<Picker|null>(null);const[loading,setLoading]=useState(true);const[error,setError]=useState<string|null>(null);
 
  const load=async()=>{
@@ -20,6 +22,8 @@ export function Pickers(){
   const pickers=(data||[]) as Picker[];setRows(pickers);
   const vendorIds=[...new Set(pickers.map(p=>p.created_by_vendor_id).filter(Boolean))] as string[];
   if(vendorIds.length){const{data:vendors,error:ve}=await supabase.from("vendors").select("id,shop_name").in("id",vendorIds);if(!ve)setVendorNames(Object.fromEntries((vendors||[]).map((v:any)=>[v.id,v.shop_name||"Vendor"])));}
+  const{data:allVendorData}=await supabase.from("vendors").select("id,shop_name").order("shop_name");setAllVendors((allVendorData||[]) as VendorOption[]);
+  const{data:allLaneData}=await supabase.from("vendor_lanes").select("id,vendor_id,lane_name").eq("status","active").order("lane_name");setAllLanes((allLaneData||[]) as LaneOption[]);
   const{data:helperData,error:helperError}=await supabase.from("vendor_support_tickets").select("id,vendor_id,title,description,status,priority,issue_type,created_at").eq("issue_type","picker_helper").in("status",["open","in_progress"]).order("created_at",{ascending:false});
   if(helperError)console.error("Picker helper queue load failed:",helperError);
   const helpers=(helperData||[]) as HelperRequest[];setHelperRequests(helpers);
@@ -35,6 +39,13 @@ export function Pickers(){
   if(error){setError(error.message);return}await load();
   setSelected(prev=>prev?.id===id?{...prev,application_status:status}:prev);
  };
+ const assignManualPicker=async()=>{
+  if(!manualVendor||!manualPicker){setError("Select a vendor and approved Picker.");return;}
+  setManualAssigning(true);setError(null);
+  const{error}=await supabase.rpc("admin_assign_picker_helper",{p_vendor_id:manualVendor,p_picker_id:manualPicker,p_ticket_id:null,p_lane_id:manualLane||null});
+  if(error){setError(error.message);setManualAssigning(false);return;}
+  setManualPicker("");setManualLane("");await load();setManualAssigning(false);
+ };
  const assignHelper=async(ticket:HelperRequest)=>{
   const pickerId=selectedPicker[ticket.id];
   if(!pickerId){setError("Select an approved Picker.");return;}
@@ -49,6 +60,15 @@ export function Pickers(){
   <div className="flex items-center justify-between gap-3"><div><h1 className="text-xl font-bold text-[#0F172A]">RivoCity Pickers</h1><p className="text-xs text-[#64748B] mt-1">Review Picker applications, vendor-created Pickers and account details.</p></div><button onClick={load} className="h-9 px-3 rounded-lg border border-[#E2E8F0] bg-white text-xs font-semibold flex items-center gap-2"><RefreshCw className="w-4 h-4"/>Refresh</button></div>
   <div className="flex gap-2 flex-wrap">{["pending","approved","rejected","suspended","all"].map(v=><button key={v} onClick={()=>setFilter(v)} className={"px-3 py-2 rounded-lg text-xs font-semibold capitalize "+(filter===v?"bg-[#22C55E] text-white":"bg-white border border-[#E2E8F0] text-[#64748B]")}>{v}</button>)}</div>
   {error&&<div className="rounded-lg border border-red-200 bg-red-50 text-red-600 px-4 py-3 text-xs">{error}</div>}
+  <section className="bg-white border border-[#E2E8F0] rounded-xl p-4 space-y-3">
+   <div><h2 className="font-bold text-sm">Assign Picker to Vendor</h2><p className="text-xs text-[#64748B] mt-1">Admin can assign any approved Picker to any vendor. Lane assignment is optional.</p></div>
+   <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+    <select value={manualVendor} onChange={e=>{setManualVendor(e.target.value);setManualLane("")}} className="h-9 rounded-lg border px-3 text-xs bg-white"><option value="">Select vendor</option>{allVendors.map(v=><option key={v.id} value={v.id}>{v.shop_name||"Vendor"}</option>)}</select>
+    <select value={manualPicker} onChange={e=>setManualPicker(e.target.value)} className="h-9 rounded-lg border px-3 text-xs bg-white"><option value="">Select approved Picker</option>{helperPickers.map(p=><option key={p.id} value={p.id}>{p.full_name} · {p.picker_login_id||"Picker"}</option>)}</select>
+    <select value={manualLane} onChange={e=>setManualLane(e.target.value)} className="h-9 rounded-lg border px-3 text-xs bg-white"><option value="">Vendor-wide / no lane</option>{allLanes.filter(l=>l.vendor_id===manualVendor).map(l=><option key={l.id} value={l.id}>{l.lane_name}</option>)}</select>
+    <button onClick={assignManualPicker} disabled={manualAssigning} className="h-9 rounded-lg bg-[#22C55E] text-white text-xs font-bold">{manualAssigning?"Assigning…":"Assign Picker"}</button>
+   </div>
+  </section>
   <section className="bg-white border border-[#E2E8F0] rounded-xl p-4 space-y-3">
    <div className="flex items-center justify-between"><div><h2 className="font-bold text-sm flex items-center gap-2"><LifeBuoy className="w-4 h-4 text-emerald-600"/>Picker / Helper Requests</h2><p className="text-xs text-[#64748B] mt-1">Vendors request help here. Admin assigns an approved Picker to the vendor and optionally to a lane.</p></div><span className="text-xs font-bold text-amber-700">{helperRequests.length} open</span></div>
    {helperRequests.length===0?<div className="rounded-lg border bg-slate-50 p-4 text-xs text-[#64748B]">No open Picker/helper requests.</div>:<div className="space-y-3">{helperRequests.map(ticket=><div key={ticket.id} className="rounded-xl border border-[#E2E8F0] p-4">
