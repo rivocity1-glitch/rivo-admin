@@ -59,7 +59,7 @@ export const FinanceService = {
       let todayPayments = 0;
 
       paymentsData?.forEach(p => {
-        if (p.status === 'completed') {
+        if (p.status === 'paid') {
           totalPayments += Number(p.amount) || 0;
           
           const paymentDate = new Date(p.created_at);
