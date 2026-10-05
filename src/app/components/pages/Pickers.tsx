@@ -34,6 +34,36 @@ export function Pickers(){
  };
  useEffect(()=>{load()},[]);
 
+ const assignPickerDirect=async(vendorId:string,pickerId:string,ticketId:string|null,laneId:string|null)=>{
+  const{data:picker,error:pickerError}=await supabase.from("picker_profiles").select("id,auth_user_id,application_status").eq("id",pickerId).maybeSingle();
+  if(pickerError)throw pickerError;
+  if(!picker||picker.application_status!=="approved")throw new Error("Selected Picker is not approved.");
+  const{data:existingWorker,error:workerLookupError}=await supabase.from("vendor_workers").select("id,status,auth_user_id").eq("vendor_id",vendorId).eq("auth_user_id",picker.auth_user_id).maybeSingle();
+  if(workerLookupError)throw workerLookupError;
+  const now=new Date().toISOString();
+  let workerId:string;
+  if(existingWorker){
+   const{error}=await supabase.from("vendor_workers").update({status:"active",updated_at:now}).eq("id",existingWorker.id).eq("vendor_id",vendorId);
+   if(error)throw error;
+   workerId=existingWorker.id;
+  }else{
+   const{data:createdWorker,error}=await supabase.from("vendor_workers").insert({vendor_id:vendorId,auth_user_id:picker.auth_user_id,worker_name:(rows.find(p=>p.id===pickerId)?.full_name)||"RivoCity Picker",status:"active"}).select("id").single();
+   if(error)throw error;
+   if(!createdWorker)throw new Error("Picker worker record was not created.");
+   workerId=createdWorker.id;
+  }
+  if(laneId){
+   const{error:deactivateError}=await supabase.from("vendor_lane_picker_assignments").update({status:"inactive",updated_at:now}).eq("lane_id",laneId).eq("status","active");
+   if(deactivateError)throw deactivateError;
+   const{error:assignmentError}=await supabase.from("vendor_lane_picker_assignments").insert({lane_id:laneId,worker_id:workerId,status:"active"});
+   if(assignmentError)throw assignmentError;
+  }
+  if(ticketId){
+   const{error:ticketError}=await supabase.from("vendor_support_tickets").update({status:"in_progress",updated_at:now}).eq("id",ticketId);
+   if(ticketError)throw ticketError;
+  }
+ };
+
  const update=async(id:string,status:"approved"|"rejected"|"suspended")=>{
   const{error}=await supabase.from("picker_profiles").update({application_status:status,updated_at:new Date().toISOString()}).eq("id",id);
   if(error){setError(error.message);return}await load();
@@ -42,17 +72,13 @@ export function Pickers(){
  const assignManualPicker=async()=>{
   if(!manualVendor||!manualPicker){setError("Select a vendor and approved Picker.");return;}
   setManualAssigning(true);setError(null);
-  const{error}=await supabase.rpc("admin_assign_picker_helper",{p_vendor_id:manualVendor,p_picker_id:manualPicker,p_ticket_id:null,p_lane_id:manualLane||null});
-  if(error){setError(error.message);setManualAssigning(false);return;}
-  setManualPicker("");setManualLane("");await load();setManualAssigning(false);
+  try{await assignPickerDirect(manualVendor,manualPicker,null,manualLane||null);setManualPicker("");setManualLane("");await load();}catch(e:any){setError(e.message||"Unable to assign Picker.");}finally{setManualAssigning(false)}
  };
  const assignHelper=async(ticket:HelperRequest)=>{
   const pickerId=selectedPicker[ticket.id];
   if(!pickerId){setError("Select an approved Picker.");return;}
   setAssigningHelper(ticket.id);setError(null);
-  const{error}=await supabase.rpc("admin_assign_picker_helper",{p_vendor_id:ticket.vendor_id,p_picker_id:pickerId,p_ticket_id:ticket.id,p_lane_id:selectedLane[ticket.id]||null});
-  if(error){setError(error.message);setAssigningHelper(null);return;}
-  await load();setAssigningHelper(null);
+  try{await assignPickerDirect(ticket.vendor_id,pickerId,ticket.id,selectedLane[ticket.id]||null);await load();}catch(e:any){setError(e.message||"Unable to assign Picker / Helper.");}finally{setAssigningHelper(null)}
  };
  const filtered=filter==="all"?rows:rows.filter(p=>p.application_status===filter);
 
