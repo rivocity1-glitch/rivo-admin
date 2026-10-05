@@ -7,8 +7,8 @@ import { supabase } from '../lib/supabase';
 export type EntityType = 'vendor' | 'rider' | 'customer' | 'platform';
 export type TransactionType = 'order_payment' | 'vendor_payout' | 'rider_payout' | 'commission' | 'refund' | 'adjustment';
 export type EntryType = 'credit' | 'debit';
-export type SettlementStatus = 'pending' | 'processing' | 'paid' | 'failed';
-export type PaymentStatus = 'pending' | 'completed' | 'failed' | 'refunded';
+export type SettlementStatus = 'pending' | 'approved' | 'paid';
+export type PaymentStatus = 'pending' | 'paid' | 'failed' | 'refunded';
 
 export interface ServiceResponse<T> {
   data: T | null;
