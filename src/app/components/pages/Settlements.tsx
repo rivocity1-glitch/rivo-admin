@@ -113,7 +113,31 @@ interface Vendor {
   shop_name?: string | null;
   owner_name?: string | null;
   phone?: string | null;
+  mobile_number?: string | null;
   email?: string | null;
+  account_holder_name?: string | null;
+  bank_name?: string | null;
+  account_number?: string | null;
+  ifsc_code?: string | null;
+  upi_id?: string | null;
+  qr_code_url?: string | null;
+  [key: string]: any;
+}
+
+interface VendorProfile {
+  vendor_id: string;
+  store_name?: string | null;
+  owner_name?: string | null;
+  phone?: string | null;
+  mobile_number?: string | null;
+  email?: string | null;
+  account_holder_name?: string | null;
+  bank_name?: string | null;
+  account_number?: string | null;
+  ifsc_code?: string | null;
+  upi_id?: string | null;
+  qr_code_url?: string | null;
+  [key: string]: any;
 }
 
 interface Rider {
@@ -230,6 +254,7 @@ export function Settlements() {
 
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [vendorQrById, setVendorQrById] = useState<Record<string, string>>({});
+  const [vendorProfilesById, setVendorProfilesById] = useState<Record<string, VendorProfile>>({});
   const [riders, setRiders] = useState<Rider[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
@@ -307,7 +332,7 @@ export function Settlements() {
 
           supabase.from("vendors").select("*"),
 
-          supabase.from("vendor_profiles").select("vendor_id, qr_code_url"),
+          supabase.from("vendor_profiles").select("*"),
 
           supabase.from("riders").select("*"),
 
@@ -386,12 +411,15 @@ export function Settlements() {
 
         setVendors((vendorsResult.data || []) as Vendor[]);
         const qrByVendor: Record<string, string> = {};
+        const profilesByVendor: Record<string, VendorProfile> = {};
         (vendorProfilesResult.data || []).forEach((profile: any) => {
-          if (profile.vendor_id && profile.qr_code_url) {
-            qrByVendor[profile.vendor_id] = profile.qr_code_url;
+          if (profile.vendor_id) {
+            profilesByVendor[profile.vendor_id] = profile as VendorProfile;
+            if (profile.qr_code_url) qrByVendor[profile.vendor_id] = profile.qr_code_url;
           }
         });
         setVendorQrById(qrByVendor);
+        setVendorProfilesById(profilesByVendor);
         setRiders((ridersResult.data || []) as Rider[]);
         setOrders((ordersResult.data || []) as Order[]);
         setLedger((ledgerResult.data || []) as LedgerEntry[]);
@@ -2356,28 +2384,54 @@ export function Settlements() {
                   </div>
                 </div>
 
-                {selectedType === "vendor" && (
-                  <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
-                    <div className="text-[10px] font-black uppercase tracking-wider text-slate-500 mb-3">Vendor Payment QR</div>
-                    {vendorQrById[(selectedSettlement as VendorSettlement).vendor_id] ? (
-                      <div className="flex flex-col items-center gap-2">
-                        <img
-                          src={vendorQrById[(selectedSettlement as VendorSettlement).vendor_id]}
-                          alt="Vendor uploaded payment QR"
-                          className="w-48 h-48 object-contain rounded-lg border border-gray-200 bg-white p-2"
-                        />
-                        <a
-                          href={vendorQrById[(selectedSettlement as VendorSettlement).vendor_id]}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-xs font-bold text-emerald-700 underline"
-                        >Open full-size QR</a>
+                {selectedType === "vendor" && (() => {
+                  const vendorId = (selectedSettlement as VendorSettlement).vendor_id;
+                  const vendor = vendorMap.get(vendorId);
+                  const profile = vendorProfilesById[vendorId];
+                  const qr = profile?.qr_code_url || vendorQrById[vendorId] || vendor?.qr_code_url;
+                  const value = (...items: unknown[]) => items.find((item) => typeof item === "string" && item.trim()) as string | undefined;
+                  const ownerName = value(profile?.owner_name, profile?.account_holder_name, vendor?.owner_name);
+                  const phone = value(profile?.phone, profile?.mobile_number, profile?.contact_number, vendor?.phone, vendor?.mobile_number, vendor?.contact_number);
+                  const email = value(profile?.email, vendor?.email);
+                  const accountHolder = value(profile?.account_holder_name, vendor?.account_holder_name);
+                  const bankName = value(profile?.bank_name, vendor?.bank_name);
+                  const accountNumber = value(profile?.account_number, vendor?.account_number);
+                  const ifsc = value(profile?.ifsc_code, vendor?.ifsc_code);
+                  const upi = value(profile?.upi_id, vendor?.upi_id);
+                  const hasBankDetails = Boolean(accountHolder || bankName || accountNumber || ifsc || upi);
+                  return (
+                    <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 space-y-4">
+                      <div className="text-[10px] font-black uppercase tracking-wider text-slate-500">Vendor Payment Details</div>
+                      <div className="grid grid-cols-2 gap-3 text-xs">
+                        <div><div className="text-[9px] uppercase text-slate-400">Store</div><div className="font-semibold break-words">{vendor?.shop_name || profile?.store_name || "—"}</div></div>
+                        <div><div className="text-[9px] uppercase text-slate-400">Owner / Account Name</div><div className="font-semibold break-words">{ownerName || accountHolder || "—"}</div></div>
+                        <div><div className="text-[9px] uppercase text-slate-400">Mobile Number</div><div className="font-semibold break-words">{phone || "—"}</div></div>
+                        <div><div className="text-[9px] uppercase text-slate-400">Email</div><div className="font-semibold break-words">{email || "—"}</div></div>
                       </div>
-                    ) : (
-                      <p className="text-xs text-slate-500">No vendor payment QR has been uploaded for this store.</p>
-                    )}
-                  </div>
-                )}
+                      <div className="border-t border-gray-200 pt-3">
+                        <div className="text-[9px] font-black uppercase text-slate-400 mb-2">Bank / UPI Details</div>
+                        {hasBankDetails ? (
+                          <div className="grid grid-cols-2 gap-3 text-xs">
+                            <div><div className="text-[9px] uppercase text-slate-400">Account Holder</div><div className="font-semibold break-words">{accountHolder || "—"}</div></div>
+                            <div><div className="text-[9px] uppercase text-slate-400">Bank</div><div className="font-semibold break-words">{bankName || "—"}</div></div>
+                            <div><div className="text-[9px] uppercase text-slate-400">Account Number</div><div className="font-semibold break-all">{accountNumber || "—"}</div></div>
+                            <div><div className="text-[9px] uppercase text-slate-400">IFSC</div><div className="font-semibold break-words">{ifsc || "—"}</div></div>
+                            <div className="col-span-2"><div className="text-[9px] uppercase text-slate-400">UPI ID</div><div className="font-semibold break-words">{upi || "—"}</div></div>
+                          </div>
+                        ) : <p className="text-xs text-amber-700">No bank or UPI details are saved on this vendor record.</p>}
+                      </div>
+                      <div className="border-t border-gray-200 pt-3">
+                        <div className="text-[10px] font-black uppercase tracking-wider text-slate-500 mb-3">Vendor Payment QR</div>
+                        {qr ? (
+                          <div className="flex flex-col items-center gap-2">
+                            <img src={qr} alt="Vendor uploaded payment QR" className="w-44 h-44 object-contain rounded-lg border border-gray-200 bg-white p-2" />
+                            <a href={qr} target="_blank" rel="noreferrer" className="text-xs font-bold text-emerald-700 underline">Open full-size QR</a>
+                          </div>
+                        ) : <p className="text-xs text-amber-700">No vendor payment QR has been uploaded for this store.</p>}
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {selectedType === "rider" && (() => {
                   const rider = riderMap.get((selectedSettlement as RiderSettlement).rider_id);
@@ -2385,6 +2439,11 @@ export function Settlements() {
                   return (
                     <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 space-y-3">
                       <div className="text-[10px] font-black uppercase tracking-wider text-slate-500">Rider Payment Details</div>
+                      <div className="grid grid-cols-2 gap-3 text-xs">
+                        <div><div className="text-[9px] uppercase text-slate-400">Rider Name</div><div className="font-semibold break-words">{rider?.rider_name || "—"}</div></div>
+                        <div><div className="text-[9px] uppercase text-slate-400">Mobile Number</div><div className="font-semibold break-words">{rider?.phone || "—"}</div></div>
+                        <div className="col-span-2"><div className="text-[9px] uppercase text-slate-400">Email</div><div className="font-semibold break-words">{rider?.email || "—"}</div></div>
+                      </div>
                       {!hasPaymentDetails && <p className="text-xs text-amber-700">No bank, UPI, or QR details are saved on this rider's record.</p>}
                       {(rider?.account_holder_name || rider?.bank_name || rider?.account_number || rider?.ifsc_code) && (
                         <div className="grid grid-cols-2 gap-3 text-xs">
