@@ -223,6 +223,7 @@ export function Settlements() {
   >([]);
 
   const [vendors, setVendors] = useState<Vendor[]>([]);
+  const [vendorQrById, setVendorQrById] = useState<Record<string, string>>({});
   const [riders, setRiders] = useState<Rider[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
@@ -283,6 +284,7 @@ export function Settlements() {
           vendorSettlementResult,
           riderSettlementResult,
           vendorsResult,
+          vendorProfilesResult,
           ridersResult,
           ordersResult,
           ledgerResult,
@@ -298,6 +300,8 @@ export function Settlements() {
             .order("created_at", { ascending: false }),
 
           supabase.from("vendors").select("*"),
+
+          supabase.from("vendor_profiles").select("vendor_id, qr_code_url"),
 
           supabase.from("riders").select("*"),
 
@@ -350,6 +354,10 @@ export function Settlements() {
           throw vendorsResult.error;
         }
 
+        if (vendorProfilesResult.error) {
+          throw vendorProfilesResult.error;
+        }
+
         if (ridersResult.error) {
           throw ridersResult.error;
         }
@@ -371,6 +379,13 @@ export function Settlements() {
         );
 
         setVendors((vendorsResult.data || []) as Vendor[]);
+        const qrByVendor: Record<string, string> = {};
+        (vendorProfilesResult.data || []).forEach((profile: any) => {
+          if (profile.vendor_id && profile.qr_code_url) {
+            qrByVendor[profile.vendor_id] = profile.qr_code_url;
+          }
+        });
+        setVendorQrById(qrByVendor);
         setRiders((ridersResult.data || []) as Rider[]);
         setOrders((ordersResult.data || []) as Order[]);
         setLedger((ledgerResult.data || []) as LedgerEntry[]);
@@ -401,6 +416,7 @@ export function Settlements() {
       "orders",
       "financial_ledger",
       "vendors",
+      "vendor_profiles",
       "riders",
     ];
 
@@ -461,6 +477,41 @@ export function Settlements() {
     });
 
     return map;
+  }, [orders]);
+
+  const riderEarningsSummary = useMemo(() => {
+    const summaries = new Map<string, {
+      riderId: string;
+      deliveredOrders: number;
+      totalEarnings: number;
+      pendingEarnings: number;
+      settledEarnings: number;
+    }>();
+
+    orders.forEach((order) => {
+      if (
+        !order.rider_id ||
+        String(order.order_status || "").toLowerCase() !== "delivered"
+      ) return;
+
+      const current = summaries.get(order.rider_id) || {
+        riderId: order.rider_id,
+        deliveredOrders: 0,
+        totalEarnings: 0,
+        pendingEarnings: 0,
+        settledEarnings: 0,
+      };
+      const earning = Number(order.rider_earning || 0);
+      current.deliveredOrders += 1;
+      current.totalEarnings += earning;
+      if (order.settled_rider) current.settledEarnings += earning;
+      else current.pendingEarnings += earning;
+      summaries.set(order.rider_id, current);
+    });
+
+    return Array.from(summaries.values()).sort(
+      (a, b) => b.pendingEarnings - a.pendingEarnings
+    );
   }, [orders]);
 
   const filteredOrders = useMemo(() => {
@@ -1614,6 +1665,32 @@ export function Settlements() {
             </span>
           </div>
 
+          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+            <div className="p-4 border-b border-gray-100">
+              <h3 className="text-xs font-black uppercase tracking-wider text-slate-700">Rider Earnings From Delivered Orders</h3>
+              <p className="mt-1 text-[10px] text-slate-400">Calculated from each order's stored rider_earning, independently of settlement request records.</p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead><tr className="bg-gray-50 text-[10px] font-black uppercase text-slate-400">
+                  <th className="p-3">Rider</th><th className="p-3">Deliveries</th><th className="p-3 text-right">Total Earned</th><th className="p-3 text-right">Pending</th><th className="p-3 text-right">Settled</th>
+                </tr></thead>
+                <tbody className="divide-y divide-gray-100">
+                  {riderEarningsSummary.map((summary) => {
+                    const rider = riderMap.get(summary.riderId);
+                    return <tr key={summary.riderId} className="hover:bg-gray-50">
+                      <td className="p-3"><div className="text-xs font-bold">{rider?.rider_name || rider?.email || "Unknown Rider"}</div><div className="mt-1 text-[9px] font-mono text-slate-400">{summary.riderId}</div></td>
+                      <td className="p-3 text-xs">{summary.deliveredOrders}</td>
+                      <td className="p-3 text-right text-xs font-bold">{money(summary.totalEarnings)}</td>
+                      <td className="p-3 text-right text-xs font-black text-amber-600">{money(summary.pendingEarnings)}</td>
+                      <td className="p-3 text-right text-xs font-bold text-emerald-600">{money(summary.settledEarnings)}</td>
+                    </tr>;
+                  })}
+                  {riderEarningsSummary.length === 0 && <tr><td colSpan={5} className="p-6 text-center text-xs text-slate-400">No delivered orders with rider earnings are recorded yet.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
           {renderSettlementTable(
             riderRows,
             "rider"
@@ -2223,6 +2300,29 @@ export function Settlements() {
                     </div>
                   </div>
                 </div>
+
+                {selectedType === "vendor" && (
+                  <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                    <div className="text-[10px] font-black uppercase tracking-wider text-slate-500 mb-3">Vendor Payment QR</div>
+                    {vendorQrById[(selectedSettlement as VendorSettlement).vendor_id] ? (
+                      <div className="flex flex-col items-center gap-2">
+                        <img
+                          src={vendorQrById[(selectedSettlement as VendorSettlement).vendor_id]}
+                          alt="Vendor uploaded payment QR"
+                          className="w-48 h-48 object-contain rounded-lg border border-gray-200 bg-white p-2"
+                        />
+                        <a
+                          href={vendorQrById[(selectedSettlement as VendorSettlement).vendor_id]}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-xs font-bold text-emerald-700 underline"
+                        >Open full-size QR</a>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-slate-500">No vendor payment QR has been uploaded for this store.</p>
+                    )}
+                  </div>
+                )}
 
                 <div>
                   <label className="block text-[10px] font-black uppercase tracking-wider text-slate-500 mb-1.5">
