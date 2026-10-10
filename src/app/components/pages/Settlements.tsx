@@ -923,7 +923,7 @@ export function Settlements() {
         String(order.order_status || "").toLowerCase() === "delivered" &&
         !order.settled_rider
     );
-    const orderIds = pendingOrders.map((order) => order.id);
+    const orderIds = pendingOrders.map((order) => order.id).sort();
     const amount = pendingOrders.reduce(
       (sum, order) => sum + Number(order.rider_earning || 0),
       0
@@ -934,23 +934,51 @@ export function Settlements() {
       return;
     }
 
+    // Reuse an existing open settlement for these orders instead of inserting
+    // a new settlement every time the admin clicks Pay Rider.
+    const openSettlement = riderSettlements.find((settlement) => {
+      if (
+        settlement.rider_id !== riderId ||
+        !["AVAILABLE", "PENDING", "REQUESTED", "PENDING_REQUEST"].includes(
+          normalizeStatus(settlement.status)
+        )
+      ) {
+        return false;
+      }
+
+      const existingOrderIds = Array.isArray(settlement.order_ids)
+        ? settlement.order_ids.map(String).sort()
+        : [];
+      return (
+        existingOrderIds.length === orderIds.length &&
+        existingOrderIds.every((id, index) => id === orderIds[index])
+      );
+    });
+
     setActionLoading(true);
     try {
-      const { data, error } = await supabase
-        .from("rider_settlements")
-        .insert({
-          rider_id: riderId,
-          amount,
-          order_ids: orderIds,
-          status: "AVAILABLE",
-        })
-        .select("*")
-        .single();
+      let settlement: RiderSettlement;
 
-      if (error) throw error;
+      if (openSettlement) {
+        settlement = openSettlement;
+      } else {
+        const { data, error } = await supabase
+          .from("rider_settlements")
+          .insert({
+            rider_id: riderId,
+            amount,
+            order_ids: orderIds,
+            status: "AVAILABLE",
+          })
+          .select("*")
+          .single();
+
+        if (error) throw error;
+        settlement = data as RiderSettlement;
+      }
 
       setSelectedType("rider");
-      setSelectedSettlement(data as RiderSettlement);
+      setSelectedSettlement(settlement);
       setFormUtr("");
       setFormRemarks("");
       setFormPaymentMethod("Bank Transfer");
