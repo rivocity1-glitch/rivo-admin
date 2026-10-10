@@ -121,6 +121,12 @@ interface Rider {
   rider_name?: string | null;
   phone?: string | null;
   email?: string | null;
+  account_holder_name?: string | null;
+  bank_name?: string | null;
+  account_number?: string | null;
+  ifsc_code?: string | null;
+  upi_id?: string | null;
+  qr_code_url?: string | null;
 }
 
 interface HistoryRow {
@@ -880,6 +886,54 @@ export function Settlements() {
     setFormRemarks("");
     setFormPaymentMethod("Bank Transfer");
     setPayModalOpen(true);
+  };
+
+  const startRiderPayout = async (riderId: string) => {
+    const pendingOrders = orders.filter(
+      (order) =>
+        order.rider_id === riderId &&
+        String(order.order_status || "").toLowerCase() === "delivered" &&
+        !order.settled_rider
+    );
+    const orderIds = pendingOrders.map((order) => order.id);
+    const amount = pendingOrders.reduce(
+      (sum, order) => sum + Number(order.rider_earning || 0),
+      0
+    );
+
+    if (!orderIds.length || amount <= 0) {
+      showToast("This rider has no unpaid delivered orders.", "error");
+      return;
+    }
+
+    setActionLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from("rider_settlements")
+        .insert({
+          rider_id: riderId,
+          amount,
+          order_ids: orderIds,
+          status: "AVAILABLE",
+        })
+        .select("*")
+        .single();
+
+      if (error) throw error;
+
+      setSelectedType("rider");
+      setSelectedSettlement(data as RiderSettlement);
+      setFormUtr("");
+      setFormRemarks("");
+      setFormPaymentMethod("Bank Transfer");
+      setPayModalOpen(true);
+      await loadData(false);
+    } catch (error: any) {
+      console.error("Unable to start rider payout:", error);
+      showToast(error?.message || "Could not prepare rider payout.", "error");
+    } finally {
+      setActionLoading(false);
+    }
   };
 
   const recordPayment = async () => {
@@ -1673,7 +1727,7 @@ export function Settlements() {
             <div className="overflow-x-auto">
               <table className="w-full text-left">
                 <thead><tr className="bg-gray-50 text-[10px] font-black uppercase text-slate-400">
-                  <th className="p-3">Rider</th><th className="p-3">Deliveries</th><th className="p-3 text-right">Total Earned</th><th className="p-3 text-right">Pending</th><th className="p-3 text-right">Settled</th>
+                  <th className="p-3">Rider</th><th className="p-3">Deliveries</th><th className="p-3 text-right">Total Earned</th><th className="p-3 text-right">Pending</th><th className="p-3 text-right">Settled</th><th className="p-3 text-right">Action</th>
                 </tr></thead>
                 <tbody className="divide-y divide-gray-100">
                   {riderEarningsSummary.map((summary) => {
@@ -1684,9 +1738,10 @@ export function Settlements() {
                       <td className="p-3 text-right text-xs font-bold">{money(summary.totalEarnings)}</td>
                       <td className="p-3 text-right text-xs font-black text-amber-600">{money(summary.pendingEarnings)}</td>
                       <td className="p-3 text-right text-xs font-bold text-emerald-600">{money(summary.settledEarnings)}</td>
+                      <td className="p-3 text-right">{summary.pendingEarnings > 0 ? <button type="button" onClick={() => startRiderPayout(summary.riderId)} disabled={actionLoading} className="rounded-lg bg-[#10B981] px-3 py-2 text-[10px] font-black text-white hover:bg-[#059669] disabled:opacity-50">Pay Rider</button> : <span className="text-[10px] text-slate-400">Up to date</span>}</td>
                     </tr>;
                   })}
-                  {riderEarningsSummary.length === 0 && <tr><td colSpan={5} className="p-6 text-center text-xs text-slate-400">No delivered orders with rider earnings are recorded yet.</td></tr>}
+                  {riderEarningsSummary.length === 0 && <tr><td colSpan={6} className="p-6 text-center text-xs text-slate-400">No delivered orders with rider earnings are recorded yet.</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -2323,6 +2378,27 @@ export function Settlements() {
                     )}
                   </div>
                 )}
+
+                {selectedType === "rider" && (() => {
+                  const rider = riderMap.get((selectedSettlement as RiderSettlement).rider_id);
+                  const hasPaymentDetails = Boolean(rider?.account_holder_name || rider?.bank_name || rider?.account_number || rider?.ifsc_code || rider?.upi_id || rider?.qr_code_url);
+                  return (
+                    <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 space-y-3">
+                      <div className="text-[10px] font-black uppercase tracking-wider text-slate-500">Rider Payment Details</div>
+                      {!hasPaymentDetails && <p className="text-xs text-amber-700">No bank, UPI, or QR details are saved on this rider's record.</p>}
+                      {(rider?.account_holder_name || rider?.bank_name || rider?.account_number || rider?.ifsc_code) && (
+                        <div className="grid grid-cols-2 gap-3 text-xs">
+                          <div><div className="text-[9px] uppercase text-slate-400">Account Holder</div><div className="font-semibold break-words">{rider?.account_holder_name || "—"}</div></div>
+                          <div><div className="text-[9px] uppercase text-slate-400">Bank</div><div className="font-semibold break-words">{rider?.bank_name || "—"}</div></div>
+                          <div><div className="text-[9px] uppercase text-slate-400">Account Number</div><div className="font-semibold break-all">{rider?.account_number || "—"}</div></div>
+                          <div><div className="text-[9px] uppercase text-slate-400">IFSC</div><div className="font-semibold">{rider?.ifsc_code || "—"}</div></div>
+                        </div>
+                      )}
+                      {rider?.upi_id && <div className="text-xs"><span className="text-slate-400">UPI ID: </span><span className="font-semibold">{rider.upi_id}</span></div>}
+                      {rider?.qr_code_url && <div className="flex flex-col items-center gap-2"><img src={rider.qr_code_url} alt="Rider payment QR" className="h-44 w-44 rounded-lg border border-gray-200 bg-white p-2 object-contain" /><a href={rider.qr_code_url} target="_blank" rel="noreferrer" className="text-xs font-bold text-emerald-700 underline">Open full-size QR</a></div>}
+                    </div>
+                  );
+                })()}
 
                 <div>
                   <label className="block text-[10px] font-black uppercase tracking-wider text-slate-500 mb-1.5">
