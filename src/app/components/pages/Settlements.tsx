@@ -257,6 +257,7 @@ export function Settlements() {
   const [vendorProfilesById, setVendorProfilesById] = useState<Record<string, VendorProfile>>({});
   const [riders, setRiders] = useState<Rider[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [riderCollections, setRiderCollections] = useState<Array<{ order_id: string; status: string }>>([]);
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
 
   const [startDate, setStartDate] = useState("");
@@ -318,6 +319,7 @@ export function Settlements() {
           vendorProfilesResult,
           ridersResult,
           ordersResult,
+          riderCollectionsResult,
           ledgerResult,
         ] = await Promise.all([
           supabase
@@ -368,6 +370,10 @@ export function Settlements() {
             .order("created_at", { ascending: false }),
 
           supabase
+            .from("rider_collections")
+            .select("order_id, status"),
+
+          supabase
             .from("financial_ledger")
             .select("*")
             .order("created_at", { ascending: false }),
@@ -397,6 +403,10 @@ export function Settlements() {
           throw ordersResult.error;
         }
 
+        if (riderCollectionsResult.error) {
+          throw riderCollectionsResult.error;
+        }
+
         if (ledgerResult.error) {
           throw ledgerResult.error;
         }
@@ -422,6 +432,7 @@ export function Settlements() {
         setVendorProfilesById(profilesByVendor);
         setRiders((ridersResult.data || []) as Rider[]);
         setOrders((ordersResult.data || []) as Order[]);
+        setRiderCollections((riderCollectionsResult.data || []) as Array<{ order_id: string; status: string }>);
         setLedger((ledgerResult.data || []) as LedgerEntry[]);
       } catch (error: any) {
         console.error("Settlements loading error:", error);
@@ -513,6 +524,22 @@ export function Settlements() {
     return map;
   }, [orders]);
 
+  const riderPayoutEligibleOrderIds = useMemo(() => {
+    const returnedOrderIds = new Set(
+      riderCollections
+        .filter((collection) => String(collection.status || "").toLowerCase() === "returned_to_store")
+        .map((collection) => collection.order_id)
+    );
+    return new Set(
+      orders
+        .filter((order) => {
+          const status = String(order.order_status || "").toLowerCase();
+          return status === "delivered" || (status === "cancelled" && returnedOrderIds.has(order.id));
+        })
+        .map((order) => order.id)
+    );
+  }, [orders, riderCollections]);
+
   const riderEarningsSummary = useMemo(() => {
     const summaries = new Map<string, {
       riderId: string;
@@ -523,10 +550,7 @@ export function Settlements() {
     }>();
 
     orders.forEach((order) => {
-      if (
-        !order.rider_id ||
-        String(order.order_status || "").toLowerCase() !== "delivered"
-      ) return;
+      if (!order.rider_id || !riderPayoutEligibleOrderIds.has(order.id)) return;
 
       const current = summaries.get(order.rider_id) || {
         riderId: order.rider_id,
@@ -546,7 +570,7 @@ export function Settlements() {
     return Array.from(summaries.values()).sort(
       (a, b) => b.pendingEarnings - a.pendingEarnings
     );
-  }, [orders]);
+  }, [orders, riderPayoutEligibleOrderIds]);
 
   const filteredOrders = useMemo(() => {
     const search = globalSearch.trim().toLowerCase();
@@ -773,8 +797,8 @@ export function Settlements() {
         0
       );
 
-    const riderPending = deliveredOrders
-      .filter((order) => !order.settled_rider)
+    const riderPending = filteredOrders
+      .filter((order) => riderPayoutEligibleOrderIds.has(order.id) && !order.settled_rider)
       .reduce(
         (sum, order) =>
           sum + Number(order.rider_earning || 0),
@@ -850,6 +874,7 @@ export function Settlements() {
     };
   }, [
     filteredOrders,
+    riderPayoutEligibleOrderIds,
     vendorSettlements,
     riderSettlements,
     ledger,
@@ -920,7 +945,7 @@ export function Settlements() {
     const pendingOrders = orders.filter(
       (order) =>
         order.rider_id === riderId &&
-        String(order.order_status || "").toLowerCase() === "delivered" &&
+        riderPayoutEligibleOrderIds.has(order.id) &&
         !order.settled_rider
     );
     const orderIds = pendingOrders.map((order) => order.id).sort();
@@ -930,7 +955,7 @@ export function Settlements() {
     );
 
     if (!orderIds.length || amount <= 0) {
-      showToast("This rider has no unpaid delivered orders.", "error");
+      showToast("This rider has no unpaid eligible delivery or returned-order earnings.", "error");
       return;
     }
 
