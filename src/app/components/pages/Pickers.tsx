@@ -75,7 +75,7 @@ export function Pickers(){
   <section className="bg-white border border-[#E2E8F0] rounded-xl p-4 space-y-3">
    <div><h2 className="font-bold text-sm">Assign Picker to Vendor</h2><p className="text-xs text-[#64748B] mt-1">Admin assigns an approved Picker to the vendor only. Lane and rack setup stays with the vendor.</p></div>
    <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-    <select value={manualVendor} onChange={e=>{setManualVendor(e.target.value);setManualLane("")}} className="h-9 rounded-lg border px-3 text-xs bg-white"><option value="">Select vendor</option>{allVendors.map(v=><option key={v.id} value={v.id}>{v.shop_name||"Vendor"}</option>)}</select>
+    <select value={manualVendor} onChange={e=>setManualVendor(e.target.value)} className="h-9 rounded-lg border px-3 text-xs bg-white"><option value="">Select vendor</option>{allVendors.map(v=><option key={v.id} value={v.id}>{v.shop_name||"Vendor"}</option>)}</select>
     <select value={manualPicker} onChange={e=>setManualPicker(e.target.value)} className="h-9 rounded-lg border px-3 text-xs bg-white"><option value="">Select approved Picker</option>{helperPickers.map(p=><option key={p.id} value={p.id}>{p.full_name} · {p.picker_login_id||"Picker"}</option>)}</select>
     
     <button onClick={assignManualPicker} disabled={manualAssigning} className="h-9 rounded-lg bg-[#22C55E] text-white text-xs font-bold">{manualAssigning?"Assigning…":"Assign Picker"}</button>
