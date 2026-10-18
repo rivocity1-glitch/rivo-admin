@@ -176,15 +176,10 @@ export function Refunds() {
     try {
       setIsLoading(true);
 
-      // Join refunds with refund_items, order_issues, and claim_evidence
+      // Fetch only relations that exist in the current Supabase schema cache.
       const { data, error } = await supabase
         .from("refunds")
-        .select(`
-          *,
-          refund_items (*),
-          order_issues (*),
-          claim_evidence (*)
-        `)
+        .select("*, refund_items(*), order_issues(*)")
         .order("requested_at", { ascending: false });
 
       if (error) {
@@ -198,7 +193,33 @@ export function Refunds() {
         if (simpleError) throw simpleError;
         setClaims(mapRawRefunds(simpleData || []));
       } else {
-        setClaims(mapRawRefunds(data || []));
+        const baseClaims = mapRawRefunds(data || []);
+        // Evidence has no guaranteed PostgREST relationship to refunds, so fetch it separately.
+        // This avoids schema-cache relationship errors while retaining the evidence viewer.
+        const refundIds = baseClaims.map((claim) => claim.id).filter(Boolean);
+        if (refundIds.length > 0) {
+          const { data: evidenceRows, error: evidenceError } = await supabase
+            .from("claim_evidence")
+            .select("*")
+            .in("refund_id", refundIds);
+          if (evidenceError) {
+            console.warn("Claim evidence query unavailable:", evidenceError.message);
+            setClaims(baseClaims);
+          } else {
+            const evidenceByRefund = new Map<string, ClaimEvidence[]>();
+            (evidenceRows || []).forEach((row: any) => {
+              const list = evidenceByRefund.get(row.refund_id) || [];
+              list.push(row as ClaimEvidence);
+              evidenceByRefund.set(row.refund_id, list);
+            });
+            setClaims(baseClaims.map((claim) => ({
+              ...claim,
+              claim_evidence: evidenceByRefund.get(claim.id) || [],
+            })));
+          }
+        } else {
+          setClaims(baseClaims);
+        }
       }
     } catch (err) {
       console.error("Error fetching claims dataset:", err);

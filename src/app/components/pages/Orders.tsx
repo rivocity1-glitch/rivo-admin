@@ -72,6 +72,7 @@ interface Order {
   rider_availability_status: string;
   subtotal: number;
   delivery_fee: number;
+  handling_fee: number;
   platform_fee: number;
   total_amount: number;
   order_status: OrderStatus;
@@ -281,7 +282,10 @@ export function Orders() {
           updated_at: row.updated_at,
           delivered_at: row.delivered_at,
           customer_paid: row.total_amount || 0,
-          vendor_earning: row.vendor_earning || 0,
+          vendor_earning:
+            Number(row.vendor_earning) > 0
+              ? Number(row.vendor_earning)
+              : Math.max(0, Number(row.subtotal || 0) - Number(row.vendor_commission || 0)),
           vendor_commission: row.vendor_commission || 0,
           rider_earning: row.rider_earning || 0,
           rivo_delivery_margin: row.rivo_delivery_margin || 0,
@@ -429,6 +433,10 @@ export function Orders() {
             <div>
               <span>Delivery Fee</span>
               <span>₹${order.delivery_fee}</span>
+            </div>
+            <div>
+              <span>Handling Fee</span>
+              <span>₹${Number(order.handling_fee || 0).toFixed(2)}</span>
             </div>
             <div>
               <span>Platform Fee</span>
@@ -817,6 +825,27 @@ export function Orders() {
               </div>
             </div>
 
+            {selectedOrder.order_status === "cancelled" && (
+              <div className="bg-rose-50 border border-rose-200 rounded-xl p-4 space-y-2">
+                <p className="text-xs font-bold uppercase tracking-wide text-rose-800">Cancellation / Return Audit</p>
+                <p className="text-xs text-rose-900">
+                  Review the order tracking timeline below for the cancellation initiator and recorded reason.
+                </p>
+                {selectedOrder.order_tracking.filter((entry) => /cancel|return|reason:/i.test(entry.status + " " + (entry.remarks || ""))).map((entry) => (
+                  <div key={entry.id} className="rounded-lg bg-white border border-rose-100 p-3 text-xs">
+                    <div className="flex justify-between gap-3 font-semibold text-rose-800">
+                      <span>{entry.status.replace(/_/g, " ")}</span>
+                      <span className="text-[10px] text-slate-500">{new Date(entry.created_at).toLocaleString()}</span>
+                    </div>
+                    <p className="mt-1 text-slate-700">{entry.remarks || "No reason was recorded."}</p>
+                  </div>
+                ))}
+                {selectedOrder.order_tracking.every((entry) => !/cancel|return|reason:/i.test(entry.status + " " + (entry.remarks || ""))) && (
+                  <p className="text-xs text-rose-700">No cancellation reason is recorded in order_tracking for this order.</p>
+                )}
+              </div>
+            )}
+
             {/* 10. DELIVERY OTP AUDIT SHIELD HANDSHAKE */}
             <div className="flex items-center justify-between p-4 bg-white rounded-xl border border-[#E2E8F0] shadow-sm">
               <div className="flex items-center gap-3">
@@ -913,6 +942,10 @@ export function Orders() {
                 <div className="bg-[#F8FAFC] border border-[#E2E8F0]/60 p-2.5 rounded-lg">
                   <span className="text-[#64748B] block text-[10px] font-bold uppercase tracking-wide">Customer Paid</span>
                   <span className="font-mono font-bold text-[#0F172A] text-sm">₹{selectedOrder.customer_paid}</span>
+                </div>
+                <div className="bg-[#F8FAFC] border border-[#E2E8F0]/60 p-2.5 rounded-lg">
+                  <span className="text-[#64748B] block text-[10px] font-bold uppercase tracking-wide">Handling Fee</span>
+                  <span className="font-mono font-bold text-[#059669] text-sm">₹{Number(selectedOrder.handling_fee || 0).toFixed(2)}</span>
                 </div>
                 <div className="bg-[#F8FAFC] border border-[#E2E8F0]/60 p-2.5 rounded-lg">
                   <span className="text-[#64748B] block text-[10px] font-bold uppercase tracking-wide">Vendor Earning</span>

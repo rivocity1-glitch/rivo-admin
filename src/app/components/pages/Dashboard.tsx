@@ -358,7 +358,7 @@ export function Dashboard() {
       
       const { data: orders } = await supabase
         .from("orders")
-        .select("vendor_id, vendor_earning")
+        .select("vendor_id, vendor_earning, subtotal, vendor_commission")
         .eq("order_status", "delivered")
         .gte("delivered_at", startIso)
         .lte("delivered_at", endIso);
@@ -373,7 +373,17 @@ export function Dashboard() {
         if (!o.vendor_id) return;
         if (!vendorAgg[o.vendor_id]) vendorAgg[o.vendor_id] = { count: 0, earningSum: 0 };
         vendorAgg[o.vendor_id].count += 1;
-        vendorAgg[o.vendor_id].earningSum += Number(o.vendor_earning || 0);
+        // Legacy orders may not have vendor_earning populated. Derive the
+        // vendor payout from merchandise subtotal minus the stored commission.
+        const storedEarning = Number(o.vendor_earning);
+        const fallbackEarning = Math.max(
+          0,
+          Number(o.subtotal || 0) - Number(o.vendor_commission || 0)
+        );
+        vendorAgg[o.vendor_id].earningSum +=
+          Number.isFinite(storedEarning) && storedEarning > 0
+            ? storedEarning
+            : fallbackEarning;
       });
 
       const uniqueVendorIds = Object.keys(vendorAgg);
