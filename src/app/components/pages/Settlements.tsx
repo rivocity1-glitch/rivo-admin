@@ -870,6 +870,10 @@ export function Settlements() {
 
     return {
       deliveredOrders: deliveredOrders.length,
+      handlingFeeRevenue: deliveredOrders.reduce(
+        (sum, order) => sum + Number(order.handling_fee || 0),
+        0
+      ),
       vendorPending,
       riderPending,
       vendorPaid,
@@ -1577,6 +1581,16 @@ export function Settlements() {
               <div className="text-2xl font-black mt-2">
                 {metrics.deliveredOrders}
               </div>
+            </div>
+
+            <div className="bg-white border border-gray-200 rounded-xl p-5">
+              <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                Handling Fee Revenue
+              </span>
+              <div className="text-2xl font-black mt-2 text-emerald-600">
+                {money(metrics.handlingFeeRevenue)}
+              </div>
+              <p className="text-[10px] text-slate-400 mt-1">Delivered orders only</p>
             </div>
 
             <div className="bg-white border border-gray-200 rounded-xl p-5">
