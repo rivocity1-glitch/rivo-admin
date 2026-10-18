@@ -40,7 +40,7 @@ export function Pickers(){
    .eq("id",pickerId).maybeSingle();
   if(pickerError)throw pickerError;
   if(!picker||picker.application_status!=="approved")throw new Error("Selected Picker is not approved.");
-  if(picker.registration_source==="vendor"&&picker.created_by_vendor_id&&picker.created_by_vendor_id!==vendorId){
+  if(picker.created_by_vendor_id&&picker.created_by_vendor_id!==vendorId){
    throw new Error("This Picker was created by another vendor and is permanently linked to that store.");
   }
   const{error:assignmentError}=await supabase.rpc("admin_assign_picker_helper",{
