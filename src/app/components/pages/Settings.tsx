@@ -156,27 +156,19 @@ export function Settings() {
     updated_at: ""
   });
 
-  const [appTheme, setAppTheme] = useState<"light" | "dark" | "system">(() => {
-    return (localStorage.getItem("rivo-theme") as "light" | "dark" | "system") || "system";
-  });
+  const [appTheme] = useState<"light">("light");
 
   const triggerToast = (text: string, type: "success" | "error" = "success") => {
     setToast({ text, type });
     setTimeout(() => setToast(null), 4000);
   };
 
-  const handleThemeChange = (targetTheme: "light" | "dark" | "system") => {
-    setAppTheme(targetTheme);
-    localStorage.setItem("rivo-theme", targetTheme);
+  useEffect(() => {
     const root = window.document.documentElement;
-    root.classList.remove("light", "dark");
-    if (targetTheme === "system") {
-      const systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-      root.classList.add(systemDark ? "dark" : "light");
-    } else {
-      root.classList.add(targetTheme);
-    }
-  };
+    root.classList.remove("dark");
+    root.classList.add("light");
+    localStorage.setItem("rivo-theme", "light");
+  }, []);
 
   async function loadSettings() {
     try {
@@ -494,29 +486,6 @@ export function Settings() {
                   {activeTab === "platform" && (
                     <div className="space-y-6 divide-y divide-[#F1F5F9] dark:divide-slate-800">
                       
-                      {/* Theme Row */}
-                      <SettingRow label="Theme Setup" description="Manage visual layout modes across the application dashboard interface.">
-                        <div className="flex items-center gap-2 bg-[#F8FAFC] dark:bg-slate-800 p-1.5 border border-[#E2E8F0] dark:border-slate-700 rounded-xl shadow-inner">
-                          {(["light", "dark", "system"] as const).map((t) => (
-                            <button
-                              key={t}
-                              type="button"
-                              onClick={() => handleThemeChange(t)}
-                              className={cn(
-                                "flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all duration-200 capitalize focus:outline-none",
-                                appTheme === t
-                                  ? "bg-white dark:bg-slate-700 text-[#16A34A] dark:text-[#22C55E] shadow-md"
-                                  : "text-[#64748B] dark:text-slate-400 hover:text-[#0F172A] dark:hover:text-slate-200"
-                              )}
-                            >
-                              {t === "light" && <Sun className="w-4 h-4 text-amber-500" />}
-                              {t === "dark" && <Moon className="w-4 h-4 text-indigo-400" />}
-                              {t === "system" && <Laptop className="w-4 h-4 text-slate-400" />}
-                              {t}
-                            </button>
-                          ))}
-                        </div>
-                      </SettingRow>
 
                       {/* 1. Platform Information */}
                       <div className="pt-4 space-y-4">
