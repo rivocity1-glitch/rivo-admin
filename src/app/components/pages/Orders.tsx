@@ -923,6 +923,10 @@ export function Orders() {
                   <span className="font-mono font-bold text-[#0F172A] text-sm">₹{selectedOrder.customer_paid}</span>
                 </div>
                 <div className="bg-[#F8FAFC] border border-[#E2E8F0]/60 p-2.5 rounded-lg">
+                  <span className="text-[#64748B] block text-[10px] font-bold uppercase tracking-wide">Handling Fee</span>
+                  <span className="font-mono font-bold text-[#059669] text-sm">₹{Number(selectedOrder.handling_fee || 0).toFixed(2)}</span>
+                </div>
+                <div className="bg-[#F8FAFC] border border-[#E2E8F0]/60 p-2.5 rounded-lg">
                   <span className="text-[#64748B] block text-[10px] font-bold uppercase tracking-wide">Vendor Earning</span>
                   <span className="font-mono font-bold text-[#16A34A] text-sm">₹{selectedOrder.vendor_earning}</span>
                 </div>
