@@ -176,15 +176,10 @@ export function Refunds() {
     try {
       setIsLoading(true);
 
-      // Join refunds with refund_items, order_issues, and claim_evidence
+      // Fetch only relations that exist in the current Supabase schema cache.
       const { data, error } = await supabase
         .from("refunds")
-        .select(`
-          *,
-          refund_items (*),
-          order_issues (*),
-          claim_evidence (*)
-        `)
+        .select("*, refund_items(*), order_issues(*)")
         .order("requested_at", { ascending: false });
 
       if (error) {
