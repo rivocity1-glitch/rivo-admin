@@ -75,6 +75,7 @@ interface Order {
   rider_id?: string | null;
   subtotal?: number | null;
   delivery_fee?: number | null;
+  handling_fee?: number | null;
   platform_fee?: number | null;
   total_amount?: number | null;
   payment_status?: string | null;
@@ -359,6 +360,7 @@ export function Settlements() {
               rider_id,
               subtotal,
               delivery_fee,
+              handling_fee,
               platform_fee,
               total_amount,
               payment_status,
