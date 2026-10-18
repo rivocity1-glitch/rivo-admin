@@ -72,6 +72,7 @@ interface Order {
   rider_availability_status: string;
   subtotal: number;
   delivery_fee: number;
+  handling_fee: number;
   platform_fee: number;
   total_amount: number;
   order_status: OrderStatus;
@@ -432,6 +433,10 @@ export function Orders() {
             <div>
               <span>Delivery Fee</span>
               <span>₹${order.delivery_fee}</span>
+            </div>
+            <div>
+              <span>Handling Fee</span>
+              <span>₹${Number(order.handling_fee || 0).toFixed(2)}</span>
             </div>
             <div>
               <span>Platform Fee</span>
