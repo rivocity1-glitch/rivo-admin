@@ -35,33 +35,21 @@ export function Pickers(){
  useEffect(()=>{load()},[]);
 
  const assignPickerDirect=async(vendorId:string,pickerId:string,ticketId:string|null,laneId:string|null)=>{
-  const{data:picker,error:pickerError}=await supabase.from("picker_profiles").select("id,auth_user_id,application_status").eq("id",pickerId).maybeSingle();
+  const{data:picker,error:pickerError}=await supabase.from("picker_profiles")
+   .select("id,application_status,registration_source,created_by_vendor_id")
+   .eq("id",pickerId).maybeSingle();
   if(pickerError)throw pickerError;
   if(!picker||picker.application_status!=="approved")throw new Error("Selected Picker is not approved.");
-  const{data:existingWorker,error:workerLookupError}=await supabase.from("vendor_workers").select("id,status,auth_user_id").eq("vendor_id",vendorId).eq("auth_user_id",picker.auth_user_id).maybeSingle();
-  if(workerLookupError)throw workerLookupError;
-  const now=new Date().toISOString();
-  let workerId:string;
-  if(existingWorker){
-   const{error}=await supabase.from("vendor_workers").update({status:"active",updated_at:now}).eq("id",existingWorker.id).eq("vendor_id",vendorId);
-   if(error)throw error;
-   workerId=existingWorker.id;
-  }else{
-   const{data:createdWorker,error}=await supabase.from("vendor_workers").insert({vendor_id:vendorId,auth_user_id:picker.auth_user_id,worker_name:(rows.find(p=>p.id===pickerId)?.full_name)||"RivoCity Picker",status:"active"}).select("id").single();
-   if(error)throw error;
-   if(!createdWorker)throw new Error("Picker worker record was not created.");
-   workerId=createdWorker.id;
+  if(picker.registration_source==="vendor"&&picker.created_by_vendor_id&&picker.created_by_vendor_id!==vendorId){
+   throw new Error("This Picker was created by another vendor and is permanently linked to that store.");
   }
-  if(laneId){
-   const{error:deactivateError}=await supabase.from("vendor_lane_picker_assignments").update({status:"inactive",updated_at:now}).eq("lane_id",laneId).eq("status","active");
-   if(deactivateError)throw deactivateError;
-   const{error:assignmentError}=await supabase.from("vendor_lane_picker_assignments").insert({lane_id:laneId,worker_id:workerId,status:"active"});
-   if(assignmentError)throw assignmentError;
-  }
-  if(ticketId){
-   const{error:ticketError}=await supabase.from("vendor_support_tickets").update({status:"in_progress",updated_at:now}).eq("id",ticketId);
-   if(ticketError)throw ticketError;
-  }
+  const{error:assignmentError}=await supabase.rpc("admin_assign_picker_helper",{
+   p_vendor_id:vendorId,
+   p_picker_id:pickerId,
+   p_ticket_id:ticketId,
+   p_lane_id:laneId
+  });
+  if(assignmentError)throw assignmentError;
  };
 
  const update=async(id:string,status:"approved"|"rejected"|"suspended")=>{
