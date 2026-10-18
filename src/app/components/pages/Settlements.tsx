@@ -235,6 +235,17 @@ function isAvailable(status?: string | null) {
   return value === "AVAILABLE" || value === "PENDING";
 }
 
+function getVendorEarning(order: Order) {
+  const recorded = Number(order.vendor_earning);
+  if (Number.isFinite(recorded) && recorded > 0) return recorded;
+
+  // Older orders may not have vendor_earning populated.
+  return Math.max(
+    0,
+    Number(order.subtotal || 0) - Number(order.vendor_commission || 0)
+  );
+}
+
 export function Settlements() {
   const [activeTab, setActiveTab] = useState<
     "overview" | "vendor" | "rider" | "ledger" | "audit"
@@ -687,7 +698,7 @@ export function Settlements() {
           orderDate:
             order.delivered_at ||
             order.created_at,
-          amount: Number(order.vendor_earning || 0),
+          amount: getVendorEarning(order),
           paymentMethod:
             settlement.payment_method || "—",
           utr: settlement.utr_number || "—",
@@ -793,7 +804,7 @@ export function Settlements() {
       .filter((order) => !order.settled_vendor)
       .reduce(
         (sum, order) =>
-          sum + Number(order.vendor_earning || 0),
+          sum + getVendorEarning(order),
         0
       );
 
@@ -2285,10 +2296,7 @@ export function Settlements() {
                           const earning =
                             selectedType ===
                             "vendor"
-                              ? Number(
-                                  order.vendor_earning ||
-                                    0
-                                )
+                              ? getVendorEarning(order)
                               : Number(
                                   order.rider_earning ||
                                     0
