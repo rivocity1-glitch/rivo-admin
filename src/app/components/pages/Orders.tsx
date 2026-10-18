@@ -281,7 +281,10 @@ export function Orders() {
           updated_at: row.updated_at,
           delivered_at: row.delivered_at,
           customer_paid: row.total_amount || 0,
-          vendor_earning: row.vendor_earning || 0,
+          vendor_earning:
+            Number(row.vendor_earning) > 0
+              ? Number(row.vendor_earning)
+              : Math.max(0, Number(row.subtotal || 0) - Number(row.vendor_commission || 0)),
           vendor_commission: row.vendor_commission || 0,
           rider_earning: row.rider_earning || 0,
           rivo_delivery_margin: row.rivo_delivery_margin || 0,
