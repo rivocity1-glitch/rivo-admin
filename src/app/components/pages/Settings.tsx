@@ -174,9 +174,12 @@ export function Settings() {
  if (configErr) throw configErr;
 
  if (configData && configData.length > 0) {
- const handlingObj = configData.find(r => r.key === "handling_fee_config");
- if (handlingObj?.value && typeof handlingObj.value === "object") {
-  const value = handlingObj.value as any;
+ const settingValue = (row: any) => row?.setting_value ?? row?.value;
+ const settingKey = (row: any) => row?.setting_key ?? row?.key;
+ const handlingObj = configData.find(r => settingKey(r) === "handling_fee_config");
+ const handlingValue = settingValue(handlingObj);
+ if (handlingValue && typeof handlingValue === "object") {
+  const value = handlingValue as any;
   const rules = Array.isArray(value.rules) ? value.rules : [];
   const validRules = rules.length > 0 && rules.every((rule: any) =>
    Number.isInteger(Number(rule.min_units)) && Number(rule.min_units) >= 1 &&
@@ -192,12 +195,13 @@ export function Settings() {
    }))
   });
  }
- const platformObj = configData.find(r => r.key === "platform_config");
- if (platformObj?.value) {
+ const platformObj = configData.find(r => settingKey(r) === "platform_config");
+ const platformValue = settingValue(platformObj);
+ if (platformValue) {
  setPlatformSettings(prev => ({
  ...prev,
- ...platformObj.value,
- deliveryAreas: Array.isArray(platformObj.value.deliveryAreas) ? platformObj.value.deliveryAreas : []
+ ...platformValue,
+ deliveryAreas: Array.isArray(platformValue.deliveryAreas) ? platformValue.deliveryAreas : []
  }));
  }
  if (platformObj) {
@@ -243,19 +247,19 @@ export function Settings() {
  const { error } = await supabase
  .from("platform_settings")
  .upsert({
- key: "platform_config",
- value: platformSettings,
+ setting_key: "platform_config",
+ setting_value: platformSettings,
  updated_at: now
- });
+ }, { onConflict: "setting_key" });
  if (error) throw error;
 
  const { error: handlingError } = await supabase
  .from("platform_settings")
  .upsert({
- key: "handling_fee_config",
- value: handlingFeeConfig,
+ setting_key: "handling_fee_config",
+ setting_value: handlingFeeConfig,
  updated_at: now
- });
+ }, { onConflict: "setting_key" });
  if (handlingError) throw handlingError;
  triggerToast("Settings saved successfully.");
  await loadSettings();
