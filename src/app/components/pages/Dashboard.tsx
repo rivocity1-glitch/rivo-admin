@@ -249,7 +249,8 @@ export function Dashboard() {
         return;
       }
 
-      const totalFee = deliveredOrders.reduce((s, o) => s + Number(o.platform_fee || 0), 0);      const totalMargin = deliveredOrders.reduce((s, o) => s + Number(o.rivo_delivery_margin || 0), 0);
+      const totalFee = deliveredOrders.reduce((s, o) => s + Number(o.platform_fee || 0), 0);
+      const totalMargin = deliveredOrders.reduce((s, o) => s + Number(o.rivo_delivery_margin || 0), 0);
       const totalComm = deliveredOrders.reduce((s, o) => s + Number(o.vendor_commission || 0), 0);
       const totalHandlingFee = deliveredOrders.reduce((s, o) => s + Number(o.handling_fee || 0), 0);
 
@@ -766,7 +767,8 @@ export function Dashboard() {
                       : "text-slate-500 hover:text-slate-900"
                   )}
                 >
-                  {tab.label}                </button>
+                  {tab.label}
+                </button>
               ))}
             </div>
           </div>
