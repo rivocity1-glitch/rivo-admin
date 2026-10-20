@@ -86,6 +86,7 @@ export function Dashboard() {
     platformFee: 0,
     deliveryMargin: 0,
     vendorCommission: 0,
+    handlingFeeRevenue: 0,
     todayEarnings: 0
   });
 
@@ -221,13 +222,13 @@ export function Dashboard() {
       const [rangeOrdersRes, todayOrdersRes] = await Promise.all([
         supabase
           .from("orders")
-          .select("platform_fee, rivo_delivery_margin, vendor_commission, order_status")
+          .select("platform_fee, rivo_delivery_margin, vendor_commission, handling_fee, order_status")
           .eq("order_status", "delivered")
           .gte("delivered_at", startIso)
           .lte("delivered_at", endIso),
         supabase
           .from("orders")
-          .select("platform_fee, rivo_delivery_margin, vendor_commission")
+          .select("platform_fee, rivo_delivery_margin, vendor_commission, handling_fee")
           .eq("order_status", "delivered")
           .gte("delivered_at", todayStart.toISOString())
           .lte("delivered_at", todayEnd.toISOString())
@@ -242,29 +243,32 @@ export function Dashboard() {
           platformFee: 0,
           deliveryMargin: 0,
           vendorCommission: 0,
+          handlingFeeRevenue: 0,
           todayEarnings: 0
         });
         return;
       }
 
-      const totalFee = deliveredOrders.reduce((s, o) => s + Number(o.platform_fee || 0), 0);
-      const totalMargin = deliveredOrders.reduce((s, o) => s + Number(o.rivo_delivery_margin || 0), 0);
+      const totalFee = deliveredOrders.reduce((s, o) => s + Number(o.platform_fee || 0), 0);      const totalMargin = deliveredOrders.reduce((s, o) => s + Number(o.rivo_delivery_margin || 0), 0);
       const totalComm = deliveredOrders.reduce((s, o) => s + Number(o.vendor_commission || 0), 0);
+      const totalHandlingFee = deliveredOrders.reduce((s, o) => s + Number(o.handling_fee || 0), 0);
 
       const todayFee = todayDelivered.reduce((s, o) => s + Number(o.platform_fee || 0), 0);
       const todayMargin = todayDelivered.reduce((s, o) => s + Number(o.rivo_delivery_margin || 0), 0);
       const todayComm = todayDelivered.reduce((s, o) => s + Number(o.vendor_commission || 0), 0);
+      const todayHandlingFee = todayDelivered.reduce((s, o) => s + Number(o.handling_fee || 0), 0);
 
       setMetrics({
         totalOrders: deliveredOrders.length,
         platformFee: totalFee,
         deliveryMargin: totalMargin,
         vendorCommission: totalComm,
-        todayEarnings: todayFee + todayMargin + todayComm
+        handlingFeeRevenue: totalHandlingFee,
+        todayEarnings: todayFee + todayMargin + todayComm + todayHandlingFee
       });
     } catch (err) {
       console.error("Error fetching KPI metrics:", err);
-      setMetrics({ totalOrders: 0, platformFee: 0, deliveryMargin: 0, vendorCommission: 0, todayEarnings: 0 });
+      setMetrics({ totalOrders: 0, platformFee: 0, deliveryMargin: 0, vendorCommission: 0, handlingFeeRevenue: 0, todayEarnings: 0 });
     } finally {
       setKpiLoading(false);
     }
@@ -497,7 +501,6 @@ export function Dashboard() {
           timestamp: new Date(s.created_at)
         });
       });
-
       refundsRes.data?.forEach(r => {
         logStream.push({
           id: `ref-${r.id}`,
@@ -616,7 +619,7 @@ export function Dashboard() {
       </div>
 
       {/* KPI CARDS (EXACTLY 5 SPECIFIED CARDS) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
         {/* 1. Total Orders */}
         <div className="bg-white border border-slate-200/80 rounded-2xl p-4.5 flex flex-col justify-between hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 group">
           <div className="flex items-start justify-between">
@@ -683,7 +686,23 @@ export function Dashboard() {
           <p className="text-[11px] text-slate-400 mt-3 font-semibold">Vendor commission earnings</p>
         </div>
 
-        {/* 5. Today's Rivo Earnings */}
+        {/* 5. Handling Fees Revenue */}
+        <div className="bg-white border border-slate-200/80 rounded-2xl p-4.5 flex flex-col justify-between hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 group">
+          <div className="flex items-start justify-between">
+            <div>
+              <p className="text-[10px] font-bold text-lime-600 uppercase tracking-wider">Handling Fees Revenue</p>
+              <h3 className="text-2xl font-black text-slate-900 mt-1 tracking-tight">
+                {kpiLoading ? <div className="h-7 w-20 bg-slate-100 animate-pulse rounded-lg mt-1"/> : <AnimatedCounter value={metrics.handlingFeeRevenue} isCurrency />}
+              </h3>
+            </div>
+            <div className="w-9 h-9 bg-lime-50/80 rounded-xl flex items-center justify-center text-lime-700 border border-lime-100/80 group-hover:bg-lime-500 group-hover:text-white transition-colors">
+              <IndianRupee className="w-4 h-4" />
+            </div>
+          </div>
+          <p className="text-[11px] text-slate-400 mt-3 font-semibold">Handling fees from delivered orders</p>
+        </div>
+
+        {/* 6. Today's Rivo Earnings */}
         <div className="bg-gradient-to-br from-slate-900 to-slate-800 text-white rounded-2xl p-4.5 flex flex-col justify-between shadow-md hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 relative overflow-hidden group">
           <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity">
             <Sparkles className="w-16 h-16 text-white" />
@@ -702,7 +721,7 @@ export function Dashboard() {
             </div>
           </div>
           <p className="text-[11px] text-slate-300 mt-3 font-medium relative z-10">
-            Fee + Margin + Commission
+            Platform Fee + Delivery Margin + Commission + Handling Fees
           </p>
         </div>
       </div>
@@ -747,8 +766,7 @@ export function Dashboard() {
                       : "text-slate-500 hover:text-slate-900"
                   )}
                 >
-                  {tab.label}
-                </button>
+                  {tab.label}                </button>
               ))}
             </div>
           </div>
