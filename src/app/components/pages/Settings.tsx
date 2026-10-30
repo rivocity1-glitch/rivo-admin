@@ -136,6 +136,16 @@ export function Settings() {
  allowCustomerRegistration: false,
  platformLogo: ""
  });
+ const [handlingFeeConfig, setHandlingFeeConfig] = useState({
+ enabled: true,
+ rules: [
+  { min_units: 1, max_units: 1 as number | null, fee: 2 },
+  { min_units: 2, max_units: 3 as number | null, fee: 4 },
+  { min_units: 4, max_units: 6 as number | null, fee: 6 },
+  { min_units: 7, max_units: 10 as number | null, fee: 8 },
+  { min_units: 11, max_units: null as number | null, fee: 10 }
+ ]
+ });
 
  const [systemMeta, setSystemMeta] = useState({
  created_at: "",
@@ -164,12 +174,34 @@ export function Settings() {
  if (configErr) throw configErr;
 
  if (configData && configData.length > 0) {
- const platformObj = configData.find(r => r.key === "platform_config");
- if (platformObj?.value) {
+ const settingValue = (row: any) => row?.setting_value ?? row?.value;
+ const settingKey = (row: any) => row?.setting_key ?? row?.key;
+ const handlingObj = configData.find(r => settingKey(r) === "handling_fee_config");
+ const handlingValue = settingValue(handlingObj);
+ if (handlingValue && typeof handlingValue === "object") {
+  const value = handlingValue as any;
+  const rules = Array.isArray(value.rules) ? value.rules : [];
+  const validRules = rules.length > 0 && rules.every((rule: any) =>
+   Number.isInteger(Number(rule.min_units)) && Number(rule.min_units) >= 1 &&
+   (rule.max_units == null || (Number.isInteger(Number(rule.max_units)) && Number(rule.max_units) >= Number(rule.min_units))) &&
+   Number.isFinite(Number(rule.fee)) && Number(rule.fee) >= 0
+  );
+  if (validRules) setHandlingFeeConfig({
+   enabled: value.enabled !== false,
+   rules: rules.map((rule: any) => ({
+    min_units: Number(rule.min_units),
+    max_units: rule.max_units == null ? null : Number(rule.max_units),
+    fee: Number(rule.fee)
+   }))
+  });
+ }
+ const platformObj = configData.find(r => settingKey(r) === "platform_config");
+ const platformValue = settingValue(platformObj);
+ if (platformValue) {
  setPlatformSettings(prev => ({
  ...prev,
- ...platformObj.value,
- deliveryAreas: Array.isArray(platformObj.value.deliveryAreas) ? platformObj.value.deliveryAreas : []
+ ...platformValue,
+ deliveryAreas: Array.isArray(platformValue.deliveryAreas) ? platformValue.deliveryAreas : []
  }));
  }
  if (platformObj) {
@@ -211,15 +243,24 @@ export function Settings() {
  throw new Error("Delivery radius cannot be negative.");
  }
 
+ const now = new Date().toISOString();
  const { error } = await supabase
  .from("platform_settings")
- .upsert({ 
- key: "platform_config", 
- value: platformSettings, 
- updated_at: new Date().toISOString() 
- });
-
+ .upsert({
+ setting_key: "platform_config",
+ setting_value: platformSettings,
+ updated_at: now
+ }, { onConflict: "setting_key" });
  if (error) throw error;
+
+ const { error: handlingError } = await supabase
+ .from("platform_settings")
+ .upsert({
+ setting_key: "handling_fee_config",
+ setting_value: handlingFeeConfig,
+ updated_at: now
+ }, { onConflict: "setting_key" });
+ if (handlingError) throw handlingError;
  triggerToast("Settings saved successfully.");
  await loadSettings();
  } catch (err: any) {
@@ -523,7 +564,34 @@ export function Settings() {
  <SettingRow label="Allow Customer Registration"><StatusBadge enabled={platformSettings.allowCustomerRegistration} /><Toggle enabled={platformSettings.allowCustomerRegistration} onChange={(v) => setPlatformSettings((p) => ({ ...p, allowCustomerRegistration: v }))} /></SettingRow>
  </div>
 
- {/* 4. Branding */}
+   {/* Handling Fee Rules */}
+  <div className="pt-4 space-y-4">
+   <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">Handling Fee</h3>
+   <p className="text-xs text-slate-500">Charged per vendor order based on total units. These rules are consumed by the Customer app.</p>
+   <SettingRow label="Enable Handling Fee" description="When disabled, the handling fee is zero for new orders.">
+    <StatusBadge enabled={handlingFeeConfig.enabled} />
+    <Toggle enabled={handlingFeeConfig.enabled} onChange={(enabled) => setHandlingFeeConfig(prev => ({ ...prev, enabled }))} disabled={isSaving} />
+   </SettingRow>
+   <div className="overflow-x-auto border border-slate-200 rounded-lg">
+    <table className="w-full text-xs">
+     <thead className="bg-slate-50 text-slate-500 uppercase">
+      <tr><th className="text-left px-3 py-2">Minimum units</th><th className="text-left px-3 py-2">Maximum units</th><th className="text-left px-3 py-2">Fee (₹)</th></tr>
+     </thead>
+     <tbody className="divide-y divide-slate-100">
+      {handlingFeeConfig.rules.map((rule, index) => (
+       <tr key={index}>
+        <td className="px-3 py-2"><Input type="number" min="1" step="1" value={rule.min_units} onChange={(e) => setHandlingFeeConfig(prev => ({ ...prev, rules: prev.rules.map((item, i) => i === index ? { ...item, min_units: Number(e.target.value) } : item) }))} className="w-28 text-xs" /></td>
+        <td className="px-3 py-2"><Input type="number" min={rule.min_units} step="1" value={rule.max_units ?? ""} placeholder="No limit" onChange={(e) => setHandlingFeeConfig(prev => ({ ...prev, rules: prev.rules.map((item, i) => i === index ? { ...item, max_units: e.target.value === "" ? null : Number(e.target.value) } : item) }))} className="w-28 text-xs" /></td>
+        <td className="px-3 py-2"><Input type="number" min="0" step="0.5" value={rule.fee} onChange={(e) => setHandlingFeeConfig(prev => ({ ...prev, rules: prev.rules.map((item, i) => i === index ? { ...item, fee: Number(e.target.value) } : item) }))} className="w-28 text-xs" /></td>
+       </tr>
+      ))}
+     </tbody>
+    </table>
+   </div>
+   <p className="text-[11px] text-slate-400">The final row with an empty maximum applies to all higher quantities. Ensure the ranges are continuous and non-overlapping.</p>
+  </div>
+
+  {/* 4. Branding */}
  <div className="pt-4 space-y-4">
  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">Branding</h3>
  <div className="py-4 border-b border-[#F1F5F9] last:border-0 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
