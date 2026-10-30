@@ -136,17 +136,6 @@ export function Settings() {
  allowCustomerRegistration: false,
  platformLogo: ""
  });
- const [handlingFeeConfig, setHandlingFeeConfig] = useState({
- enabled: true,
- rules: [
-  { min_units: 1, max_units: 1 as number | null, fee: 2 },
-  { min_units: 2, max_units: 3 as number | null, fee: 4 },
-  { min_units: 4, max_units: 6 as number | null, fee: 6 },
-  { min_units: 7, max_units: 10 as number | null, fee: 8 },
-  { min_units: 11, max_units: null as number | null, fee: 10 }
- ]
- });
-
  const [systemMeta, setSystemMeta] = useState({
  created_at: "",
  updated_at: ""
@@ -176,25 +165,6 @@ export function Settings() {
  if (configData && configData.length > 0) {
  const settingValue = (row: any) => row?.setting_value ?? row?.value;
  const settingKey = (row: any) => row?.setting_key ?? row?.key;
- const handlingObj = configData.find(r => settingKey(r) === "handling_fee_config");
- const handlingValue = settingValue(handlingObj);
- if (handlingValue && typeof handlingValue === "object") {
-  const value = handlingValue as any;
-  const rules = Array.isArray(value.rules) ? value.rules : [];
-  const validRules = rules.length > 0 && rules.every((rule: any) =>
-   Number.isInteger(Number(rule.min_units)) && Number(rule.min_units) >= 1 &&
-   (rule.max_units == null || (Number.isInteger(Number(rule.max_units)) && Number(rule.max_units) >= Number(rule.min_units))) &&
-   Number.isFinite(Number(rule.fee)) && Number(rule.fee) >= 0
-  );
-  if (validRules) setHandlingFeeConfig({
-   enabled: value.enabled !== false,
-   rules: rules.map((rule: any) => ({
-    min_units: Number(rule.min_units),
-    max_units: rule.max_units == null ? null : Number(rule.max_units),
-    fee: Number(rule.fee)
-   }))
-  });
- }
  const platformObj = configData.find(r => settingKey(r) === "platform_config");
  const platformValue = settingValue(platformObj);
  if (platformValue) {
@@ -253,14 +223,6 @@ export function Settings() {
  }, { onConflict: "setting_key" });
  if (error) throw error;
 
- const { error: handlingError } = await supabase
- .from("platform_settings")
- .upsert({
- setting_key: "handling_fee_config",
- setting_value: handlingFeeConfig,
- updated_at: now
- }, { onConflict: "setting_key" });
- if (handlingError) throw handlingError;
  triggerToast("Settings saved successfully.");
  await loadSettings();
  } catch (err: any) {
