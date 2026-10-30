@@ -264,7 +264,7 @@ export function Dashboard() {
       });
     } catch (err) {
       console.error("Error fetching KPI metrics:", err);
-      setMetrics({ totalOrders: 0, platformFee: 0, deliveryMargin: 0, vendorCommission: 0, handlingFeeRevenue: 0, todayEarnings: 0 });
+      setMetrics({ totalOrders: 0, platformFee: 0, deliveryMargin: 0, vendorCommission: 0, todayEarnings: 0 });
     } finally {
       setKpiLoading(false);
     }
