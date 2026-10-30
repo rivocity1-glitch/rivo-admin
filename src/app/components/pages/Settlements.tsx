@@ -75,7 +75,6 @@ interface Order {
   rider_id?: string | null;
   subtotal?: number | null;
   delivery_fee?: number | null;
-  handling_fee?: number | null;
   platform_fee?: number | null;
   total_amount?: number | null;
   payment_status?: string | null;
@@ -360,7 +359,6 @@ export function Settlements() {
               rider_id,
               subtotal,
               delivery_fee,
-              handling_fee,
               platform_fee,
               total_amount,
               payment_status,
@@ -870,10 +868,6 @@ export function Settlements() {
 
     return {
       deliveredOrders: deliveredOrders.length,
-      handlingFeeRevenue: deliveredOrders.reduce(
-        (sum, order) => sum + Number(order.handling_fee || 0),
-        0
-      ),
       vendorPending,
       riderPending,
       vendorPaid,
@@ -1581,16 +1575,6 @@ export function Settlements() {
               <div className="text-2xl font-black mt-2">
                 {metrics.deliveredOrders}
               </div>
-            </div>
-
-            <div className="bg-white border border-gray-200 rounded-xl p-5">
-              <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
-                Handling Fee Revenue
-              </span>
-              <div className="text-2xl font-black mt-2 text-emerald-600">
-                {money(metrics.handlingFeeRevenue)}
-              </div>
-              <p className="text-[10px] text-slate-400 mt-1">Delivered orders only</p>
             </div>
 
             <div className="bg-white border border-gray-200 rounded-xl p-5">
