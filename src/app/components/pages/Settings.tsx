@@ -564,34 +564,7 @@ export function Settings() {
  <SettingRow label="Allow Customer Registration"><StatusBadge enabled={platformSettings.allowCustomerRegistration} /><Toggle enabled={platformSettings.allowCustomerRegistration} onChange={(v) => setPlatformSettings((p) => ({ ...p, allowCustomerRegistration: v }))} /></SettingRow>
  </div>
 
-   {/* Handling Fee Rules */}
-  <div className="pt-4 space-y-4">
-   <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">Handling Fee</h3>
-   <p className="text-xs text-slate-500">Charged per vendor order based on total units. These rules are consumed by the Customer app.</p>
-   <SettingRow label="Enable Handling Fee" description="When disabled, the handling fee is zero for new orders.">
-    <StatusBadge enabled={handlingFeeConfig.enabled} />
-    <Toggle enabled={handlingFeeConfig.enabled} onChange={(enabled) => setHandlingFeeConfig(prev => ({ ...prev, enabled }))} disabled={isSaving} />
-   </SettingRow>
-   <div className="overflow-x-auto border border-slate-200 rounded-lg">
-    <table className="w-full text-xs">
-     <thead className="bg-slate-50 text-slate-500 uppercase">
-      <tr><th className="text-left px-3 py-2">Minimum units</th><th className="text-left px-3 py-2">Maximum units</th><th className="text-left px-3 py-2">Fee (₹)</th></tr>
-     </thead>
-     <tbody className="divide-y divide-slate-100">
-      {handlingFeeConfig.rules.map((rule, index) => (
-       <tr key={index}>
-        <td className="px-3 py-2"><Input type="number" min="1" step="1" value={rule.min_units} onChange={(e) => setHandlingFeeConfig(prev => ({ ...prev, rules: prev.rules.map((item, i) => i === index ? { ...item, min_units: Number(e.target.value) } : item) }))} className="w-28 text-xs" /></td>
-        <td className="px-3 py-2"><Input type="number" min={rule.min_units} step="1" value={rule.max_units ?? ""} placeholder="No limit" onChange={(e) => setHandlingFeeConfig(prev => ({ ...prev, rules: prev.rules.map((item, i) => i === index ? { ...item, max_units: e.target.value === "" ? null : Number(e.target.value) } : item) }))} className="w-28 text-xs" /></td>
-        <td className="px-3 py-2"><Input type="number" min="0" step="0.5" value={rule.fee} onChange={(e) => setHandlingFeeConfig(prev => ({ ...prev, rules: prev.rules.map((item, i) => i === index ? { ...item, fee: Number(e.target.value) } : item) }))} className="w-28 text-xs" /></td>
-       </tr>
-      ))}
-     </tbody>
-    </table>
-   </div>
-   <p className="text-[11px] text-slate-400">The final row with an empty maximum applies to all higher quantities. Ensure the ranges are continuous and non-overlapping.</p>
-  </div>
-
-  {/* 4. Branding */}
+   {/* 4. Branding */}
  <div className="pt-4 space-y-4">
  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">Branding</h3>
  <div className="py-4 border-b border-[#F1F5F9] last:border-0 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
