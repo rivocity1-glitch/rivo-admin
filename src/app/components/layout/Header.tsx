@@ -13,6 +13,7 @@ const pageTitles: Record<PageId, string> = {
   settlements: "Settlements",
   refunds: "Refunds",
   support: "Support",
+  requestscenter: "Request Center",
   subscriptions: "Subscriptions",
   notifications: "Notifications",
   analytics: "Analytics",
