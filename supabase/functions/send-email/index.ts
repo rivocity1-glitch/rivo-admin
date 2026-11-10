@@ -50,6 +50,39 @@ Deno.serve(async (req) => {
   let emailHtml = html;
 
   // ==========================
+  // Vendor Registration Email
+  // ==========================
+  if (type === "vendor-registered") {
+    emailSubject = "Your RivoCity vendor application has been received";
+
+    const safe = (value: unknown) =>
+      String(value ?? "").replace(/[&<>"']/g, (character) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      })[character] || character);
+
+    emailHtml = `
+      <div style="font-family:Arial,sans-serif;max-width:650px;margin:auto;padding:30px;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;">
+        <h1 style="color:#16a34a;">Welcome to RivoCity!</h1>
+        <p>Hello <strong>${safe(ownerName)}</strong>,</p>
+        <p>We have received your store registration. Your application is currently under admin review. You will receive another email when your store is approved.</p>
+        <table style="width:100%;border-collapse:collapse;margin:20px 0;">
+          <tr><td style="padding:10px;border:1px solid #ddd;"><strong>Shop Name</strong></td><td style="padding:10px;border:1px solid #ddd;">${safe(shopName)}</td></tr>
+          <tr><td style="padding:10px;border:1px solid #ddd;"><strong>Vendor ID</strong></td><td style="padding:10px;border:1px solid #ddd;">${safe(shopCode)}</td></tr>
+          <tr><td style="padding:10px;border:1px solid #ddd;"><strong>Login Email</strong></td><td style="padding:10px;border:1px solid #ddd;">${safe(to)}</td></tr>
+        </table>
+        <p>Please keep your Vendor ID safe. You can use it with your password to sign in after your account is approved.</p>
+        <p>Thank you for joining the RivoCity local commerce network.</p>
+        <hr />
+        <p style="font-size:12px;color:#666;">© ${new Date().getFullYear()} RivoCity. All rights reserved.</p>
+      </div>
+    `;
+  }
+
+  // ==========================
   // Vendor Approved Email
   // ==========================
   if (type === "vendor-approved") {
