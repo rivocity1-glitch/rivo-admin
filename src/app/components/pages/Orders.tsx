@@ -273,6 +273,7 @@ export function Orders() {
           rider_availability_status: row.assigned_rider?.availability_status || "—",
           subtotal: row.subtotal || 0,
           delivery_fee: row.delivery_fee || 0,
+          handling_fee: Number(row.handling_fee ?? 0),
           platform_fee: row.platform_fee || 0,
           total_amount: row.total_amount || 0,
           order_status: (row.order_status as OrderStatus) || "pending",
