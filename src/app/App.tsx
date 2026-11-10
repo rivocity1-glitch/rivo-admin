@@ -125,15 +125,15 @@ export default function App() {
       const [customer, vendor, rider] = await Promise.all([
         supabase
           .from("customer_support_tickets")
-          .select("id")
+          .select("id", { count: "exact", head: true })
           .in("status", ["open", "in_progress"]),
         supabase
           .from("vendor_support_tickets")
-          .select("id")
+          .select("id", { count: "exact", head: true })
           .in("status", ["open", "in_progress"]),
         supabase
           .from("rider_support_tickets")
-          .select("id")
+          .select("id", { count: "exact", head: true })
           .in("status", ["open", "in_progress"]),
       ]);
 
@@ -142,9 +142,9 @@ export default function App() {
       if (rider.error) throw rider.error;
 
       const count =
-        (customer.data?.length || 0) +
-        (vendor.data?.length || 0) +
-        (rider.data?.length || 0);
+        (customer.count || 0) +
+        (vendor.count || 0) +
+        (rider.count || 0);
 
       setSupportBadge(
         count > 0
