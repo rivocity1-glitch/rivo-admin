@@ -1,29 +1,32 @@
-# Rivo Admin Production Audit
+# Rivo Admin Audit — Stabilization Branch
 
-This branch is a stabilization pass. `main` remains unchanged.
+Branch: `admin-full-audit-optimization`
+Base: `main`
 
-## Verified fixes
+## Changes applied in this branch
 
-- Customer, vendor and rider support data are handled by the unified Support Desk.
-- Customer feedback is handled by the unified Feedback page.
-- Subscription dashboard no longer depends on the legacy `platform_settings.setting_key/setting_value` shape. It reads the actual `subscriptions.vendor_id` and `subscriptions.plan_name` fields used by the current application.
-- Subscription loading now has explicit error state and refresh behavior.
-- Duplicate subscription rows for the same vendor/plan are not counted twice.
-- A repository validation workflow now runs TypeScript validation and the production Vite build on the stabilization branch and pull requests to `main`.
+- Admin session restoration now validates the current Supabase Auth user and matching `admin_users` record before rendering the panel.
+- Invalid, missing, or non-super-admin authorization records are signed out and the cached authorization snapshot is cleared.
+- Logout now calls Supabase Auth sign-out before clearing the local authorization snapshot.
+- Removed debug logging that exposed authenticated user and admin record details.
+- Removed automatic deletion of closed support tickets. Support history is retained unless an authorized administrator explicitly deletes a ticket.
+- Support sidebar badge now uses exact-count head-only queries rather than fetching ticket IDs into the browser.
+- Refund resolution-time metric now displays an em dash when there are no resolved claims instead of inventing a 1.2-hour metric.
+- CI now runs TypeScript validation and the Vite production build.
+- Removed Supabase URL debug logging.
 
-## High-priority findings for the next local test pass
+## Still requires verification
 
-1. **Refunds**: the current UI contains a synthetic `1.2 hrs` fallback when there is no resolved claim data. Production UI should display `—` instead of invented performance data.
-2. **Support retention**: the current Support page contains automatic deletion of closed tickets older than seven days. This should be removed before production so support history is not silently destroyed.
-3. **Support badge**: the root admin shell currently calculates its badge from the legacy `support_tickets` table while the Support Desk reads `customer_support_tickets`, `vendor_support_tickets`, and `rider_support_tickets`. These should use the same source of truth.
-4. **Platform settings**: the Settings page uses `platform_settings.key/value`. Any other admin page using `setting_key/setting_value` is considered a schema mismatch and should be migrated to the current shape.
-5. **Email/contact values**: contact information should be centralized instead of repeated as literals across pages. The production support address must be confirmed once and then used consistently.
+These items cannot be safely declared fixed without checking the live Supabase schema, RLS policies, and real transactional behavior:
 
-## Validation command
+1. Verify RLS policies prevent non-admin authenticated users from reading or mutating administrative data. Client-side role checks are not a security boundary.
+2. Confirm the exact status vocabulary used by customer, vendor, and rider support tables.
+3. Reconcile Dashboard revenue with Refunds and Settlements, including partial refunds, full refunds, COD, UPI, and settlement states.
+4. Confirm the active-subscription rule and the actual status/date columns before changing subscription distribution calculations.
+5. Verify all Settings reads/writes against the deployed `platform_settings` columns. Do not guess between legacy `key/value` and `setting_key/setting_value`.
+6. Manually test Vendors, Riders, Pickers, Customers, Orders, Settlements, Refunds, Support, Feedback, SOS, Request Center, Subscriptions, Notifications, Analytics, and Settings against the real project.
+7. Verify Cloudflare Pages build settings and whether tracked `dist/` output is intentionally required.
 
-```powershell
-npx tsc --noEmit
-npm run build
-```
+## Validation status
 
-Do not merge this branch until both commands pass locally and the Subscription, Refunds, Support, Feedback, Settlements and Request Center pages have been manually opened against the real Supabase project.
+GitHub source edits are committed. A local TypeScript check, production build, browser test, and live Supabase test have not yet been run from this remote-only session.

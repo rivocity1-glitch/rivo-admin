@@ -328,7 +328,9 @@ export function Refunds() {
       }
     });
 
-    const avgResolutionTime = resolvedCount > 0 ? (totalResolutionHours / resolvedCount).toFixed(1) : "1.2";
+    const avgResolutionTime = resolvedCount > 0
+      ? `${(totalResolutionHours / resolvedCount).toFixed(1)} hrs`
+      : "—";
 
     return {
       pendingClaims,
@@ -336,7 +338,7 @@ export function Refunds() {
       rejectedToday,
       totalRefunded,
       totalReplacements,
-      avgResolutionTime: `${avgResolutionTime} hrs`
+      avgResolutionTime
     };
   }, [claims]);
 

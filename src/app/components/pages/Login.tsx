@@ -45,10 +45,6 @@ export function Login() {
         throw new Error("Admin access configuration record not found.");
       }
 
-      // Added debugging console logs
-      console.log("Authenticated User:", authData.user.id);
-      console.log("Admin Record:", adminData);
-
       // 3. Verify user has the required privileges
       if (adminData.role !== "super_admin") {
         // Log the user back out immediately to prevent dangling valid sessions
@@ -58,7 +54,7 @@ export function Login() {
       
       // 4. Cache authorization snapshot and refresh application frame
       localStorage.setItem("rivo_admin_session", JSON.stringify(adminData));
-      window.location.reload();
+      window.location.assign("/");
     } catch (err: any) {
       console.error("Login authorization error:", err);
       setErrorMessage(err.message || "Authentication failed.");
