@@ -166,21 +166,6 @@ export function Supports() {
     return "Review the related account and transaction records, then respond with the verified resolution or request additional diagnostics.";
   }
 
-  async function autoDeleteOldClosedTickets() {
-    try {
-      const cutoff = new Date();
-      cutoff.setDate(cutoff.getDate() - 7);
-      const cutoffISO = cutoff.toISOString();
-      await Promise.all([
-        supabase.from("vendor_support_tickets").delete().eq("status", "closed").lt("created_at", cutoffISO),
-        supabase.from("customer_support_tickets").delete().eq("status", "closed").lt("created_at", cutoffISO),
-        supabase.from("rider_support_tickets").delete().eq("status", "closed").lt("created_at", cutoffISO),
-      ]);
-    } catch (error) {
-      console.error("Closed support ticket cleanup failed:", error);
-    }
-  }
-
   async function fetchTickets() {
     try {
       setIsLoading(true);
@@ -451,7 +436,7 @@ export function Supports() {
   }
 
   useEffect(() => {
-    autoDeleteOldClosedTickets();
+    // Support history is retained; tickets are never purged automatically.
     fetchTickets();
 
     const channels = [

@@ -212,22 +212,54 @@ export default function App() {
   }
 
   useEffect(() => {
-    try {
-      const localSession = localStorage.getItem(
-        "rivo_admin_session"
-      );
+    let mounted = true;
 
-      if (localSession) {
-        setSession(JSON.parse(localSession));
+    async function restoreAdminSession() {
+      try {
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+        if (authError) throw authError;
+        if (!user) {
+          localStorage.removeItem("rivo_admin_session");
+          if (mounted) setSession(null);
+          return;
+        }
+
+        const { data: adminData, error: adminError } = await supabase
+          .from("admin_users")
+          .select("*")
+          .eq("auth_user_id", user.id)
+          .single();
+
+        if (adminError || !adminData || adminData.role !== "super_admin") {
+          await supabase.auth.signOut();
+          localStorage.removeItem("rivo_admin_session");
+          if (mounted) setSession(null);
+          return;
+        }
+
+        localStorage.setItem("rivo_admin_session", JSON.stringify(adminData));
+        if (mounted) setSession(adminData);
+      } catch (error) {
+        console.error("Admin session validation failed:", error);
+        localStorage.removeItem("rivo_admin_session");
+        if (mounted) setSession(null);
+      } finally {
+        if (mounted) setIsInitializing(false);
       }
-    } catch (err) {
-      console.error(
-        "Failed to parse admin session:",
-        err
-      );
-    } finally {
-      setIsInitializing(false);
     }
+
+    restoreAdminSession();
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, authSession) => {
+      if (!authSession) {
+        localStorage.removeItem("rivo_admin_session");
+        if (mounted) setSession(null);
+      }
+    });
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
@@ -257,15 +289,17 @@ export default function App() {
     }
   }, [session]);
 
-  function handleLogout() {
-    const confirmation = window.confirm(
-      "Are you sure you want to sign out?"
-    );
+  async function handleLogout() {
+    const confirmation = window.confirm("Are you sure you want to sign out?");
+    if (!confirmation) return;
 
-    if (confirmation) {
+    try {
+      await supabase.auth.signOut();
+    } catch (error) {
+      console.error("Supabase sign-out failed:", error);
+    } finally {
       localStorage.removeItem("rivo_admin_session");
       setSession(null);
-      window.location.reload();
     }
   }
 
