@@ -75,7 +75,7 @@ type SupportFeedbackRow = {
     email?: string | null;
     owner_name?: string | null;
     shop_name?: string | null;
-  } | null;
+  }[] | null;
 };
 
 type FeedbackItem = {
@@ -437,9 +437,9 @@ export function Feedback() {
             source: "vendor",
             source_id: item.vendor_id || null,
 
-            name: item.vendors?.shop_name || item.vendors?.owner_name || "Vendor",
+            name: item.vendors?.[0]?.shop_name || item.vendors?.[0]?.owner_name || "Vendor",
 
-            email: item.vendors?.email || null,
+            email: item.vendors?.[0]?.email || null,
             phone: null,
 
             rating:
