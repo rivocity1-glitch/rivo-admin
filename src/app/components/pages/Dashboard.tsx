@@ -242,7 +242,7 @@ export function Dashboard() {
           platformFee: 0,
           deliveryMargin: 0,
           vendorCommission: 0,
-          todayEarnings: 0
+                todayEarnings: 0
         });
         return;
       }
@@ -681,7 +681,8 @@ export function Dashboard() {
           </div>
           <p className="text-[11px] text-slate-400 mt-3 font-semibold">Vendor commission earnings</p>
         </div>
-        {/* Today's Rivo Earnings */}
+
+        {/* 6. Today's Rivo Earnings */}
         <div className="bg-gradient-to-br from-slate-900 to-slate-800 text-white rounded-2xl p-4.5 flex flex-col justify-between shadow-md hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 relative overflow-hidden group">
           <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity">
             <Sparkles className="w-16 h-16 text-white" />

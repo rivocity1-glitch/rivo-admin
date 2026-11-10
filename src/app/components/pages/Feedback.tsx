@@ -71,6 +71,11 @@ type SupportFeedbackRow = {
   last_message_at?: string | null;
   created_at: string;
   updated_at?: string | null;
+  vendors?: {
+    email?: string | null;
+    owner_name?: string | null;
+    shop_name?: string | null;
+  }[] | null;
 };
 
 type FeedbackItem = {
@@ -408,7 +413,7 @@ export function Feedback() {
       } = await supabase
         .from("vendor_support_tickets")
         .select(
-          "id,vendor_id,title,description,status,priority,issue_type,screenshot_url,unread_for_admin,last_message_at,created_at,updated_at"
+          "id,vendor_id,title,description,status,priority,issue_type,screenshot_url,unread_for_admin,last_message_at,created_at,updated_at,vendors(email,owner_name,shop_name)"
         )
         .eq("issue_type", "feedback")
         .order("created_at", {
@@ -432,9 +437,9 @@ export function Feedback() {
             source: "vendor",
             source_id: item.vendor_id || null,
 
-            name: "Vendor",
+            name: item.vendors?.[0]?.shop_name || item.vendors?.[0]?.owner_name || "Vendor",
 
-            email: null,
+            email: item.vendors?.[0]?.email || null,
             phone: null,
 
             rating:
@@ -1063,6 +1068,64 @@ export function Feedback() {
       }
     };
 
+  const markVendorFeedbackRead = async () => {
+    if (!selected || selected.source !== "vendor") return;
+    setSaving(true);
+    try {
+      const { error } = await supabase
+        .from("vendor_support_tickets")
+        .update({ unread_for_admin: false })
+        .eq("id", selected.id);
+      if (error) throw error;
+
+      const updated = { ...selected, unread_for_admin: false };
+      setRows((current) =>
+        current.map((row) =>
+          row.id === selected.id && row.source === "vendor" ? updated : row
+        )
+      );
+      setSelected(updated);
+    } catch (error) {
+      console.error("Mark vendor feedback as read failed:", error);
+      window.alert("Could not mark this feedback as read. Please try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const sendVendorFeedbackReply = async () => {
+    if (!selected || selected.source !== "vendor" || !reply.trim()) return;
+    if (!selected.email) {
+      window.alert("This vendor record has no email address. You can copy the feedback and contact the vendor separately.");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const escapeHtml = (value: string) =>
+        value.replace(/[&<>"']/g, (character) => ({
+          "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+        }[character] || character));
+
+      const message = reply.trim();
+      const { error } = await supabase.functions.invoke("send-email", {
+        body: {
+          to: selected.email,
+          subject: "RivoCity Support — Reply to your feedback",
+          html: `<div style="font-family:Arial,sans-serif;max-width:620px;margin:auto;padding:24px;color:#0f172a"><h2 style="color:#16a34a">RivoCity Support</h2><p>Hello ${escapeHtml(selected.name)},</p><p>Thank you for sharing your feedback with RivoCity. Our team has responded:</p><div style="white-space:pre-wrap;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:16px">${escapeHtml(message)}</div><p style="color:#64748b;font-size:12px">RivoCity Support Team</p></div>`,
+        },
+      });
+      if (error) throw error;
+      setReply("");
+      window.alert("Reply email sent successfully.");
+    } catch (error) {
+      console.error("Vendor feedback reply failed:", error);
+      window.alert("Could not send the reply email. Check the send-email function and try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   /*
    * ========================================================
    * DELETE
@@ -1676,9 +1739,7 @@ export function Feedback() {
             )}
 
             {/* CUSTOMER RESPONSE */}
-            {selected.source ===
-              "customer" &&
-              selected.admin_reply && (
+            {selected.source === "customer" && selected.admin_reply && (
                 <div className="border border-border rounded-xl p-4">
                   <div className="text-xs font-semibold mb-2 flex items-center gap-2">
                     <MessageSquare className="w-4 h-4" />
@@ -1691,9 +1752,8 @@ export function Feedback() {
                 </div>
               )}
 
-            {/* CUSTOMER RESPONSE BOX */}
-            {selected.source ===
-              "customer" && (
+            {/* RESPONSE BOX */}
+            {(selected.source === "customer" || selected.source === "vendor") && (
               <div>
                 <div className="text-xs font-semibold mb-2">
                   Thank / Respond
@@ -1707,7 +1767,7 @@ export function Feedback() {
                     )
                   }
                   rows={4}
-                  placeholder="Write a thank-you or response..."
+                  placeholder={selected.source === "vendor" ? "Write a reply to the vendor..." : "Write a thank-you or response..."}
                   className="w-full rounded-lg border border-border bg-background p-3 text-sm resize-none outline-none focus:ring-2 focus:ring-[#22C55E]/20"
                 />
               </div>
@@ -1765,6 +1825,23 @@ export function Feedback() {
                   >
                     <XCircle className="w-4 h-4" />
                     Mark Unread
+                  </Button>
+                </>
+              ) : selected.source === "vendor" ? (
+                <>
+                  <Button
+                    onClick={markVendorFeedbackRead}
+                    disabled={saving || !selected.unread_for_admin}
+                  >
+                    <Eye className="w-4 h-4" />
+                    {selected.unread_for_admin ? "Mark Read" : "Read"}
+                  </Button>
+                  <Button
+                    onClick={sendVendorFeedbackReply}
+                    disabled={saving || !reply.trim() || !selected.email}
+                  >
+                    <Send className="w-4 h-4" />
+                    Reply by Email
                   </Button>
                 </>
               ) : (

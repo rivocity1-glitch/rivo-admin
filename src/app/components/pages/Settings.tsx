@@ -136,6 +136,7 @@ export function Settings() {
  allowCustomerRegistration: false,
  platformLogo: ""
  });
+
  const [systemMeta, setSystemMeta] = useState({
  created_at: "",
  updated_at: ""
@@ -222,7 +223,6 @@ export function Settings() {
  updated_at: now
  }, { onConflict: "setting_key" });
  if (error) throw error;
-
  triggerToast("Settings saved successfully.");
  await loadSettings();
  } catch (err: any) {
@@ -526,7 +526,9 @@ export function Settings() {
  <SettingRow label="Allow Customer Registration"><StatusBadge enabled={platformSettings.allowCustomerRegistration} /><Toggle enabled={platformSettings.allowCustomerRegistration} onChange={(v) => setPlatformSettings((p) => ({ ...p, allowCustomerRegistration: v }))} /></SettingRow>
  </div>
 
-   {/* 4. Branding */}
+  
+
+  {/* 4. Branding */}
  <div className="pt-4 space-y-4">
  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">Branding</h3>
  <div className="py-4 border-b border-[#F1F5F9] last:border-0 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">

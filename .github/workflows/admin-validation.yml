@@ -25,5 +25,8 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: TypeScript validation
+        run: npx tsc --noEmit
+
       - name: Production build
         run: npm run build
