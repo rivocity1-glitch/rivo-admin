@@ -72,7 +72,6 @@ interface Order {
   rider_availability_status: string;
   subtotal: number;
   delivery_fee: number;
-  handling_fee: number;
   platform_fee: number;
   total_amount: number;
   order_status: OrderStatus;
@@ -273,7 +272,6 @@ export function Orders() {
           rider_availability_status: row.assigned_rider?.availability_status || "—",
           subtotal: row.subtotal || 0,
           delivery_fee: row.delivery_fee || 0,
-          handling_fee: Number(row.handling_fee ?? 0),
           platform_fee: row.platform_fee || 0,
           total_amount: row.total_amount || 0,
           order_status: (row.order_status as OrderStatus) || "pending",
@@ -434,10 +432,6 @@ export function Orders() {
             <div>
               <span>Delivery Fee</span>
               <span>₹${order.delivery_fee}</span>
-            </div>
-            <div>
-              <span>Handling Fee</span>
-              <span>₹${Number(order.handling_fee || 0).toFixed(2)}</span>
             </div>
             <div>
               <span>Platform Fee</span>
@@ -943,10 +937,6 @@ export function Orders() {
                 <div className="bg-[#F8FAFC] border border-[#E2E8F0]/60 p-2.5 rounded-lg">
                   <span className="text-[#64748B] block text-[10px] font-bold uppercase tracking-wide">Customer Paid</span>
                   <span className="font-mono font-bold text-[#0F172A] text-sm">₹{selectedOrder.customer_paid}</span>
-                </div>
-                <div className="bg-[#F8FAFC] border border-[#E2E8F0]/60 p-2.5 rounded-lg">
-                  <span className="text-[#64748B] block text-[10px] font-bold uppercase tracking-wide">Handling Fee</span>
-                  <span className="font-mono font-bold text-[#059669] text-sm">₹{Number(selectedOrder.handling_fee || 0).toFixed(2)}</span>
                 </div>
                 <div className="bg-[#F8FAFC] border border-[#E2E8F0]/60 p-2.5 rounded-lg">
                   <span className="text-[#64748B] block text-[10px] font-bold uppercase tracking-wide">Vendor Earning</span>
