@@ -339,6 +339,9 @@ export function Riders() {
   const [isSubmitting, setIsSubmitting] =
     useState(false);
 
+  const [sendApprovalEmail, setSendApprovalEmail] =
+    useState(true);
+
   const [kycOpen, setKycOpen] =
     useState(false);
 
@@ -1174,60 +1177,8 @@ export function Riders() {
         throw updateError;
       }
 
-      if (
-        updates.status ===
-        "active"
-      ) {
-        try {
-          const {
-            data: riderData,
-            error:
-              riderFetchError,
-          } = await supabase
-            .from("riders")
-            .select(
-              "email, rider_name, rider_code"
-            )
-            .eq("id", id)
-            .single();
-
-          if (
-            !riderFetchError &&
-            riderData &&
-            riderData.email
-          ) {
-            await fetch(
-              "https://fduolwqvevmkgmicyviy.functions.supabase.co/send-email",
-              {
-                method:
-                  "POST",
-                headers: {
-                  "Content-Type":
-                    "application/json",
-                  Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-                  apikey:
-                    SUPABASE_ANON_KEY,
-                },
-                body: JSON.stringify(
-                  {
-                    type: "rider-approved",
-                    to: riderData.email,
-                    riderName:
-                      riderData.rider_name,
-                    riderCode:
-                      riderData.rider_code,
-                  }
-                ),
-              }
-            );
-          }
-        } catch (err) {
-          console.error(
-            "Rider approval email failed:",
-            err
-          );
-        }
-      }
+      // Account activation must not send a second approval email.
+      // The rider receives the single approval email after KYC verification, if selected by Admin.
 
       await fetchRiders();
     } catch (err) {
@@ -1518,45 +1469,29 @@ export function Riders() {
           kycRider.id
         );
 
-      try {
-        await fetch(
+      if (sendApprovalEmail && latestRiderData.email) {
+        const emailResponse = await fetch(
           "https://fduolwqvevmkgmicyviy.functions.supabase.co/send-email",
           {
-            method:
-              "POST",
-
+            method: "POST",
             headers: {
-              "Content-Type":
-                "application/json",
-
+              "Content-Type": "application/json",
               Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-
-              apikey:
-                SUPABASE_ANON_KEY,
+              apikey: SUPABASE_ANON_KEY,
             },
-
-            body: JSON.stringify(
-              {
-                type:
-                  "rider-approved",
-
-                to:
-                  latestRiderData.email,
-
-                riderName:
-                  latestRiderData.rider_name,
-
-                riderCode:
-                  latestRiderData.rider_code,
-              }
-            ),
+            body: JSON.stringify({
+              type: "rider-approved",
+              to: latestRiderData.email,
+              riderName: latestRiderData.rider_name,
+              riderCode: latestRiderData.rider_code,
+            }),
           }
         );
-      } catch (err) {
-        console.error(
-          "Rider approval email failed:",
-          err
-        );
+        if (!emailResponse.ok) {
+          const responseText = await emailResponse.text();
+          console.error("Rider approval email failed:", responseText);
+          alert("KYC was approved, but the rider email could not be sent.");
+        }
       }
 
       if (
@@ -2465,6 +2400,18 @@ export function Riders() {
                 </div>
 
                 <div className="flex gap-2 items-center">
+                  {kycRider.kyc_status === "pending" && (
+                    <label className="flex items-center gap-2 text-xs text-muted-foreground mr-auto cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={sendApprovalEmail}
+                        onChange={(event) => setSendApprovalEmail(event.target.checked)}
+                        className="accent-emerald-600"
+                      />
+                      Send approval email
+                    </label>
+                  )}
+
                   <Button
                     variant="secondary"
                     onClick={() => {
