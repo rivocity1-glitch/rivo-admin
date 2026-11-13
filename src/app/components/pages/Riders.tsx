@@ -1177,60 +1177,8 @@ export function Riders() {
         throw updateError;
       }
 
-      if (
-        updates.status ===
-        "active"
-      ) {
-        try {
-          const {
-            data: riderData,
-            error:
-              riderFetchError,
-          } = await supabase
-            .from("riders")
-            .select(
-              "email, rider_name, rider_code"
-            )
-            .eq("id", id)
-            .single();
-
-          if (
-            !riderFetchError &&
-            riderData &&
-            riderData.email
-          ) {
-            await fetch(
-              "https://fduolwqvevmkgmicyviy.functions.supabase.co/send-email",
-              {
-                method:
-                  "POST",
-                headers: {
-                  "Content-Type":
-                    "application/json",
-                  Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-                  apikey:
-                    SUPABASE_ANON_KEY,
-                },
-                body: JSON.stringify(
-                  {
-                    type: "rider-approved",
-                    to: riderData.email,
-                    riderName:
-                      riderData.rider_name,
-                    riderCode:
-                      riderData.rider_code,
-                  }
-                ),
-              }
-            );
-          }
-        } catch (err) {
-          console.error(
-            "Rider approval email failed:",
-            err
-          );
-        }
-      }
+      // Account activation must not send a second approval email.
+      // The rider receives the single approval email after KYC verification, if selected by Admin.
 
       await fetchRiders();
     } catch (err) {
