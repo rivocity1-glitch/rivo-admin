@@ -14,29 +14,29 @@ const productImage=(value:string|null)=>{
  return value;
 };
 const csvRows=(text:string)=>{
- const source=text.replace(/^\\uFEFF/, "").replace(/\\u0000/g, "");
+ const source=text.replace(/^\uFEFF/, "").replace(/\u0000/g, "");
  if(!source.trim())throw new Error("The selected CSV file is empty.");
  // Detect comma, semicolon or tab separators from the first non-empty record.
- const firstLine=source.split(/\\r?\\n/).find(line=>line.trim())||"";
- const counts=[",",";","\\t"].map(delimiter=>{
+ const firstLine=source.split(/\r?\n/).find(line=>line.trim())||"";
+ const counts=[",",";","\t"].map(delimiter=>{
   let quoted=false,count=0;
   for(let i=0;i<firstLine.length;i++){const ch=firstLine[i];if(ch==='"'&&firstLine[i+1]==='"'&&quoted){i++;continue;}if(ch==='"')quoted=!quoted;else if(ch===delimiter&&!quoted)count++;}
   return count;
  });
- const delimiter=[",",";","\\t"][counts.indexOf(Math.max(...counts))];
+ const delimiter=[",",";","\t"][counts.indexOf(Math.max(...counts))];
  const rows:string[][]=[];let row:string[]=[];let cell="";let quoted=false;
  for(let i=0;i<source.length;i++){
   const ch=source[i],next=source[i+1];
   if(ch==='"'&&quoted&&next==='"'){cell+='"';i++;}
   else if(ch==='"'){quoted=!quoted;}
   else if(ch===delimiter&&!quoted){row.push(cell.trim());cell="";}
-  else if((ch==="\\n"||ch==="\\r")&&!quoted){if(ch==="\\r"&&next==="\\n")i++;row.push(cell.trim());if(row.some(v=>v.trim()))rows.push(row);row=[];cell="";}
+  else if((ch==="\n"||ch==="\r")&&!quoted){if(ch==="\r"&&next==="\n")i++;row.push(cell.trim());if(row.some(v=>v.trim()))rows.push(row);row=[];cell="";}
   else cell+=ch;
  }
  if(quoted)throw new Error("CSV contains an unclosed quotation mark. Re-save it as CSV UTF-8 and try again.");
  row.push(cell.trim());if(row.some(v=>v.trim()))rows.push(row);
  if(rows.length<2)throw new Error("CSV must contain a header row and at least one product row.");
- const normalize=(value:string)=>value.replace(/^\\uFEFF/,"").trim().toLowerCase().replace(/[\\s-]+/g,"_");
+ const normalize=(value:string)=>value.replace(/^\uFEFF/,"").trim().toLowerCase().replace(/[\s-]+/g,"_");
  const headers=rows[0].map(normalize);
  const aliases:Record<string,string>={"product":"name","product_name":"name","productname":"name","category":"category_id","category_name":"category_id","pack_size":"weight","size":"weight","barcode_ean":"barcode","brand_name":"brand"};
  const keys=headers.map(h=>aliases[h]||h);
