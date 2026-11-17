@@ -114,15 +114,18 @@ export function ProductCatalogue(){
    const categoryAliases:Record<string,string[]>={pharmacy:["medical"],"pet store":["pet supplies"],"general store":["home and kitchen","grocery"],"beauty cosmetics":["personal care"]};
    const unmappedCategories=new Set<string>();
    const payload=records.map(r=>{
-    const categoryValue=String(r.category_id||"").trim()||String(r.product_category_label||"").trim();
+    const categoryCandidates=[String(r.category_id||"").trim(),String(r.product_category_label||"").trim()].filter(Boolean);
     let categoryId:string|null=null;
-    if(categoryValue){
-     categoryId=categoryIds.has(categoryValue)?categoryValue:categoryByName.get(normalizeCategory(categoryValue))||null;
+    let categoryValue="";
+    for(const candidate of categoryCandidates){
+     categoryValue=candidate;
+     categoryId=categoryIds.has(candidate)?candidate:categoryByName.get(normalizeCategory(candidate))||null;
      if(!categoryId){
-      for(const alias of categoryAliases[normalizeCategory(categoryValue)]||[]){categoryId=categoryByName.get(normalizeCategory(alias))||null;if(categoryId)break;}
+      for(const alias of categoryAliases[normalizeCategory(candidate)]||[]){categoryId=categoryByName.get(normalizeCategory(alias))||null;if(categoryId)break;}
      }
-     if(!categoryId)unmappedCategories.add(categoryValue);
+     if(categoryId)break;
     }
+    if(!categoryId&&categoryValue)unmappedCategories.add(categoryValue);
     const manufacturer=String(r.manufacturer||"").trim()||null;
     const p:any={name:String(r.name).trim(),brand:String(r.brand||"").trim()||manufacturer,category_id:categoryId,barcode:String(r.barcode||"").trim()||null,manufacturer,unit:String(r.unit||"").trim()||null,weight:String(r.weight||"").trim()||String(r.variant||"").trim()||null,status:"active"};
     if(r.description)p.description=String(r.description).trim();
@@ -198,7 +201,7 @@ export function ProductCatalogue(){
  return <section className="space-y-5">
   <header className="flex flex-wrap items-end justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-emerald-700">RivoCity Admin</p><h1 className="mt-1 text-2xl font-bold text-slate-900">Product Catalogue</h1><p className="mt-1 text-sm text-slate-500">Bulk-add shared products. Manage only catalogue aliases and shared images; vendors own pricing, MRP, batch and expiry.</p></div><button onClick={()=>setShowBulk(v=>!v)} className="rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white inline-flex gap-2 items-center"><FileSpreadsheet size={16}/> Bulk add products</button></header>
   {notice&&<div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{notice}</div>}
-  {showBulk&&<div className="rounded-xl border bg-white p-4 space-y-3"><div className="flex items-center justify-between"><h2 className="font-bold">Bulk import master products (CSV)</h2><button onClick={()=>setShowBulk(false)}><X size={17}/></button></div><p className="text-xs text-slate-500">Import the Vendor Portal CSV. Product name is required (name, product_name, Product Name, item_name or variant). Category, barcode, manufacturer, unit and weight are imported when available. Vendor price, MRP, GST, stock, batch and expiry columns are ignored. Add product images manually after import by opening each product.</p><input type="file" accept=".csv,text/csv,application/vnd.ms-excel" onChange={e=>setBulkFile(e.target.files?.[0]||null)} className="block w-full text-sm"/><div className="flex justify-end"><button disabled={!bulkFile||busy} onClick={()=>void importBulk()} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{busy?"Importing…":"Import CSV"}</button></div></div>}
+  {showBulk&&<div className="rounded-xl border bg-white p-4 space-y-3"><div className="flex items-center justify-between"><h2 className="font-bold">Bulk import master products (CSV)</h2><button onClick={()=>setShowBulk(false)}><X size={17}/></button></div><p className="text-xs text-slate-500">Upload the same CSV exported for Vendor Portal. Supports its legacy columns (Vendor Category, Product Category, Subcategory, Variant) and standard Product Name columns. Category, barcode, manufacturer, unit and pack size are mapped where available. Vendor price, MRP, GST, stock, batch and expiry are ignored. After import, open each product to upload its image manually.</p><input type="file" accept=".csv,text/csv,application/vnd.ms-excel" onChange={e=>setBulkFile(e.target.files?.[0]||null)} className="block w-full text-sm"/><div className="flex justify-end"><button disabled={!bulkFile||busy} onClick={()=>void importBulk()} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{busy?"Importing…":"Import CSV"}</button></div></div>}
   <div className="grid gap-3 sm:grid-cols-3"><div className="rounded-xl border bg-white p-4"><div className="text-xs text-slate-500">Vendor listings</div><div className="text-2xl font-bold">{listings.length}</div></div><div className="rounded-xl border bg-white p-4"><div className="text-xs text-slate-500">Master products</div><div className="text-2xl font-bold">{masters.length}</div></div><div className="rounded-xl border bg-white p-4"><div className="text-xs text-slate-500">Shared images</div><div className="text-2xl font-bold">{images.length}</div></div></div>
   <div className="rounded-xl border bg-white"><div className="flex gap-2 border-b p-3"><div className="relative flex-1"><Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search product name, barcode, SKU or vendor ID" className="h-10 w-full rounded-lg border pl-9 pr-3 text-sm"/></div><button onClick={()=>void load()} className="rounded-lg border px-3"><RefreshCw size={16}/></button></div>
    <div className="border-b px-4 py-3"><h2 className="font-bold">Existing vendor product listings ({filteredListings.length})</h2><p className="text-xs text-slate-500">Read-only. Price, MRP, batch, expiry and stock are managed in Vendor Portal.</p></div>
