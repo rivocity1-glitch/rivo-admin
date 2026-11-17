@@ -38,9 +38,11 @@ const csvRows=(text:string)=>{
  if(rows.length<2)throw new Error("CSV must contain a header row and at least one product row.");
  const normalize=(value:string)=>value.replace(/^\uFEFF/,"").trim().toLowerCase().replace(/\([^)]*\)/g,"").replace(/[＊*]/g,"").replace(/[^a-z0-9]+/g,"_").replace(/^_+|_+$/g,"");
  const headers=rows[0].map(normalize);
- const aliases:Record<string,string>={"product":"name","product_name":"name","productname":"name","product_title":"name","item":"name","item_name":"name","itemname":"name","item_description":"name","name_of_product":"name","product_name_required":"name","product":"name","item":"name","item_name":"name","variant":"name","category":"category_id","category_name":"category_id","product_category":"category_id","vendor_category":"category_id","pack_size":"weight","size":"weight","barcode_ean":"barcode","ean":"barcode","brand_name":"brand","manufacturer_name":"manufacturer","unit_of_measure":"unit","hsn":"hsn_code","batch_no":"batch_number"};
- const keys=headers.map(h=>aliases[h]||h);
- if(!keys.includes("name"))throw new Error("Missing product-name column. Detected headers: "+(headers.filter(Boolean).join(", ")||"(none)")+". Include a Product Name, Item Name or Variant column.");
+ const hasDirectName=headers.some(h=>["name","product_name","productname","product_title","item","item_name","itemname","item_description","name_of_product"].includes(h));
+ const isVendorPortalLegacyLayout=!hasDirectName&&headers.includes("vendor_category")&&headers.includes("product_category")&&headers.includes("subcategory")&&headers.includes("variant");
+ const aliases:Record<string,string>={"product":"name","product_name":"name","productname":"name","product_title":"name","item":"name","item_name":"name","itemname":"name","item_description":"name","name_of_product":"name","product_name_required":"name","category":"category_id","category_name":"category_id","product_category":"product_category_label","vendor_category":"category_id","pack_size":"weight","size":"weight","barcode_ean":"barcode","ean":"barcode","brand_name":"brand","manufacturer_name":"manufacturer","unit_of_measure":"unit","hsn":"hsn_code","batch_no":"batch_number"};
+ const keys=headers.map(h=>isVendorPortalLegacyLayout&&h==="subcategory"?"name":aliases[h]||h);
+ if(!keys.includes("name"))throw new Error("Could not identify the product-name column. This file must contain Product Name / Item Name, or the Vendor Portal legacy columns Vendor Category, Product Category, Subcategory and Variant. Detected: "+(headers.filter(Boolean).join(", ")||"(none)")+".");
  return rows.slice(1).map((values,index)=>{
   const record:Record<string,string>={};
   keys.forEach((key,i)=>{if(key)record[key]=(values[i]||"").trim();});
@@ -106,22 +108,26 @@ export function ProductCatalogue(){
    // Accept either a category UUID or an existing category name.
    const {data:categoryRows,error:categoryError}=await supabase.from("product_categories").select("id,name");
    if(categoryError)throw new Error(`Could not validate categories: ${categoryError.message}`);
-   const categoryByName=new Map((categoryRows||[]).map((v:any)=>[String(v.name).trim().toLowerCase(),v.id]));
+   const normalizeCategory=(v:string)=>v.trim().toLowerCase().replace(/&/g,"and").replace(/[^a-z0-9]+/g," ").trim();
+   const categoryByName=new Map((categoryRows||[]).map((v:any)=>[normalizeCategory(String(v.name)),v.id]));
    const categoryIds=new Set((categoryRows||[]).map((v:any)=>String(v.id)));
-   const invalidCategories:string[]=[];
+   const categoryAliases:Record<string,string[]>={pharmacy:["medical"],"pet store":["pet supplies"],"general store":["home and kitchen","grocery"],"beauty cosmetics":["personal care"]};
+   const unmappedCategories=new Set<string>();
    const payload=records.map(r=>{
-    const categoryValue=String(r.category_id||"").trim();
+    const categoryValue=String(r.category_id||"").trim()||String(r.product_category_label||"").trim();
     let categoryId:string|null=null;
     if(categoryValue){
-     categoryId=categoryIds.has(categoryValue)?categoryValue:categoryByName.get(categoryValue.toLowerCase())||null;
-     if(!categoryId)invalidCategories.push(`row ${r.__row}: ${categoryValue}`);
+     categoryId=categoryIds.has(categoryValue)?categoryValue:categoryByName.get(normalizeCategory(categoryValue))||null;
+     if(!categoryId){
+      for(const alias of categoryAliases[normalizeCategory(categoryValue)]||[]){categoryId=categoryByName.get(normalizeCategory(alias))||null;if(categoryId)break;}
+     }
+     if(!categoryId)unmappedCategories.add(categoryValue);
     }
-    const p:any={name:String(r.name).trim(),brand:String(r.brand||"").trim()||null,category_id:categoryId,barcode:String(r.barcode||"").trim()||null,manufacturer:String(r.manufacturer||"").trim()||null,unit:String(r.unit||"").trim()||null,weight:String(r.weight||"").trim()||String(r.variant||"").trim()||null,status:"active"};
+    const manufacturer=String(r.manufacturer||"").trim()||null;
+    const p:any={name:String(r.name).trim(),brand:String(r.brand||"").trim()||manufacturer,category_id:categoryId,barcode:String(r.barcode||"").trim()||null,manufacturer,unit:String(r.unit||"").trim()||null,weight:String(r.weight||"").trim()||String(r.variant||"").trim()||null,status:"active"};
     if(r.description)p.description=String(r.description).trim();
     return p;
    });
-   if(invalidCategories.length)throw new Error(`Category not found. Use an existing category name or category UUID: ${invalidCategories.slice(0,8).join("; ")}.`);
-
    const existingKeys=new Set(masters.map(p=>p.barcode?`barcode:${p.barcode.trim().toLowerCase()}`:`name:${(p.name||"").trim().toLowerCase()}|brand:${(p.brand||"").trim().toLowerCase()}|weight:${(p.weight||"").trim().toLowerCase()}`));
    const seen=new Set<string>();
    const unique=payload.filter(p=>{
@@ -133,7 +139,8 @@ export function ProductCatalogue(){
     const {error}=await supabase.from("universal_products").insert(unique.slice(i,i+100));
     if(error)throw new Error(`Import stopped at batch ${Math.floor(i/100)+1}: ${error.message}`);
    }
-   setNotice(`Imported ${unique.length} master products. Skipped ${payload.length-unique.length} possible duplicates.`);
+   const categoryNote=unmappedCategories.size? ` Category not matched (left blank): ${[...unmappedCategories].slice(0,6).join(", ")}.`:"";
+   setNotice(`Imported ${unique.length} master products. Skipped ${payload.length-unique.length} possible duplicates. Images were left blank for manual upload.${categoryNote}`);
    setBulkFile(null);setShowBulk(false);await load();
   }catch(e){setNotice(errorText(e));}finally{setBusy(false);}
  }
@@ -164,8 +171,13 @@ export function ProductCatalogue(){
     const {error}=await supabase.storage.from("product-images").upload(path,file,{upsert:false,contentType:file.type,cacheControl:"31536000"});
     if(error)throw error;
     const url=supabase.storage.from("product-images").getPublicUrl(path).data.publicUrl;
-    const {error:insertError}=await supabase.from("universal_product_images").insert({universal_product_id:editing.id,image_url:url,is_primary:currentImages.length===0&&files[0]===file,source:"admin"});
+    const isPrimary=currentImages.length===0&&files[0]===file;
+    const {error:insertError}=await supabase.from("universal_product_images").insert({universal_product_id:editing.id,image_url:url,is_primary:isPrimary,source:"admin"});
     if(insertError)throw insertError;
+    if(isPrimary){
+     const {error:masterImageError}=await supabase.from("universal_products").update({image_url:url}).eq("id",editing.id);
+     if(masterImageError)throw masterImageError;
+    }
    }
    setFiles([]);setNotice("Images uploaded to the shared product gallery.");await load();
   }catch(e){setNotice(errorText(e));}finally{setBusy(false);}
@@ -173,7 +185,13 @@ export function ProductCatalogue(){
 
  async function setPrimary(image:MasterImage){
   setBusy(true);setNotice("");
-  try{const {error}=await supabase.rpc("set_universal_product_primary_image",{p_image_id:image.id});if(error)throw error;setNotice("Primary image updated.");await load();}
+  try{
+   const {error}=await supabase.rpc("set_universal_product_primary_image",{p_image_id:image.id});
+   if(error)throw error;
+   const {error:masterImageError}=await supabase.from("universal_products").update({image_url:image.image_url}).eq("id",image.universal_product_id);
+   if(masterImageError)throw masterImageError;
+   setNotice("Primary image updated.");await load();
+  }
   catch(e){setNotice(errorText(e));}finally{setBusy(false);}
  }
 
