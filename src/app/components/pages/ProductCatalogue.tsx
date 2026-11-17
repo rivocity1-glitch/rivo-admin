@@ -25,8 +25,6 @@ export function ProductCatalogue(){
  const [editing,setEditing]=useState<MasterProduct|null>(null);
  const [aliasText,setAliasText]=useState("");
  const [files,setFiles]=useState<File[]>([]);
- const [bulkFile,setBulkFile]=useState<File|null>(null);
- const [showBulk,setShowBulk]=useState(false);
 
  const load=useCallback(async()=>{
   setLoading(true);setNotice("");
