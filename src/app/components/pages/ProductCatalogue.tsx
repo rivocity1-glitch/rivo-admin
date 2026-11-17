@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { PackageSearch, RefreshCw, Search, Upload, Save, ImagePlus, Star, X, FileSpreadsheet } from "lucide-react";
 import { supabase } from "../../../lib/supabase";
 
-type MasterProduct = { id:string; name:string|null; brand:string|null; category_id:string|null; barcode:string|null; manufacturer:string|null; unit:string|null; weight:string|null; image_url:string|null; status:string|null };
+type MasterProduct = { id:string; name:string|null; brand:string|null; category_id:string|null; barcode:string|null; manufacturer:string|null; unit:string|null; weight:string|null; description?:string|null; image_url:string|null; status:string|null };
 type Category = {id:string;name:string};
 type Alias = { id:string; universal_product_id:string; alias:string };
 type MasterImage = { id:string; universal_product_id:string; image_url:string; is_primary:boolean; source:string };
@@ -54,7 +54,6 @@ const csvRows=(text:string)=>{
 
 export function ProductCatalogue(){
  const [masters,setMasters]=useState<MasterProduct[]>([]);
- const [listings,setListings]=useState<VendorProduct[]>([]);
  const [aliases,setAliases]=useState<Alias[]>([]);
  const [images,setImages]=useState<MasterImage[]>([]);
  const [query,setQuery]=useState("");
@@ -71,10 +70,10 @@ export function ProductCatalogue(){
   setLoading(true);setNotice("");
   try{
    const [m,a,i,cat]=await Promise.all([
-    supabase.from("universal_products").select("id,name,brand,category_id,barcode,manufacturer,unit,weight,image_url,status").order("name"),
+    supabase.from("universal_products").select("id,name,brand,category_id,barcode,manufacturer,unit,weight,description,image_url,status").order("name"),
     supabase.from("universal_product_aliases").select("id,universal_product_id,alias").order("alias"),
-    supabase.from("universal_product_images").select("id,universal_product_id,image_url,is_primary,source").order("created_at")
-    ,supabase.from("product_categories").select("id,name").order("name")
+    supabase.from("universal_product_images").select("id,universal_product_id,image_url,is_primary,source").order("created_at"),
+    supabase.from("product_categories").select("id,name").order("name")
    ]);
    if(m.error)throw m.error;if(i.error)throw i.error;if(cat.error)throw cat.error;
    const aliasTableMissing=!!a.error&&(a.error.code==="42P01"||a.error.code==="PGRST205"||a.error.message?.toLowerCase().includes("not found"));
