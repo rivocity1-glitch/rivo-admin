@@ -70,27 +70,21 @@ export function ProductCatalogue(){
  const load=useCallback(async()=>{
   setLoading(true);setNotice("");
   try{
-   const [m,a,i]=await Promise.all([
+   const [m,a,i,cat]=await Promise.all([
     supabase.from("universal_products").select("id,name,brand,category_id,barcode,manufacturer,unit,weight,image_url,status").order("name"),
     supabase.from("universal_product_aliases").select("id,universal_product_id,alias").order("alias"),
     supabase.from("universal_product_images").select("id,universal_product_id,image_url,is_primary,source").order("created_at")
    ]);
-   if(m.error)throw m.error;if(i.error)throw i.error;
+   if(m.error)throw m.error;if(i.error)throw i.error;if(cat.error)throw cat.error;
    const aliasTableMissing=!!a.error&&(a.error.code==="42P01"||a.error.code==="PGRST205"||a.error.message?.toLowerCase().includes("not found"));
    if(a.error&&!aliasTableMissing)throw a.error;
    if(aliasTableMissing)setNotice("Catalogue loaded, but aliases are unavailable: apply supabase/migrations/202611170001_universal_product_aliases.sql in Supabase SQL Editor.");
-   const all:VendorProduct[]=[];
-   for(let from=0;;from+=1000){
-    const {data,error}=await supabase.from("products").select("id,name,vendor_id,price,stock,image_url,status,universal_product_id,barcode,sku,created_at").order("created_at",{ascending:false}).range(from,from+999);
-    if(error)throw error;const page=(data||[]) as VendorProduct[];all.push(...page);if(page.length<1000)break;
-   }
-   setMasters(m.data||[]);setAliases(a.error?[]:a.data||[]);setImages(i.data||[]);setListings(all);
+   setMasters(m.data||[]);setAliases(a.error?[]:a.data||[]);setImages(i.data||[]);setCategories(cat.data||[]);
   }catch(e){setNotice(errorText(e));}finally{setLoading(false);}
  },[]);
  useEffect(()=>{void load();},[load]);
 
  const filteredMasters=useMemo(()=>masters.filter(p=>[p.name,p.brand,p.barcode,p.manufacturer,p.weight].some(v=>(v||"").toLowerCase().includes(query.toLowerCase().trim()))),[masters,query]);
- const filteredListings=useMemo(()=>listings.filter(p=>[p.name,p.barcode,p.sku,p.vendor_id].some(v=>(v||"").toLowerCase().includes(query.toLowerCase().trim()))),[listings,query]);
  const currentAliases=editing?aliases.filter(a=>a.universal_product_id===editing.id):[];
  const currentImages=editing?images.filter(i=>i.universal_product_id===editing.id):[];
 
@@ -148,6 +142,18 @@ export function ProductCatalogue(){
   }catch(e){setNotice(errorText(e));}finally{setBusy(false);}
  }
 
+ async function saveMasterDetails(){
+  if(!editing||!masterForm.name.trim())return;
+  setBusy(true);setNotice("");
+  try{
+   const payload={name:masterForm.name.trim(),brand:masterForm.brand.trim()||null,category_id:masterForm.category_id||null,barcode:masterForm.barcode.trim()||null,manufacturer:masterForm.manufacturer.trim()||null,unit:masterForm.unit.trim()||null,weight:masterForm.weight.trim()||null,description:masterForm.description.trim()||null};
+   const {error}=await supabase.from("universal_products").update(payload).eq("id",editing.id);
+   if(error)throw error;
+   setEditing({...editing,...payload});
+   setNotice("Master product details saved.");await load();
+  }catch(e){setNotice(errorText(e));}finally{setBusy(false);}
+ }
+
  async function saveAliases(){
   if(!editing)return;setBusy(true);setNotice("");
   try{
@@ -202,15 +208,26 @@ export function ProductCatalogue(){
   <header className="flex flex-wrap items-end justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-emerald-700">RivoCity Admin</p><h1 className="mt-1 text-2xl font-bold text-slate-900">Product Catalogue</h1><p className="mt-1 text-sm text-slate-500">Bulk-add shared products. Manage only catalogue aliases and shared images; vendors own pricing, MRP, batch and expiry.</p></div><button onClick={()=>setShowBulk(v=>!v)} className="rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white inline-flex gap-2 items-center"><FileSpreadsheet size={16}/> Bulk add products</button></header>
   {notice&&<div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{notice}</div>}
   {showBulk&&<div className="rounded-xl border bg-white p-4 space-y-3"><div className="flex items-center justify-between"><h2 className="font-bold">Bulk import master products (CSV)</h2><button onClick={()=>setShowBulk(false)}><X size={17}/></button></div><p className="text-xs text-slate-500">Upload the same CSV exported for Vendor Portal. Supports its legacy columns (Vendor Category, Product Category, Subcategory, Variant) and standard Product Name columns. Category, barcode, manufacturer, unit and pack size are mapped where available. Vendor price, MRP, GST, stock, batch and expiry are ignored. After import, open each product to upload its image manually.</p><input type="file" accept=".csv,text/csv,application/vnd.ms-excel" onChange={e=>setBulkFile(e.target.files?.[0]||null)} className="block w-full text-sm"/><div className="flex justify-end"><button disabled={!bulkFile||busy} onClick={()=>void importBulk()} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{busy?"Importing…":"Import CSV"}</button></div></div>}
-  <div className="grid gap-3 sm:grid-cols-3"><div className="rounded-xl border bg-white p-4"><div className="text-xs text-slate-500">Vendor listings</div><div className="text-2xl font-bold">{listings.length}</div></div><div className="rounded-xl border bg-white p-4"><div className="text-xs text-slate-500">Master products</div><div className="text-2xl font-bold">{masters.length}</div></div><div className="rounded-xl border bg-white p-4"><div className="text-xs text-slate-500">Shared images</div><div className="text-2xl font-bold">{images.length}</div></div></div>
-  <div className="rounded-xl border bg-white"><div className="flex gap-2 border-b p-3"><div className="relative flex-1"><Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search product name, barcode, SKU or vendor ID" className="h-10 w-full rounded-lg border pl-9 pr-3 text-sm"/></div><button onClick={()=>void load()} className="rounded-lg border px-3"><RefreshCw size={16}/></button></div>
-   <div className="border-b px-4 py-3"><h2 className="font-bold">Existing vendor product listings ({filteredListings.length})</h2><p className="text-xs text-slate-500">Read-only. Price, MRP, batch, expiry and stock are managed in Vendor Portal.</p></div>
-   {loading?<div className="p-10 text-center text-sm text-slate-500">Loading products…</div>:<div className="divide-y">{filteredListings.map(p=><div key={p.id} className="flex items-center gap-3 p-3"><div className="h-12 w-12 shrink-0 overflow-hidden rounded-lg bg-slate-50">{productImage(p.image_url)&&<img src={productImage(p.image_url)} className="h-full w-full object-contain" alt=""/>}</div><div className="min-w-0 flex-1"><div className="truncate text-sm font-semibold">{p.name}</div><div className="truncate text-xs text-slate-500">Vendor {p.vendor_id} · {p.universal_product_id?"Linked to master":"Not linked"}</div></div><span className="text-xs text-slate-400">{p.sku||p.barcode||""}</span></div>)}</div>}
-  </div>
+  <div className="grid gap-3 sm:grid-cols-2"><div className="rounded-xl border bg-white p-4"><div className="text-xs text-slate-500">Master products</div><div className="text-2xl font-bold">{masters.length}</div></div><div className="rounded-xl border bg-white p-4"><div className="text-xs text-slate-500">Shared images</div><div className="text-2xl font-bold">{images.length}</div></div></div>
+  <div className="rounded-xl border bg-white"><div className="flex gap-2 border-b p-3"><div className="relative flex-1"><Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search master products by name, brand or barcode" className="h-10 w-full rounded-lg border pl-9 pr-3 text-sm"/></div><button onClick={()=>void load()} className="rounded-lg border px-3"><RefreshCw size={16}/></button></div>
   <div className="rounded-xl border bg-white"><div className="border-b px-4 py-3"><h2 className="font-bold">Shared master products ({filteredMasters.length})</h2></div>
-   {loading?<div className="p-8 text-center text-sm text-slate-500">Loading…</div>:filteredMasters.length===0?<div className="p-8 text-center text-sm text-slate-500">No master products found.</div>:<div className="divide-y">{filteredMasters.map(p=><div key={p.id} className="flex items-center gap-3 p-3"><div className="h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-slate-50">{p.image_url?<img src={p.image_url} className="h-full w-full object-contain" alt=""/>:<PackageSearch className="m-4 text-slate-300"/>}</div><div className="min-w-0 flex-1"><div className="font-semibold">{p.name||"Unnamed product"}</div><div className="text-xs text-slate-500">{p.brand||"No brand"} · {aliases.filter(a=>a.universal_product_id===p.id).length} aliases · {images.filter(i=>i.universal_product_id===p.id).length} images</div></div><button onClick={()=>openEdit(p)} className="rounded-lg border px-3 py-2 text-xs font-semibold">Edit aliases & images</button></div>)}</div>}
+   {loading?<div className="p-8 text-center text-sm text-slate-500">Loading…</div>:filteredMasters.length===0?<div className="p-8 text-center text-sm text-slate-500">No master products found.</div>:<div className="divide-y">{filteredMasters.map(p=><div key={p.id} className="flex items-center gap-3 p-3"><div className="h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-slate-50">{p.image_url?<img src={p.image_url} className="h-full w-full object-contain" alt=""/>:<PackageSearch className="m-4 text-slate-300"/>}</div><div className="min-w-0 flex-1"><div className="font-semibold">{p.name||"Unnamed product"}</div><div className="text-xs text-slate-500">{p.brand||"No brand"} · {aliases.filter(a=>a.universal_product_id===p.id).length} aliases · {images.filter(i=>i.universal_product_id===p.id).length} images</div></div><button onClick={()=>openEdit(p)} className="rounded-lg border px-3 py-2 text-xs font-semibold">Edit product</button></div>)}</div>}
   </div>
-  {editing&&<div className="rounded-xl border bg-white p-4 space-y-5"><div className="flex items-start justify-between gap-3"><div><h2 className="font-bold text-lg">Manage catalogue media</h2><p className="text-sm text-slate-500">{editing.name} {editing.weight||""} · {editing.brand||""}</p><p className="text-xs text-slate-500">Only aliases and shared images can be changed here.</p></div><button onClick={()=>setEditing(null)} className="rounded-lg border p-2"><X size={16}/></button></div>
+  {editing&&<div className="rounded-xl border bg-white p-4 space-y-5"><div className="flex items-start justify-between gap-3"><div><h2 className="font-bold text-lg">Edit master product</h2><p className="text-sm text-slate-500">{editing.name} {editing.weight||""} · {editing.brand||""}</p><p className="text-xs text-slate-500">Update shared product details, aliases and images. Vendor pricing and inventory are not stored here.</p></div><button onClick={()=>setEditing(null)} className="rounded-lg border p-2"><X size={16}/></button></div>
+   <section className="space-y-3 border-b pb-4">
+    <h3 className="text-sm font-semibold">Basic product details</h3>
+    <div className="grid gap-3 sm:grid-cols-2">
+     <label className="text-xs font-medium">Product name<input value={masterForm.name} onChange={e=>setMasterForm(v=>({...v,name:e.target.value}))} className="mt-1 w-full rounded-lg border p-2.5 text-sm"/></label>
+     <label className="text-xs font-medium">Brand<input value={masterForm.brand} onChange={e=>setMasterForm(v=>({...v,brand:e.target.value}))} className="mt-1 w-full rounded-lg border p-2.5 text-sm"/></label>
+     <label className="text-xs font-medium">Category<select value={masterForm.category_id} onChange={e=>setMasterForm(v=>({...v,category_id:e.target.value}))} className="mt-1 w-full rounded-lg border p-2.5 text-sm"><option value="">Uncategorized</option>{categories.map(cat=><option key={cat.id} value={cat.id}>{cat.name}</option>)}</select></label>
+     <label className="text-xs font-medium">Barcode<input value={masterForm.barcode} onChange={e=>setMasterForm(v=>({...v,barcode:e.target.value}))} className="mt-1 w-full rounded-lg border p-2.5 text-sm"/></label>
+     <label className="text-xs font-medium">Manufacturer<input value={masterForm.manufacturer} onChange={e=>setMasterForm(v=>({...v,manufacturer:e.target.value}))} className="mt-1 w-full rounded-lg border p-2.5 text-sm"/></label>
+     <label className="text-xs font-medium">Pack size / weight<input value={masterForm.weight} onChange={e=>setMasterForm(v=>({...v,weight:e.target.value}))} className="mt-1 w-full rounded-lg border p-2.5 text-sm"/></label>
+     <label className="text-xs font-medium">Unit<input value={masterForm.unit} onChange={e=>setMasterForm(v=>({...v,unit:e.target.value}))} className="mt-1 w-full rounded-lg border p-2.5 text-sm"/></label>
+    </div>
+    <label className="block text-xs font-medium">Description<textarea rows={2} value={masterForm.description} onChange={e=>setMasterForm(v=>({...v,description:e.target.value}))} className="mt-1 w-full rounded-lg border p-2.5 text-sm"/></label>
+    <div className="flex justify-end"><button disabled={busy||!masterForm.name.trim()} onClick={()=>void saveMasterDetails()} className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"><Save size={15}/> Save product details</button></div>
+   </section>
    <section className="space-y-2"><h3 className="text-sm font-semibold">Aliases / alternate search names</h3><textarea rows={5} value={aliasText} onChange={e=>setAliasText(e.target.value)} placeholder={"Tata Namak 1kg\nTata Salt 1kg\nटाटा नमक 1 किलो"} className="w-full rounded-lg border p-3 text-sm"/><p className="text-xs text-slate-500">One alias per line. Existing aliases are loaded automatically.</p><div className="flex justify-end"><button disabled={busy} onClick={()=>void saveAliases()} className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white"><Save size={15}/> Save aliases</button></div></section>
    <section className="space-y-3 border-t pt-4"><div><h3 className="text-sm font-semibold">Shared product images</h3><p className="text-xs text-slate-500">Upload multiple images. Choose which image is primary for the shared catalogue.</p></div>
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">{currentImages.map(image=><div key={image.id} className="overflow-hidden rounded-xl border"><div className="aspect-square bg-slate-50"><img src={image.image_url} alt="" className="h-full w-full object-contain"/></div><div className="flex items-center justify-between gap-2 p-2"><span className="text-xs">{image.is_primary?"Primary":"Gallery image"}</span><button disabled={busy||image.is_primary} onClick={()=>void setPrimary(image)} title="Set as primary" className="rounded-md border p-1.5 disabled:opacity-40"><Star size={14} fill={image.is_primary?"currentColor":"none"}/></button></div></div>)}</div>
