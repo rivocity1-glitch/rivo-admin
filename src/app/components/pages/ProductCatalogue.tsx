@@ -3,7 +3,7 @@ import { PackageSearch, RefreshCw, Search, Upload, Save, ImagePlus, Star, X, Fil
 import { supabase } from "../../../lib/supabase";
 
 type MasterProduct = { id:string; name:string|null; brand:string|null; category_id:string|null; barcode:string|null; manufacturer:string|null; unit:string|null; weight:string|null; image_url:string|null; status:string|null };
-type VendorProduct = { id:string; name:string; vendor_id:string; price:number; stock:number|null; image_url:string|null; status:string|null; universal_product_id:string|null; barcode:string|null; sku:string|null; created_at:string|null };
+type Category = {id:string;name:string};
 type Alias = { id:string; universal_product_id:string; alias:string };
 type MasterImage = { id:string; universal_product_id:string; image_url:string; is_primary:boolean; source:string };
 
@@ -74,6 +74,7 @@ export function ProductCatalogue(){
     supabase.from("universal_products").select("id,name,brand,category_id,barcode,manufacturer,unit,weight,image_url,status").order("name"),
     supabase.from("universal_product_aliases").select("id,universal_product_id,alias").order("alias"),
     supabase.from("universal_product_images").select("id,universal_product_id,image_url,is_primary,source").order("created_at")
+    ,supabase.from("product_categories").select("id,name").order("name")
    ]);
    if(m.error)throw m.error;if(i.error)throw i.error;if(cat.error)throw cat.error;
    const aliasTableMissing=!!a.error&&(a.error.code==="42P01"||a.error.code==="PGRST205"||a.error.message?.toLowerCase().includes("not found"));
