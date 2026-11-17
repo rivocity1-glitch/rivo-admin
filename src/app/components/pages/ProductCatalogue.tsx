@@ -36,11 +36,11 @@ const csvRows=(text:string)=>{
  if(quoted)throw new Error("CSV contains an unclosed quotation mark. Re-save it as CSV UTF-8 and try again.");
  row.push(cell.trim());if(row.some(v=>v.trim()))rows.push(row);
  if(rows.length<2)throw new Error("CSV must contain a header row and at least one product row.");
- const normalize=(value:string)=>value.replace(/^\uFEFF/,"").trim().toLowerCase().replace(/[\s-]+/g,"_");
+ const normalize=(value:string)=>value.replace(/^\uFEFF/,"").trim().toLowerCase().replace(/\([^)]*\)/g,"").replace(/[＊*]/g,"").replace(/[^a-z0-9]+/g,"_").replace(/^_+|_+$/g,"");
  const headers=rows[0].map(normalize);
- const aliases:Record<string,string>={"product":"name","product_name":"name","productname":"name","category":"category_id","category_name":"category_id","pack_size":"weight","size":"weight","barcode_ean":"barcode","brand_name":"brand"};
+ const aliases:Record<string,string>={"product":"name","product_name":"name","productname":"name","product_title":"name","item":"name","item_name":"name","itemname":"name","item_description":"name","name_of_product":"name","product_name_required":"name","category":"category_id","category_name":"category_id","product_category":"category_id","pack_size":"weight","size":"weight","barcode_ean":"barcode","ean":"barcode","brand_name":"brand","manufacturer_name":"manufacturer","unit_of_measure":"unit"};
  const keys=headers.map(h=>aliases[h]||h);
- if(!keys.includes("name"))throw new Error("Missing required 'name' column. Use the CSV template or rename your product column to name.");
+ if(!keys.includes("name"))throw new Error("Missing product-name column. Detected headers: "+(headers.filter(Boolean).join(", ")||"(none)")+". Rename it to name, product_name, Product Name, item_name or item.");
  return rows.slice(1).map((values,index)=>{
   const record:Record<string,string>={};
   keys.forEach((key,i)=>{if(key)record[key]=(values[i]||"").trim();});
@@ -73,13 +73,16 @@ export function ProductCatalogue(){
     supabase.from("universal_product_aliases").select("id,universal_product_id,alias").order("alias"),
     supabase.from("universal_product_images").select("id,universal_product_id,image_url,is_primary,source").order("created_at")
    ]);
-   if(m.error)throw m.error;if(a.error)throw a.error;if(i.error)throw i.error;
+   if(m.error)throw m.error;if(i.error)throw i.error;
+   const aliasTableMissing=!!a.error&&(a.error.code==="42P01"||a.error.code==="PGRST205"||a.error.message?.toLowerCase().includes("not found"));
+   if(a.error&&!aliasTableMissing)throw a.error;
+   if(aliasTableMissing)setNotice("Catalogue loaded, but aliases are unavailable: apply supabase/migrations/202611170001_universal_product_aliases.sql in Supabase SQL Editor.");
    const all:VendorProduct[]=[];
    for(let from=0;;from+=1000){
     const {data,error}=await supabase.from("products").select("id,name,vendor_id,price,stock,image_url,status,universal_product_id,barcode,sku,created_at").order("created_at",{ascending:false}).range(from,from+999);
     if(error)throw error;const page=(data||[]) as VendorProduct[];all.push(...page);if(page.length<1000)break;
    }
-   setMasters(m.data||[]);setAliases(a.data||[]);setImages(i.data||[]);setListings(all);
+   setMasters(m.data||[]);setAliases(a.error?[]:a.data||[]);setImages(i.data||[]);setListings(all);
   }catch(e){setNotice(errorText(e));}finally{setLoading(false);}
  },[]);
  useEffect(()=>{void load();},[load]);
