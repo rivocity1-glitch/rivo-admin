@@ -65,6 +65,8 @@ export function ProductCatalogue(){
  const [files,setFiles]=useState<File[]>([]);
  const [bulkFile,setBulkFile]=useState<File|null>(null);
  const [showBulk,setShowBulk]=useState(false);
+ const [categories,setCategories]=useState<Category[]>([]);
+ const [masterForm,setMasterForm]=useState({name:"",brand:"",category_id:"",barcode:"",manufacturer:"",weight:"",unit:"",description:""});
 
  const load=useCallback(async()=>{
   setLoading(true);setNotice("");
@@ -88,7 +90,7 @@ export function ProductCatalogue(){
  const currentAliases=editing?aliases.filter(a=>a.universal_product_id===editing.id):[];
  const currentImages=editing?images.filter(i=>i.universal_product_id===editing.id):[];
 
- function openEdit(p:MasterProduct){setEditing(p);setAliasText(aliases.filter(a=>a.universal_product_id===p.id).map(a=>a.alias).join("\n"));setFiles([]);setNotice("");}
+ function openEdit(p:MasterProduct){setEditing(p);setMasterForm({name:p.name||"",brand:p.brand||"",category_id:p.category_id||"",barcode:p.barcode||"",manufacturer:p.manufacturer||"",weight:p.weight||"",unit:p.unit||"",description:p.description||""});setAliasText(aliases.filter(a=>a.universal_product_id===p.id).map(a=>a.alias).join("\n"));setFiles([]);setNotice("");}
 
  async function importBulk(){
   if(!bulkFile)return;setBusy(true);setNotice("");
