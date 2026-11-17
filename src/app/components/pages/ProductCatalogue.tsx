@@ -14,18 +14,40 @@ const productImage=(value:string|null)=>{
  return value;
 };
 const csvRows=(text:string)=>{
+ const source=text.replace(/^\\uFEFF/, "").replace(/\\u0000/g, "");
+ if(!source.trim())throw new Error("The selected CSV file is empty.");
+ // Detect comma, semicolon or tab separators from the first non-empty record.
+ const firstLine=source.split(/\\r?\\n/).find(line=>line.trim())||"";
+ const counts=[",",";","\\t"].map(delimiter=>{
+  let quoted=false,count=0;
+  for(let i=0;i<firstLine.length;i++){const ch=firstLine[i];if(ch==='"'&&firstLine[i+1]==='"'&&quoted){i++;continue;}if(ch==='"')quoted=!quoted;else if(ch===delimiter&&!quoted)count++;}
+  return count;
+ });
+ const delimiter=[",",";","\\t"][counts.indexOf(Math.max(...counts))];
  const rows:string[][]=[];let row:string[]=[];let cell="";let quoted=false;
- for(let i=0;i<text.length;i++){const ch=text[i],next=text[i+1];
+ for(let i=0;i<source.length;i++){
+  const ch=source[i],next=source[i+1];
   if(ch==='"'&&quoted&&next==='"'){cell+='"';i++;}
   else if(ch==='"'){quoted=!quoted;}
-  else if(ch===","&&!quoted){row.push(cell.trim());cell="";}
-  else if((ch==="\n"||ch==="\r")&&!quoted){if(ch==="\r"&&next==="\n")i++;row.push(cell.trim());if(row.some(v=>v))rows.push(row);row=[];cell="";}
+  else if(ch===delimiter&&!quoted){row.push(cell.trim());cell="";}
+  else if((ch==="\\n"||ch==="\\r")&&!quoted){if(ch==="\\r"&&next==="\\n")i++;row.push(cell.trim());if(row.some(v=>v.trim()))rows.push(row);row=[];cell="";}
   else cell+=ch;
  }
- row.push(cell.trim());if(row.some(v=>v))rows.push(row);
- if(!rows.length)return [];
- const headers=rows[0].map(v=>v.toLowerCase().replace(/^\uFEFF/,"").trim());
- return rows.slice(1).map(values=>Object.fromEntries(headers.map((h,i)=>[h,values[i]||""])));
+ if(quoted)throw new Error("CSV contains an unclosed quotation mark. Re-save it as CSV UTF-8 and try again.");
+ row.push(cell.trim());if(row.some(v=>v.trim()))rows.push(row);
+ if(rows.length<2)throw new Error("CSV must contain a header row and at least one product row.");
+ const normalize=(value:string)=>value.replace(/^\\uFEFF/,"").trim().toLowerCase().replace(/[\\s-]+/g,"_");
+ const headers=rows[0].map(normalize);
+ const aliases:Record<string,string>={"product":"name","product_name":"name","productname":"name","category":"category_id","category_name":"category_id","pack_size":"weight","size":"weight","barcode_ean":"barcode","brand_name":"brand"};
+ const keys=headers.map(h=>aliases[h]||h);
+ if(!keys.includes("name"))throw new Error("Missing required 'name' column. Use the CSV template or rename your product column to name.");
+ return rows.slice(1).map((values,index)=>{
+  const record:Record<string,string>={};
+  keys.forEach((key,i)=>{if(key)record[key]=(values[i]||"").trim();});
+  if(!Object.values(record).some(v=>v))return null;
+  (record as any).__row=index+2;
+  return record;
+ }).filter(Boolean) as (Record<string,string>&{__row:number})[];
 };
 
 export function ProductCatalogue(){
@@ -72,23 +94,44 @@ export function ProductCatalogue(){
  async function importBulk(){
   if(!bulkFile)return;setBusy(true);setNotice("");
   try{
+   if(!/\\.csv$/i.test(bulkFile.name)&&bulkFile.type!=="text/csv"&&bulkFile.type!=="application/vnd.ms-excel")throw new Error("Please select a .csv file.");
    const records=csvRows(await bulkFile.text());
-   if(!records.length)throw new Error("CSV is empty or has no data rows.");
-   const allowed=["name","brand","category_id","barcode","manufacturer","unit","weight","status","description"];
-   const missing=records.filter(r=>!String(r.name||"").trim()).length;
-   if(missing)throw new Error(`${missing} row(s) have no name. Add a name column and value for every product.`);
-   const existingKeys=new Set(masters.map(p=>p.barcode? `barcode:${p.barcode.toLowerCase()}`:`name:${(p.name||"").toLowerCase()}|brand:${(p.brand||"").toLowerCase()}|weight:${(p.weight||"").toLowerCase()}`));
-   const seen=new Set<string>();const payload=records.map(r=>{
-    const p:any={name:String(r.name).trim(),brand:String(r.brand||"").trim()||null,category_id:String(r.category_id||"").trim()||null,barcode:String(r.barcode||"").trim()||null,manufacturer:String(r.manufacturer||"").trim()||null,unit:String(r.unit||"").trim()||null,weight:String(r.weight||"").trim()||null,status:String(r.status||"active").trim()||"active"};
+   const missing=records.filter(r=>!String(r.name||"").trim());
+   if(missing.length)throw new Error(`Missing product name in CSV row(s): ${missing.slice(0,10).map(r=>r.__row).join(", ")}${missing.length>10?"…":""}.`);
+   const allowed=["name","brand","category_id","barcode","manufacturer","unit","weight","status","description","__row"];
+   const unknown=[...new Set(records.flatMap(r=>Object.keys(r).filter(k=>!allowed.includes(k))))];
+   if(unknown.length)throw new Error(`Unsupported CSV column(s): ${unknown.join(", ")}. Use name, brand, category_id (or category), barcode, manufacturer, unit, weight, status, description.`);
+
+   // Accept either a category UUID or an existing category name.
+   const {data:categoryRows,error:categoryError}=await supabase.from("product_categories").select("id,name");
+   if(categoryError)throw new Error(`Could not validate categories: ${categoryError.message}`);
+   const categoryByName=new Map((categoryRows||[]).map((v:any)=>[String(v.name).trim().toLowerCase(),v.id]));
+   const categoryIds=new Set((categoryRows||[]).map((v:any)=>String(v.id)));
+   const invalidCategories:string[]=[];
+   const payload=records.map(r=>{
+    const categoryValue=String(r.category_id||"").trim();
+    let categoryId:string|null=null;
+    if(categoryValue){
+     categoryId=categoryIds.has(categoryValue)?categoryValue:categoryByName.get(categoryValue.toLowerCase())||null;
+     if(!categoryId)invalidCategories.push(`row ${r.__row}: ${categoryValue}`);
+    }
+    const p:any={name:String(r.name).trim(),brand:String(r.brand||"").trim()||null,category_id:categoryId,barcode:String(r.barcode||"").trim()||null,manufacturer:String(r.manufacturer||"").trim()||null,unit:String(r.unit||"").trim()||null,weight:String(r.weight||"").trim()||null,status:String(r.status||"active").trim()||"active"};
     if(r.description)p.description=String(r.description).trim();
     return p;
    });
+   if(invalidCategories.length)throw new Error(`Category not found. Use an existing category name or category UUID: ${invalidCategories.slice(0,8).join("; ")}.`);
+
+   const existingKeys=new Set(masters.map(p=>p.barcode?`barcode:${p.barcode.trim().toLowerCase()}`:`name:${(p.name||"").trim().toLowerCase()}|brand:${(p.brand||"").trim().toLowerCase()}|weight:${(p.weight||"").trim().toLowerCase()}`));
+   const seen=new Set<string>();
    const unique=payload.filter(p=>{
     const key=p.barcode?`barcode:${p.barcode.toLowerCase()}`:`name:${p.name.toLowerCase()}|brand:${(p.brand||"").toLowerCase()}|weight:${(p.weight||"").toLowerCase()}`;
     if(existingKeys.has(key)||seen.has(key))return false;seen.add(key);return true;
    });
-   if(!unique.length)throw new Error("No new products to import. All rows already match existing products by barcode or name + brand + pack size.");
-   for(let i=0;i<unique.length;i+=200){const {error}=await supabase.from("universal_products").insert(unique.slice(i,i+200));if(error)throw error;}
+   if(!unique.length)throw new Error("No new products to import. All rows appear to match existing products by barcode or name + brand + pack size.");
+   for(let i=0;i<unique.length;i+=100){
+    const {error}=await supabase.from("universal_products").insert(unique.slice(i,i+100));
+    if(error)throw new Error(`Import stopped at batch ${Math.floor(i/100)+1}: ${error.message}`);
+   }
    setNotice(`Imported ${unique.length} master products. Skipped ${payload.length-unique.length} possible duplicates.`);
    setBulkFile(null);setShowBulk(false);await load();
   }catch(e){setNotice(errorText(e));}finally{setBusy(false);}
@@ -136,7 +179,7 @@ export function ProductCatalogue(){
  return <section className="space-y-5">
   <header className="flex flex-wrap items-end justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-emerald-700">RivoCity Admin</p><h1 className="mt-1 text-2xl font-bold text-slate-900">Product Catalogue</h1><p className="mt-1 text-sm text-slate-500">Bulk-add shared products. Manage only catalogue aliases and shared images; vendors own pricing, MRP, batch and expiry.</p></div><button onClick={()=>setShowBulk(v=>!v)} className="rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white inline-flex gap-2 items-center"><FileSpreadsheet size={16}/> Bulk add products</button></header>
   {notice&&<div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{notice}</div>}
-  {showBulk&&<div className="rounded-xl border bg-white p-4 space-y-3"><div className="flex items-center justify-between"><h2 className="font-bold">Bulk import master products (CSV)</h2><button onClick={()=>setShowBulk(false)}><X size={17}/></button></div><p className="text-xs text-slate-500">Required column: <b>name</b>. Optional columns: brand, category_id, barcode, manufacturer, unit, weight, status, description. No vendor pricing or inventory fields are imported.</p><input type="file" accept=".csv,text/csv" onChange={e=>setBulkFile(e.target.files?.[0]||null)} className="block w-full text-sm"/><div className="flex justify-end"><button disabled={!bulkFile||busy} onClick={()=>void importBulk()} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{busy?"Importing…":"Import CSV"}</button></div></div>}
+  {showBulk&&<div className="rounded-xl border bg-white p-4 space-y-3"><div className="flex items-center justify-between"><h2 className="font-bold">Bulk import master products (CSV)</h2><button onClick={()=>setShowBulk(false)}><X size={17}/></button></div><p className="text-xs text-slate-500">Required column: <b>name</b>. Optional: brand, category_id (UUID or existing category name), barcode, manufacturer, unit, weight, status, description. Supports comma, semicolon and tab-delimited CSV, including quoted values. Vendor prices and inventory fields are ignored/not imported.</p><a className="inline-block text-sm font-semibold text-emerald-700 underline" href={"data:text/csv;charset=utf-8,"+encodeURIComponent("name,brand,category_id,barcode,manufacturer,unit,weight,status,description\\nTata Salt,Tata,,890000000001,Example Manufacturer,kg,1 kg,active,Common salt") } download="rivocity-master-products-template.csv">Download CSV template</a><input type="file" accept=".csv,text/csv,application/vnd.ms-excel" onChange={e=>setBulkFile(e.target.files?.[0]||null)} className="block w-full text-sm"/><div className="flex justify-end"><button disabled={!bulkFile||busy} onClick={()=>void importBulk()} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{busy?"Importing…":"Import CSV"}</button></div></div>}
   <div className="grid gap-3 sm:grid-cols-3"><div className="rounded-xl border bg-white p-4"><div className="text-xs text-slate-500">Vendor listings</div><div className="text-2xl font-bold">{listings.length}</div></div><div className="rounded-xl border bg-white p-4"><div className="text-xs text-slate-500">Master products</div><div className="text-2xl font-bold">{masters.length}</div></div><div className="rounded-xl border bg-white p-4"><div className="text-xs text-slate-500">Shared images</div><div className="text-2xl font-bold">{images.length}</div></div></div>
   <div className="rounded-xl border bg-white"><div className="flex gap-2 border-b p-3"><div className="relative flex-1"><Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search product name, barcode, SKU or vendor ID" className="h-10 w-full rounded-lg border pl-9 pr-3 text-sm"/></div><button onClick={()=>void load()} className="rounded-lg border px-3"><RefreshCw size={16}/></button></div>
    <div className="border-b px-4 py-3"><h2 className="font-bold">Existing vendor product listings ({filteredListings.length})</h2><p className="text-xs text-slate-500">Read-only. Price, MRP, batch, expiry and stock are managed in Vendor Portal.</p></div>
