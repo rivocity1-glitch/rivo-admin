@@ -78,7 +78,6 @@ export function ProductCatalogue(){
 
  const filteredMasters=useMemo(()=>masters.filter(p=>[p.name,p.brand,p.barcode,p.manufacturer,p.weight].some(v=>(v||"").toLowerCase().includes(query.toLowerCase().trim()))),[masters,query]);
  const currentAliases=editing?aliases.filter(a=>a.universal_product_id===editing.id):[];
- const currentImages=editing?images.filter(i=>i.universal_product_id===editing.id):[];
 
  function openEdit(p:MasterProduct){setEditing(p);setMasterForm({name:p.name||"",brand:p.brand||"",category_id:p.category_id||"",barcode:p.barcode||"",manufacturer:p.manufacturer||"",weight:p.weight||"",unit:p.unit||"",description:p.description||""});setAliasText(aliases.filter(a=>a.universal_product_id===p.id).map(a=>a.alias).join("\n"));setNotice("");}
 
