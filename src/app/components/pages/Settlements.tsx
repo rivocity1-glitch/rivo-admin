@@ -578,12 +578,17 @@ export function Settlements() {
 
   const getLedgerCustomerName = (item: LedgerEntry) => {
     const order = item.reference_id ? orderMap.get(item.reference_id) : undefined;
+    const directCustomerId = String(item.entity_type || "").toLowerCase() === "customer"
+      ? item.entity_id
+      : null;
     const metadataCustomerId = item.metadata?.customer_id;
     if (order) return getCustomerName(order);
-    if (metadataCustomerId) {
-      const customer = customerMap.get(String(metadataCustomerId));
+    const customerId = directCustomerId || metadataCustomerId;
+    if (customerId) {
+      const customer = customerMap.get(String(customerId));
       return customer?.full_name || customer?.customer_name || customer?.name ||
-        customer?.phone || "Customer";
+        [customer?.first_name, customer?.last_name].filter(Boolean).join(" ") ||
+        customer?.phone || customer?.mobile_number || "Customer";
     }
     return "—";
   };
