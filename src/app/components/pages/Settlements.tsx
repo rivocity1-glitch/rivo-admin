@@ -2783,7 +2783,7 @@ export function Settlements() {
 
                 <div>
                   <label className="block text-[10px] font-black uppercase tracking-wider text-slate-500 mb-1.5">
-                    Remarks
+                    Message to Vendor
                   </label>
 
                   <div className="flex flex-wrap gap-2 mb-2">
@@ -2806,6 +2806,12 @@ export function Settlements() {
                     placeholder="Optional message to vendor. Select a quick message above or write your own."
                     className="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-xs outline-none focus:border-[#10B981] resize-none"
                   />
+                  {selectedType === "vendor" && (
+                    <label className="mt-3 flex items-center gap-2 text-xs text-slate-600">
+                      <input type="checkbox" checked={notifyVendorOnPayment} onChange={(e) => setNotifyVendorOnPayment(e.target.checked)} className="accent-emerald-600" />
+                      Send this payout update to the Vendor Portal notifications
+                    </label>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-3 pt-2">
