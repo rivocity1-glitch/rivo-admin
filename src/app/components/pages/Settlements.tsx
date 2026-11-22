@@ -637,6 +637,34 @@ export function Settlements() {
     );
   }, [orders, riderPayoutEligibleOrderIds, startDate, endDate]);
 
+  const vendorEarningsSummary = useMemo(() => {
+    const summaries = new Map<string, {
+      vendorId: string;
+      orders: number;
+      totalEarnings: number;
+      pendingEarnings: number;
+      settledEarnings: number;
+    }>();
+    orders.forEach((order) => {
+      if (!order.vendor_id || String(order.order_status || "").toLowerCase() !== "delivered") return;
+      if ((startDate || endDate) && !isWithinSelectedRange(order.delivered_at || order.created_at)) return;
+      const current = summaries.get(order.vendor_id) || {
+        vendorId: order.vendor_id,
+        orders: 0,
+        totalEarnings: 0,
+        pendingEarnings: 0,
+        settledEarnings: 0,
+      };
+      const earning = getVendorEarning(order);
+      current.orders += 1;
+      current.totalEarnings += earning;
+      if (order.settled_vendor) current.settledEarnings += earning;
+      else current.pendingEarnings += earning;
+      summaries.set(order.vendor_id, current);
+    });
+    return Array.from(summaries.values()).sort((a, b) => b.pendingEarnings - a.pendingEarnings);
+  }, [orders, startDate, endDate]);
+
   const filteredOrders = useMemo(() => {
     const search = globalSearch.trim().toLowerCase();
 
@@ -984,6 +1012,65 @@ export function Settlements() {
     setFormRemarks("");
     setFormPaymentMethod("Bank Transfer");
     setPayModalOpen(true);
+  };
+
+  const startVendorPayout = async (vendorId: string) => {
+    const pendingOrders = orders.filter((order) =>
+      order.vendor_id === vendorId &&
+      String(order.order_status || "").toLowerCase() === "delivered" &&
+      !order.settled_vendor &&
+      (!(startDate || endDate) || isWithinSelectedRange(order.delivered_at || order.created_at))
+    );
+    const orderIds = pendingOrders.map((order) => order.id).sort();
+    const amount = pendingOrders.reduce((sum, order) => sum + getVendorEarning(order), 0);
+    if (!orderIds.length || amount <= 0) {
+      showToast("This vendor has no unpaid delivered-order earnings in the selected period.", "error");
+      return;
+    }
+
+    const openSettlement = vendorSettlements.find((settlement) => {
+      if (settlement.vendor_id !== vendorId ||
+        !["AVAILABLE", "PENDING", "REQUESTED", "PENDING_REQUEST"].includes(normalizeStatus(settlement.status))) return false;
+      const existingOrderIds = Array.isArray(settlement.order_ids)
+        ? settlement.order_ids.map(String).sort()
+        : [];
+      return existingOrderIds.length === orderIds.length &&
+        existingOrderIds.every((id, index) => id === orderIds[index]);
+    });
+
+    setActionLoading(true);
+    try {
+      let settlement: VendorSettlement;
+      if (openSettlement) {
+        settlement = openSettlement;
+      } else {
+        const { data, error } = await supabase
+          .from("vendor_settlements")
+          .insert({
+            vendor_id: vendorId,
+            amount,
+            order_ids: orderIds,
+            order_count: orderIds.length,
+            status: "AVAILABLE",
+          })
+          .select("*")
+          .single();
+        if (error) throw error;
+        settlement = data as VendorSettlement;
+      }
+      setSelectedType("vendor");
+      setSelectedSettlement(settlement);
+      setFormUtr("");
+      setFormRemarks("");
+      setFormPaymentMethod("Bank Transfer");
+      setPayModalOpen(true);
+      await loadData(false);
+    } catch (error: any) {
+      console.error("Unable to start vendor payout:", error);
+      showToast(error?.message || "Could not prepare vendor payout.", "error");
+    } finally {
+      setActionLoading(false);
+    }
   };
 
   const startRiderPayout = async (riderId: string) => {
@@ -1819,6 +1906,33 @@ export function Settlements() {
             </span>
           </div>
 
+          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+            <div className="p-4 border-b border-gray-100">
+              <h3 className="text-xs font-black uppercase tracking-wider text-slate-700">Vendor Earnings & Pending Payouts</h3>
+              <p className="mt-1 text-[10px] text-slate-400">Calculated from delivered orders. Pay a vendor to create a settlement containing its unpaid orders.</p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead><tr className="bg-gray-50 text-[10px] font-black uppercase text-slate-400">
+                  <th className="p-3">Vendor</th><th className="p-3">Orders</th><th className="p-3 text-right">Total Earned</th><th className="p-3 text-right">To Pay</th><th className="p-3 text-right">Already Settled</th><th className="p-3 text-right">Action</th>
+                </tr></thead>
+                <tbody className="divide-y divide-gray-100">
+                  {vendorEarningsSummary.map((summary) => {
+                    const vendor = vendorMap.get(summary.vendorId);
+                    return <tr key={summary.vendorId} className="hover:bg-gray-50">
+                      <td className="p-3"><div className="text-xs font-bold">{vendor?.shop_name || vendor?.owner_name || "Unknown Vendor"}</div><div className="mt-1 text-[9px] font-mono text-slate-400">{summary.vendorId}</div></td>
+                      <td className="p-3 text-xs">{summary.orders}</td>
+                      <td className="p-3 text-right text-xs font-bold">{money(summary.totalEarnings)}</td>
+                      <td className="p-3 text-right text-xs font-black text-amber-600">{money(summary.pendingEarnings)}</td>
+                      <td className="p-3 text-right text-xs font-bold text-emerald-600">{money(summary.settledEarnings)}</td>
+                      <td className="p-3 text-right">{summary.pendingEarnings > 0 ? <button type="button" onClick={() => startVendorPayout(summary.vendorId)} disabled={actionLoading} className="rounded-lg bg-[#10B981] px-3 py-2 text-[10px] font-black text-white hover:bg-[#059669] disabled:opacity-50">Pay Vendor</button> : <span className="text-[10px] text-slate-400">Up to date</span>}</td>
+                    </tr>;
+                  })}
+                  {vendorEarningsSummary.length === 0 && <tr><td colSpan={6} className="p-6 text-center text-xs text-slate-400">No delivered vendor earnings in the selected period.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
           {renderSettlementTable(
             vendorRows,
             "vendor"
