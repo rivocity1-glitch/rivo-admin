@@ -672,7 +672,7 @@ export function Dashboard() {
           <div className="flex items-start justify-between relative z-10">
             <div>
               <p className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1">
-                <Zap className="w-3 h-3 text-emerald-400 fill-emerald-400" /> Today's Rivo Earnings
+                <Zap className="w-3 h-3 text-emerald-400 fill-emerald-400" /> Rivo Earnings
               </p>
               <h3 className="text-2xl font-black text-white mt-1 tracking-tight">
                 {kpiLoading ? <div className="h-7 w-20 bg-slate-700 animate-pulse rounded-lg mt-1"/> : <AnimatedCounter value={metrics.todayEarnings} isCurrency />}
@@ -683,7 +683,7 @@ export function Dashboard() {
             </div>
           </div>
           <p className="text-[11px] text-slate-300 mt-3 font-medium relative z-10">
-            Platform Fee + Delivery Margin + Commission
+            Platform Fee + Delivery Margin + Commission for selected period
           </p>
         </div>
       </div>
