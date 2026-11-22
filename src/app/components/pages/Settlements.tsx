@@ -1078,7 +1078,8 @@ export function Settlements() {
       (order) =>
         order.rider_id === riderId &&
         riderPayoutEligibleOrderIds.has(order.id) &&
-        !order.settled_rider
+        !order.settled_rider &&
+        (!(startDate || endDate) || isWithinSelectedRange(order.delivered_at || order.created_at))
     );
     const orderIds = pendingOrders.map((order) => order.id).sort();
     const amount = pendingOrders.reduce(
