@@ -187,7 +187,6 @@ export function ProductCatalogue(){
     <div className="flex justify-end"><button disabled={busy||!masterForm.name.trim()} onClick={()=>void saveMasterDetails()} className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"><Save size={15}/> Save product details</button></div>
    </section>
    <section className="space-y-2"><h3 className="text-sm font-semibold">Aliases / alternate search names</h3><textarea rows={5} value={aliasText} onChange={e=>setAliasText(e.target.value)} placeholder={"Tata Namak 1kg\nTata Salt 1kg\nटाटा नमक 1 किलो"} className="w-full rounded-lg border p-3 text-sm"/><p className="text-xs text-slate-500">One alias per line. Existing aliases are loaded automatically.</p><div className="flex justify-end"><button disabled={busy} onClick={()=>void saveAliases()} className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white"><Save size={15}/> Save aliases</button></div></section>
-   </section>
   </div>}
  </section>;
 }
