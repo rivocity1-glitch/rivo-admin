@@ -674,7 +674,8 @@ export function Settlements() {
         item.entity_type?.toLowerCase().includes(search) ||
         customerName.includes(search);
       const matchesEntity = ledgerEntityFilter === "all" ||
-        String(item.entity_type || "").toLowerCase() === ledgerEntityFilter;
+        String(item.entity_type || "").toLowerCase() === ledgerEntityFilter ||
+        (ledgerEntityFilter === "customer" && customerName !== "—");
       const matchesEntry = ledgerEntryFilter === "all" ||
         String(item.entry_type || "").toLowerCase() === ledgerEntryFilter;
       const matchesTransaction = ledgerTransactionFilter === "all" ||
@@ -1749,7 +1750,7 @@ export function Settlements() {
                 </thead>
 
                 <tbody className="divide-y divide-gray-100">
-                  {ledger.slice(0, 10).map(
+                  {filteredLedger.slice(0, 10).map(
                     (item) => (
                       <tr
                         key={item.id}
@@ -1761,8 +1762,9 @@ export function Settlements() {
                           )}
                         </td>
 
-                        <td className="p-3 text-xs font-bold capitalize">
-                          {item.entity_type}
+                        <td className="p-3">
+                          <div className="text-xs font-bold capitalize">{item.entity_type === "platform" ? "Rivo Platform" : item.entity_type}</div>
+                          <div className="text-[10px] text-slate-500 mt-0.5">{item.entity_type === "vendor" ? (vendorMap.get(item.entity_id || "")?.shop_name || "Vendor") : item.entity_type === "rider" ? (riderMap.get(item.entity_id || "")?.rider_name || "Rider") : (getLedgerCustomerName(item) !== "—" ? getLedgerCustomerName(item) : "—")}</div>
                         </td>
 
                         <td className="p-3 text-xs">
