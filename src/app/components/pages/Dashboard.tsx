@@ -212,29 +212,15 @@ export function Dashboard() {
       setKpiLoading(true);
       const { startIso, endIso } = getDateRangeBounds();
       
-      const todayStart = new Date();
-      todayStart.setHours(0, 0, 0, 0);
-      const todayEnd = new Date();
-      todayEnd.setHours(23, 59, 59, 999);
-
-      // Delivered orders within range and today based on delivered_at
-      const [rangeOrdersRes, todayOrdersRes] = await Promise.all([
-        supabase
-          .from("orders")
-          .select("platform_fee, rivo_delivery_margin, vendor_commission, order_status")
-          .eq("order_status", "delivered")
-          .gte("delivered_at", startIso)
-          .lte("delivered_at", endIso),
-        supabase
-          .from("orders")
-          .select("platform_fee, rivo_delivery_margin, vendor_commission")
-          .eq("order_status", "delivered")
-          .gte("delivered_at", todayStart.toISOString())
-          .lte("delivered_at", todayEnd.toISOString())
-      ]);
+      // All KPI cards use the same selected date range and delivered_at boundary.
+      const rangeOrdersRes = await supabase
+        .from("orders")
+        .select("platform_fee, rivo_delivery_margin, vendor_commission, order_status")
+        .eq("order_status", "delivered")
+        .gte("delivered_at", startIso)
+        .lte("delivered_at", endIso);
 
       const deliveredOrders = rangeOrdersRes.data || [];
-      const todayDelivered = todayOrdersRes.data || [];
 
       if (deliveredOrders.length === 0) {
         setMetrics({
@@ -251,16 +237,12 @@ export function Dashboard() {
       const totalMargin = deliveredOrders.reduce((s, o) => s + Number(o.rivo_delivery_margin || 0), 0);
       const totalComm = deliveredOrders.reduce((s, o) => s + Number(o.vendor_commission || 0), 0);
 
-      const todayFee = todayDelivered.reduce((s, o) => s + Number(o.platform_fee || 0), 0);
-      const todayMargin = todayDelivered.reduce((s, o) => s + Number(o.rivo_delivery_margin || 0), 0);
-      const todayComm = todayDelivered.reduce((s, o) => s + Number(o.vendor_commission || 0), 0);
-
       setMetrics({
         totalOrders: deliveredOrders.length,
         platformFee: totalFee,
         deliveryMargin: totalMargin,
         vendorCommission: totalComm,
-        todayEarnings: todayFee + todayMargin + todayComm
+        todayEarnings: totalFee + totalMargin + totalComm
       });
     } catch (err) {
       console.error("Error fetching KPI metrics:", err);
@@ -647,7 +629,7 @@ export function Dashboard() {
               <IndianRupee className="w-4 h-4" />
             </div>
           </div>
-          <p className="text-[11px] text-slate-400 mt-3 font-semibold">Platform charges total</p>
+          <p className="text-[11px] text-slate-400 mt-3 font-semibold">Platform charges in selected period</p>
         </div>
 
         {/* 3. Delivery Margin */}
@@ -663,7 +645,7 @@ export function Dashboard() {
               <Truck className="w-4 h-4" />
             </div>
           </div>
-          <p className="text-[11px] text-slate-400 mt-3 font-semibold">Delivery yield margin</p>
+          <p className="text-[11px] text-slate-400 mt-3 font-semibold">Delivery margin in selected period</p>
         </div>
 
         {/* 4. Vendor Commission */}
@@ -679,10 +661,10 @@ export function Dashboard() {
               <Coins className="w-4 h-4" />
             </div>
           </div>
-          <p className="text-[11px] text-slate-400 mt-3 font-semibold">Vendor commission earnings</p>
+          <p className="text-[11px] text-slate-400 mt-3 font-semibold">Commission in selected period</p>
         </div>
 
-        {/* 6. Today's Rivo Earnings */}
+        {/* 6. Rivo Earnings */}
         <div className="bg-gradient-to-br from-slate-900 to-slate-800 text-white rounded-2xl p-4.5 flex flex-col justify-between shadow-md hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 relative overflow-hidden group">
           <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity">
             <Sparkles className="w-16 h-16 text-white" />
