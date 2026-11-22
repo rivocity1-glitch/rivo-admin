@@ -291,6 +291,7 @@ export function Settlements() {
 
   const [formUtr, setFormUtr] = useState("");
   const [formRemarks, setFormRemarks] = useState("");
+  const [notifyVendorOnPayment, setNotifyVendorOnPayment] = useState(true);
   const [formPaymentMethod, setFormPaymentMethod] =
     useState("Bank Transfer");
 
@@ -1190,6 +1191,14 @@ export function Settlements() {
     try {
       const paidAt = new Date().toISOString();
 
+      const selectedRemarks = formRemarks.trim();
+      const vendorMessage = [
+        `Your payout of ₹${Number(selectedSettlement.amount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} has been processed by RivoCity.`,
+        selectedRemarks,
+        `Payment method: ${formPaymentMethod.trim()}.`,
+        formUtr.trim() ? `Transaction reference: ${formUtr.trim()}.` : "",
+      ].filter(Boolean).join("\\n");
+
       const { error: settlementError } = await supabase
         .from(targetTable)
         .update({
@@ -1280,6 +1289,28 @@ export function Settlements() {
 
         if (ledgerError) {
           throw ledgerError;
+        }
+      }
+
+      if (selectedType === "vendor" && notifyVendorOnPayment) {
+        const notificationResult = await sendNotification({
+          userType: "vendor",
+          userId: entityId,
+          title: "Vendor Payout Processed",
+          message: vendorMessage,
+          type: "settlement",
+          referenceId: settlementId,
+          metadata: {
+            settlement_id: settlementId,
+            amount: Number(selectedSettlement.amount || 0),
+            payment_method: formPaymentMethod.trim(),
+            utr_number: formUtr.trim() || null,
+            order_ids: orderIds,
+          },
+        });
+        if (!notificationResult.success) {
+          console.error("Vendor payout notification failed:", notificationResult.error);
+          showToast("Payout recorded, but the vendor notification could not be sent.", "error");
         }
       }
 
