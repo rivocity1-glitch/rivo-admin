@@ -850,6 +850,7 @@ export function Settlements() {
     vendorMap,
     riderMap,
     orderMap,
+    customerMap,
     globalSearch,
     startDate,
     endDate,
@@ -1460,13 +1461,13 @@ export function Settlements() {
                       </td>
 
                       <td className="p-4 text-xs text-slate-500">
-                        {formatDate(
+                        {formatDateTime(
                           settlement.created_at
                         )}
                       </td>
 
                       <td className="p-4 text-xs text-slate-500">
-                        {formatDate(
+                        {formatDateTime(
                           settlement.paid_at
                         )}
                       </td>
