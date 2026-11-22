@@ -2649,15 +2649,21 @@ export function Settlements() {
                       </div>
                       <div className="border-t border-gray-200 pt-3">
                         <div className="text-[9px] font-black uppercase text-slate-400 mb-2">Bank / UPI Details</div>
-                        {hasBankDetails ? (
-                          <div className="grid grid-cols-2 gap-3 text-xs">
-                            <div><div className="text-[9px] uppercase text-slate-400">Account Holder</div><div className="font-semibold break-words">{accountHolder || "—"}</div></div>
-                            <div><div className="text-[9px] uppercase text-slate-400">Bank</div><div className="font-semibold break-words">{bankName || "—"}</div></div>
-                            <div><div className="text-[9px] uppercase text-slate-400">Account Number</div><div className="font-semibold break-all">{accountNumber || "—"}</div></div>
-                            <div><div className="text-[9px] uppercase text-slate-400">IFSC</div><div className="font-semibold break-words">{ifsc || "—"}</div></div>
-                            <div className="col-span-2"><div className="text-[9px] uppercase text-slate-400">UPI ID</div><div className="font-semibold break-words">{upi || "—"}</div></div>
-                          </div>
-                        ) : <p className="text-xs text-amber-700">No bank or UPI details are saved on this vendor record.</p>}
+                        <div className="grid grid-cols-2 gap-3 text-xs">
+                          {[
+                            ["Account Holder", accountHolder],
+                            ["Bank Name", bankName],
+                            ["Account Number", accountNumber],
+                            ["IFSC Code", ifsc],
+                            ["UPI ID", upi],
+                          ].map(([label, fieldValue]) => (
+                            <div key={String(label)}>
+                              <div className="text-[9px] uppercase text-slate-400">{label}</div>
+                              <div className={`font-semibold break-words ${fieldValue ? "text-slate-900" : "text-slate-300"}`}>{fieldValue || "—"}</div>
+                            </div>
+                          ))}
+                        </div>
+                        {!hasBankDetails && <p className="text-xs text-amber-700">Vendor has not saved any bank or UPI payment details yet.</p>}
                       </div>
                       <div className="border-t border-gray-200 pt-3">
                         <div className="text-[10px] font-black uppercase tracking-wider text-slate-500 mb-3">Vendor Payment QR</div>
@@ -2749,15 +2755,24 @@ export function Settlements() {
                     Remarks
                   </label>
 
+                  <div className="flex flex-wrap gap-2 mb-2">
+                    {[
+                      "Thank you for partnering with RivoCity. Your vendor payout has been processed.",
+                      "Please complete your bank and UPI details in the Vendor Portal to avoid delays in future settlements.",
+                      "Your payout has been processed. Please verify the amount in your bank account.",
+                      "Please contact Rivo support if you notice any discrepancy.",
+                      "Your settlement has been processed successfully. Thank you.",
+                    ].map((message, index) => (
+                      <button key={index} type="button" onClick={() => setFormRemarks(message)} className="rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-[9px] font-semibold text-slate-600 hover:border-[#10B981] hover:text-emerald-700">
+                        {["Thank you", "Request bank details", "Verify payout", "Support follow-up", "Settlement complete"][index]}
+                      </button>
+                    ))}
+                  </div>
                   <textarea
                     value={formRemarks}
-                    onChange={(e) =>
-                      setFormRemarks(
-                        e.target.value
-                      )
-                    }
+                    onChange={(e) => setFormRemarks(e.target.value)}
                     rows={3}
-                    placeholder="Optional payment remarks"
+                    placeholder="Optional message to vendor. Select a quick message above or write your own."
                     className="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-xs outline-none focus:border-[#10B981] resize-none"
                   />
                 </div>
