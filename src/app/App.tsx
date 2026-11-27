@@ -7,6 +7,7 @@ import {
   Crown,
   CreditCard,
   HelpCircle,
+  Image as ImageIcon,
   LayoutDashboard,
   LogOut,
   MessageSquare,
@@ -35,6 +36,7 @@ import { Notifications } from "./components/pages/Notifications";
 import { Analytics } from "./components/pages/Analytics";
 import { Settings } from "./components/pages/Settings";
 import { ProductCatalogue } from "./components/pages/ProductCatalogue";
+import { ProductImages } from "./components/pages/ProductImages";
 import { supabase } from "../lib/supabase";
 import RequestsCenter from "./components/pages/RequestsCenter";
 import { NotificationService } from "../services/notificationService";
@@ -399,6 +401,11 @@ export default function App() {
       icon: <PackageSearch className="w-4 h-4" />,
     },
     {
+      id: "product-images",
+      label: "Product Images",
+      icon: <ImageIcon className="w-4 h-4" />,
+    },
+    {
       id: "settings",
       label: "Settings",
       icon: <SettingsIcon className="w-4 h-4" />,
@@ -667,6 +674,7 @@ export default function App() {
           )}
 
           {currentTab === "catalogue" && <ProductCatalogue />}
+          {currentTab === "product-images" && <ProductImages />}
 
           {currentTab !== "dashboard" &&
             currentTab !== "vendors" &&
@@ -684,7 +692,8 @@ export default function App() {
             currentTab !== "notifications" &&
             currentTab !== "analytics" &&
             currentTab !== "settings" &&
-            currentTab !== "catalogue" && (
+            currentTab !== "catalogue" &&
+            currentTab !== "product-images" && (
               <div className="bg-white border border-[#E2E8F0] rounded-xl p-16 text-center text-xs font-medium text-[#94A3B8]">
                 The{" "}
                 <span className="capitalize text-[#475569] font-semibold">
