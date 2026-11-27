@@ -7,6 +7,7 @@ import { supabase } from "../../../lib/supabase";
 
 type Product = {
   id: string;
+  source_catalogue_id: string | null;
   name: string | null;
   brand: string | null;
   barcode: string | null;
@@ -66,6 +67,9 @@ function matchFile(file: File, products: Product[]) {
     const barcodeMatches = products.filter(p => p.barcode && p.barcode.replace(/\D/g, "") === digits);
     if (barcodeMatches.length === 1) return { product: barcodeMatches[0], reason: "Exact barcode" };
   }
+  const codeMatch = products.filter(p => (p.source_catalogue_id || "").trim().toLowerCase() === stem.trim().toLowerCase());
+  if (codeMatch.length === 1) return { product: codeMatch[0], reason: `Exact catalogue code: ${codeMatch[0].source_catalogue_id}` };
+  if (codeMatch.length > 1) return { product: null, reason: "Duplicate catalogue code; manual review required" };
   const idMatch = products.find(p => p.id.toLowerCase() === stem.toLowerCase());
   if (idMatch) return { product: idMatch, reason: "Exact catalogue UUID" };
   const exact = products.filter(p => {
@@ -90,6 +94,7 @@ export function ProductImages() {
   const folderInput = useRef<HTMLInputElement>(null);
   const [manualProduct, setManualProduct] = useState<Record<string, string>>({});
   const [manualQuery, setManualQuery] = useState<Record<string, string>>({});
+  const [activeSearchKey, setActiveSearchKey] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 50;
 
@@ -100,7 +105,7 @@ export function ProductImages() {
       const all: Product[] = [];
       for (let from = 0; ; from += 1000) {
         const { data, error } = await supabase.from("universal_products")
-          .select("id,name,brand,barcode,weight,image_url,candidate_image_url,verification_status,data_review_status")
+          .select("id,source_catalogue_id,name,brand,barcode,weight,image_url,candidate_image_url,verification_status,data_review_status")
           .order("name").range(from, from + 999);
         if (error) throw error;
         all.push(...(data || []) as Product[]);
@@ -131,7 +136,7 @@ export function ProductImages() {
     const matchesFilter = filter === "all" || item.status === filter;
     const text = query.trim().toLowerCase();
     const matchesSearch = !text || [
-      item.file.name, item.product?.name, item.product?.brand, item.product?.barcode
+      item.file.name, item.product?.source_catalogue_id, item.product?.name, item.product?.brand, item.product?.barcode
     ].some(value => String(value || "").toLowerCase().includes(text));
     return matchesFilter && matchesSearch;
   }), [queue, filter, query]);
@@ -266,28 +271,32 @@ export function ProductImages() {
         <div className="flex flex-wrap items-center gap-2 lg:w-[44%]">
           <div className="relative min-w-0 flex-1">
             <input
-              value={item.product ? `${item.product.name || "Unnamed"} — ${item.product.brand || "No brand"}` : manualQuery[item.key] || ""}
+              value={item.product ? `${item.product.source_catalogue_id ? item.product.source_catalogue_id + " · " : ""}${item.product.name || "Unnamed"} — ${item.product.brand || "No brand"}` : manualQuery[item.key] || ""}
+              onFocus={() => setActiveSearchKey(item.key)}
+              onBlur={() => window.setTimeout(() => setActiveSearchKey(current => current === item.key ? null : current), 150)}
               onChange={e => {
                 const value = e.target.value;
+                setActiveSearchKey(item.key);
                 setManualQuery(v => ({ ...v, [item.key]: value }));
                 if (item.product) assignProduct(item.key, "");
               }}
-              placeholder="Search catalogue product to match…"
+              placeholder="Search by RC product code, name, brand or barcode…"
               className="w-full rounded-lg border p-2 text-xs"
             />
-            {!item.product && (manualQuery[item.key] || "").trim().length >= 2 && (
+            {!item.product && activeSearchKey === item.key && (manualQuery[item.key] || "").trim().length >= 2 && (
               <div className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-lg border bg-white shadow-xl">
                 {products.filter(p => {
                   const q = (manualQuery[item.key] || "").toLowerCase();
-                  return [p.name, p.brand, p.barcode].some(v => String(v || "").toLowerCase().includes(q));
+                  return [p.source_catalogue_id, p.name, p.brand, p.barcode].some(v => String(v || "").toLowerCase().includes(q));
                 }).slice(0, 20).map(p => (
                   <button type="button" key={p.id} onClick={() => {
                     setManualProduct(v => ({ ...v, [item.key]: p.id }));
                     setManualQuery(v => ({ ...v, [item.key]: "" }));
+                    setActiveSearchKey(null);
                     assignProduct(item.key, p.id);
                   }} className="block w-full border-b px-3 py-2 text-left text-xs hover:bg-emerald-50">
                     <span className="font-semibold">{p.name}</span>
-                    <span className="ml-1 text-slate-500">{p.brand || "No brand"} {p.barcode ? `· ${p.barcode}` : ""}</span>
+                    <span className="ml-1 text-slate-500">{p.source_catalogue_id ? `· ${p.source_catalogue_id}` : ""} {p.brand || "No brand"} {p.barcode ? `· ${p.barcode}` : ""}</span>
                   </button>
                 ))}
               </div>
@@ -306,7 +315,7 @@ export function ProductImages() {
         </div>
       </div>}
     </div>
-    <p className="text-xs text-slate-500">Automatic matching is deliberately conservative: barcode, catalogue UUID or exact normalized product name only. Uncertain files stay unmatched for manual assignment. Uploads replace the product's single canonical image at <code className="rounded bg-slate-100 px-1">product-images/&lt;product-id&gt;/main.webp</code>.</p>
+    <p className="text-xs text-slate-500">Automatic matching uses the exact RC catalogue code (for example RC-P02268), barcode, catalogue UUID or exact normalized product name. Manual search also accepts the RC code. Uncertain files stay unmatched for manual assignment. Uploads replace the product's single canonical image at <code className="rounded bg-slate-100 px-1">product-images/&lt;product-id&gt;/main.webp</code>.</p>
   </section>;
 }
 
