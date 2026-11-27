@@ -116,9 +116,7 @@ export function ProductImages() {
 
   useEffect(() => { void loadProducts(); }, [loadProducts]);
 
-  useEffect(() => () => {
-    queue.forEach(item => URL.revokeObjectURL(item.previewUrl));
-  }, [queue]);
+  useEffect(() => { setPage(1); }, [filter, query]);
 
   const stats = useMemo(() => ({
     total: products.length,
@@ -280,8 +278,7 @@ export function ProductImages() {
               <div className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-lg border bg-white shadow-xl">
                 {products.filter(p => {
                   const q = (manualQuery[item.key] || "").toLowerCase();
-                  return true &&
-                    [p.name, p.brand, p.barcode].some(v => String(v || "").toLowerCase().includes(q));
+                  return [p.name, p.brand, p.barcode].some(v => String(v || "").toLowerCase().includes(q));
                 }).slice(0, 20).map(p => (
                   <button type="button" key={p.id} onClick={() => {
                     setManualProduct(v => ({ ...v, [item.key]: p.id }));
