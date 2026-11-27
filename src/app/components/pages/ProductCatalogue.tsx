@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { PackageSearch, RefreshCw, Search, Save, X, FileSpreadsheet } from "lucide-react";
 import { supabase } from "../../../lib/supabase";
 
-type MasterProduct = { id:string; name:string|null; brand:string|null; category_id:string|null; barcode:string|null; manufacturer:string|null; unit:string|null; weight:string|null; description?:string|null; status:string|null };
+type MasterProduct = { id:string; source_catalogue_id:string|null; name:string|null; brand:string|null; category_id:string|null; barcode:string|null; manufacturer:string|null; unit:string|null; weight:string|null; description?:string|null; status:string|null };
 type Category = {id:string;name:string};
 type Alias = { id:string; universal_product_id:string; alias:string };
 const errorText=(e:any)=>e?.message||"Something went wrong.";
@@ -63,7 +63,7 @@ export function ProductCatalogue(){
   setLoading(true);setNotice("");
   try{
    const [m,a,cat]=await Promise.all([
-    supabase.from("universal_products").select("id,name,brand,category_id,barcode,manufacturer,unit,weight,description,status").order("name"),
+    supabase.from("universal_products").select("id,source_catalogue_id,name,brand,category_id,barcode,manufacturer,unit,weight,description,status").order("name"),
     supabase.from("universal_product_aliases").select("id,universal_product_id,alias").order("alias"),
     supabase.from("product_categories").select("id,name").order("name")
    ]);
@@ -76,7 +76,7 @@ export function ProductCatalogue(){
  },[]);
  useEffect(()=>{void load();},[load]);
 
- const filteredMasters=useMemo(()=>masters.filter(p=>[p.name,p.brand,p.barcode,p.manufacturer,p.weight].some(v=>(v||"").toLowerCase().includes(query.toLowerCase().trim()))),[masters,query]);
+ const filteredMasters=useMemo(()=>masters.filter(p=>[p.source_catalogue_id,p.name,p.brand,p.barcode,p.manufacturer,p.weight].some(v=>(v||"").toLowerCase().includes(query.toLowerCase().trim()))),[masters,query]);
  const currentAliases=editing?aliases.filter(a=>a.universal_product_id===editing.id):[];
 
  function openEdit(p:MasterProduct){setEditing(p);setMasterForm({name:p.name||"",brand:p.brand||"",category_id:p.category_id||"",barcode:p.barcode||"",manufacturer:p.manufacturer||"",weight:p.weight||"",unit:p.unit||"",description:p.description||""});setAliasText(aliases.filter(a=>a.universal_product_id===p.id).map(a=>a.alias).join("\n"));setNotice("");}
@@ -168,7 +168,7 @@ export function ProductCatalogue(){
   <div className="rounded-xl border bg-white p-4"><div className="text-xs text-slate-500">Master products</div><div className="text-2xl font-bold">{masters.length}</div></div>
   <div className="rounded-xl border bg-white"><div className="flex gap-2 border-b p-3"><div className="relative flex-1"><Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search master products by name, brand or barcode" className="h-10 w-full rounded-lg border pl-9 pr-3 text-sm"/></div><button onClick={()=>void load()} className="rounded-lg border px-3"><RefreshCw size={16}/></button></div>
   <div className="rounded-xl border bg-white"><div className="border-b px-4 py-3"><h2 className="font-bold">Shared master products ({filteredMasters.length})</h2></div>
-   {loading?<div className="p-8 text-center text-sm text-slate-500">Loading…</div>:filteredMasters.length===0?<div className="p-8 text-center text-sm text-slate-500">No master products found.</div>:<div className="divide-y">{filteredMasters.map(p=><div key={p.id} className="flex items-center gap-3 p-3"><div className="h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-slate-50"><PackageSearch className="m-4 text-slate-300"/></div><div className="min-w-0 flex-1"><div className="font-semibold">{p.name||"Unnamed product"}</div><div className="text-xs text-slate-500">{p.brand||"No brand"} · {aliases.filter(a=>a.universal_product_id===p.id).length} aliases</div></div><button onClick={()=>openEdit(p)} className="rounded-lg border px-3 py-2 text-xs font-semibold">Edit product</button></div>)}</div>}
+   {loading?<div className="p-8 text-center text-sm text-slate-500">Loading…</div>:filteredMasters.length===0?<div className="p-8 text-center text-sm text-slate-500">No master products found.</div>:<div className="divide-y">{filteredMasters.map(p=><div key={p.id} className="flex items-center gap-3 p-3"><div className="h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-slate-50"><PackageSearch className="m-4 text-slate-300"/></div><div className="min-w-0 flex-1"><div className="font-semibold">{p.name||"Unnamed product"}</div><div className="text-xs text-slate-500">{p.source_catalogue_id ? `${p.source_catalogue_id} · ` : ""}{p.brand||"No brand"} · {aliases.filter(a=>a.universal_product_id===p.id).length} aliases</div></div><button onClick={()=>openEdit(p)} className="rounded-lg border px-3 py-2 text-xs font-semibold">Edit product</button></div>)}</div>}
   </div>
   </div>
   {editing&&<div className="rounded-xl border bg-white p-4 space-y-5"><div className="flex items-start justify-between gap-3"><div><h2 className="font-bold text-lg">Edit master product</h2><p className="text-sm text-slate-500">{editing.name} {editing.weight||""} · {editing.brand||""}</p><p className="text-xs text-slate-500">Update shared product details and search aliases. Product photos are managed by vendors in Vendor Portal.</p></div><button onClick={()=>setEditing(null)} className="rounded-lg border p-2"><X size={16}/></button></div>
