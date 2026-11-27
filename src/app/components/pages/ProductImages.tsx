@@ -183,9 +183,9 @@ export function ProductImages() {
     } : item));
   }
 
-  async function approveAndUpload(item: QueueItem) {
+  async function approveAndUpload(item: QueueItem, rightsConfirmed = false) {
     if (!item.product) return;
-    if (!window.confirm("Confirm that this image accurately depicts the selected product and that RivoCity has permission to use it commercially. Continue with approval and upload?")) return;
+    if (!rightsConfirmed && !window.confirm("Confirm that this image accurately depicts the selected product and that RivoCity has permission to use it commercially. Continue with approval and upload?")) return;
     if (item.product.image_url && !window.confirm("This product already has a canonical image. Replace it with this image?")) return;
     setUploadingKey(item.key);
     setNotice("");
@@ -215,6 +215,24 @@ export function ProductImages() {
       setNotice(`Upload failed for ${item.file.name}: ${message(error)}`);
     } finally {
       setUploadingKey(null);
+    }
+  }
+
+  const exactUnapprovedMatches = queue.filter(item =>
+    item.status === "matched" &&
+    !!item.product &&
+    !item.product.image_url &&
+    /^(Exact catalogue code|Exact barcode|Exact catalogue UUID|Exact product name)/.test(item.matchReason)
+  );
+
+  async function approveAllExactMatches() {
+    if (uploadingKey || exactUnapprovedMatches.length === 0) return;
+    const confirmed = window.confirm(
+      `Approve and upload ${exactUnapprovedMatches.length} exact matches? Confirm that every image depicts its assigned product and RivoCity has commercial usage rights for all selected images. Products with existing canonical images and uncertain matches are excluded.`
+    );
+    if (!confirmed) return;
+    for (const item of exactUnapprovedMatches) {
+      await approveAndUpload(item, true);
     }
   }
 
@@ -254,7 +272,10 @@ export function ProductImages() {
     <div className="rounded-xl border bg-white">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b p-4">
         <div><h2 className="font-bold text-slate-900">Local image review queue</h2><p className="text-xs text-slate-500">{queue.length.toLocaleString()} scanned files · {stats.uploaded} uploaded in this session · {stats.unmatched} unmatched</p></div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="button" onClick={() => void approveAllExactMatches()} disabled={uploadingKey !== null || exactUnapprovedMatches.length === 0} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-40">
+            Add all exact matches ({exactUnapprovedMatches.length})
+          </button>
           {(["all", "matched", "unmatched", "uploaded"] as const).map(value => <button key={value} onClick={() => setFilter(value)} className={`rounded-lg px-3 py-2 text-xs font-semibold capitalize ${filter === value ? "bg-emerald-600 text-white" : "border text-slate-600"}`}>{value}</button>)}
         </div>
       </div>
