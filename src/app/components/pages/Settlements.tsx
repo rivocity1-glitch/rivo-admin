@@ -73,6 +73,7 @@ interface Order {
   order_number?: string | null;
   vendor_id?: string | null;
   rider_id?: string | null;
+  customer_id?: string | null;
   subtotal?: number | null;
   delivery_fee?: number | null;
   platform_fee?: number | null;
@@ -267,12 +268,16 @@ export function Settlements() {
   const [vendorQrById, setVendorQrById] = useState<Record<string, string>>({});
   const [vendorProfilesById, setVendorProfilesById] = useState<Record<string, VendorProfile>>({});
   const [riders, setRiders] = useState<Rider[]>([]);
+  const [customers, setCustomers] = useState<any[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [riderCollections, setRiderCollections] = useState<Array<{ order_id: string; status: string }>>([]);
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
 
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [ledgerEntityFilter, setLedgerEntityFilter] = useState("all");
+  const [ledgerEntryFilter, setLedgerEntryFilter] = useState("all");
+  const [ledgerTransactionFilter, setLedgerTransactionFilter] = useState("all");
 
   const [selectedSettlement, setSelectedSettlement] = useState<
     VendorSettlement | RiderSettlement | null
@@ -286,6 +291,7 @@ export function Settlements() {
 
   const [formUtr, setFormUtr] = useState("");
   const [formRemarks, setFormRemarks] = useState("");
+  const [notifyVendorOnPayment, setNotifyVendorOnPayment] = useState(true);
   const [formPaymentMethod, setFormPaymentMethod] =
     useState("Bank Transfer");
 
@@ -329,6 +335,7 @@ export function Settlements() {
           vendorsResult,
           vendorProfilesResult,
           ridersResult,
+          customersResult,
           ordersResult,
           riderCollectionsResult,
           ledgerResult,
@@ -349,6 +356,8 @@ export function Settlements() {
 
           supabase.from("riders").select("*"),
 
+          supabase.from("customers").select("*"),
+
           supabase
             .from("orders")
             .select(
@@ -357,6 +366,7 @@ export function Settlements() {
               order_number,
               vendor_id,
               rider_id,
+              customer_id,
               subtotal,
               delivery_fee,
               platform_fee,
@@ -410,6 +420,10 @@ export function Settlements() {
           throw ridersResult.error;
         }
 
+        if (customersResult.error) {
+          throw customersResult.error;
+        }
+
         if (ordersResult.error) {
           throw ordersResult.error;
         }
@@ -442,6 +456,7 @@ export function Settlements() {
         setVendorQrById(qrByVendor);
         setVendorProfilesById(profilesByVendor);
         setRiders((ridersResult.data || []) as Rider[]);
+        setCustomers((customersResult.data || []) as any[]);
         setOrders((ordersResult.data || []) as Order[]);
         setRiderCollections((riderCollectionsResult.data || []) as Array<{ order_id: string; status: string }>);
         setLedger((ledgerResult.data || []) as LedgerEntry[]);
@@ -527,13 +542,57 @@ export function Settlements() {
 
   const orderMap = useMemo(() => {
     const map = new Map<string, Order>();
-
-    orders.forEach((order) => {
-      map.set(order.id, order);
-    });
-
+    orders.forEach((order) => map.set(order.id, order));
     return map;
   }, [orders]);
+
+  const customerMap = useMemo(() => {
+    const map = new Map<string, any>();
+    customers.forEach((customer) => {
+      if (customer?.id) map.set(String(customer.id), customer);
+    });
+    return map;
+  }, [customers]);
+
+  const getCustomerName = (order?: Order | null) => {
+    if (!order?.customer_id) return "—";
+    const customer = customerMap.get(order.customer_id);
+    if (!customer) return "Customer";
+    const fullName = [customer.first_name, customer.last_name]
+      .filter(Boolean).join(" ").trim();
+    return customer.full_name || customer.customer_name || customer.name ||
+      fullName || customer.phone || customer.mobile_number || "Customer";
+  };
+
+  const isWithinSelectedRange = (value?: string | null) => {
+    if (!value) return false;
+    const timestamp = new Date(value).getTime();
+    if (!Number.isFinite(timestamp)) return false;
+    const start = startDate
+      ? new Date(startDate.length === 10 ? `${startDate}T00:00:00` : startDate).getTime()
+      : null;
+    const end = endDate
+      ? new Date(endDate.length === 10 ? `${endDate}T23:59:59.999` : endDate).getTime()
+      : null;
+    return (start === null || timestamp >= start) && (end === null || timestamp <= end);
+  };
+
+  const getLedgerCustomerName = (item: LedgerEntry) => {
+    const order = item.reference_id ? orderMap.get(item.reference_id) : undefined;
+    const directCustomerId = String(item.entity_type || "").toLowerCase() === "customer"
+      ? item.entity_id
+      : null;
+    const metadataCustomerId = item.metadata?.customer_id;
+    if (order) return getCustomerName(order);
+    const customerId = directCustomerId || metadataCustomerId;
+    if (customerId) {
+      const customer = customerMap.get(String(customerId));
+      return customer?.full_name || customer?.customer_name || customer?.name ||
+        [customer?.first_name, customer?.last_name].filter(Boolean).join(" ") ||
+        customer?.phone || customer?.mobile_number || "Customer";
+    }
+    return "—";
+  };
 
   const riderPayoutEligibleOrderIds = useMemo(() => {
     const returnedOrderIds = new Set(
@@ -562,6 +621,7 @@ export function Settlements() {
 
     orders.forEach((order) => {
       if (!order.rider_id || !riderPayoutEligibleOrderIds.has(order.id)) return;
+      if ((startDate || endDate) && !isWithinSelectedRange(order.delivered_at || order.created_at)) return;
 
       const current = summaries.get(order.rider_id) || {
         riderId: order.rider_id,
@@ -581,7 +641,35 @@ export function Settlements() {
     return Array.from(summaries.values()).sort(
       (a, b) => b.pendingEarnings - a.pendingEarnings
     );
-  }, [orders, riderPayoutEligibleOrderIds]);
+  }, [orders, riderPayoutEligibleOrderIds, startDate, endDate]);
+
+  const vendorEarningsSummary = useMemo(() => {
+    const summaries = new Map<string, {
+      vendorId: string;
+      orders: number;
+      totalEarnings: number;
+      pendingEarnings: number;
+      settledEarnings: number;
+    }>();
+    orders.forEach((order) => {
+      if (!order.vendor_id || String(order.order_status || "").toLowerCase() !== "delivered") return;
+      if ((startDate || endDate) && !isWithinSelectedRange(order.delivered_at || order.created_at)) return;
+      const current = summaries.get(order.vendor_id) || {
+        vendorId: order.vendor_id,
+        orders: 0,
+        totalEarnings: 0,
+        pendingEarnings: 0,
+        settledEarnings: 0,
+      };
+      const earning = getVendorEarning(order);
+      current.orders += 1;
+      current.totalEarnings += earning;
+      if (order.settled_vendor) current.settledEarnings += earning;
+      else current.pendingEarnings += earning;
+      summaries.set(order.vendor_id, current);
+    });
+    return Array.from(summaries.values()).sort((a, b) => b.pendingEarnings - a.pendingEarnings);
+  }, [orders, startDate, endDate]);
 
   const filteredOrders = useMemo(() => {
     const search = globalSearch.trim().toLowerCase();
@@ -597,74 +685,71 @@ export function Settlements() {
         orderNumber.includes(search) ||
         orderId.includes(search);
 
-      const createdTime = new Date(order.created_at).getTime();
+      const customerName = getCustomerName(order).toLowerCase();
+      const matchesDate = !startDate && !endDate
+        ? true
+        : isWithinSelectedRange(order.delivered_at || order.created_at);
 
-      let matchesDate = true;
-
-      if (startDate) {
-        const start = new Date(`${startDate}T00:00:00`).getTime();
-        matchesDate = createdTime >= start;
-      }
-
-      if (matchesDate && endDate) {
-        const end = new Date(`${endDate}T23:59:59.999`).getTime();
-        matchesDate = createdTime <= end;
-      }
-
-      return matchesSearch && matchesDate;
+      return matchesSearch || customerName.includes(search)
+        ? matchesDate
+        : false;
     });
-  }, [orders, globalSearch, startDate, endDate]);
+  }, [orders, globalSearch, startDate, endDate, customerMap]);
 
   const filteredLedger = useMemo(() => {
     const search = globalSearch.trim().toLowerCase();
 
     return ledger.filter((item) => {
-      if (!search) return true;
-
-      return (
+      const customerName = getLedgerCustomerName(item).toLowerCase();
+      const matchesSearch = !search ||
         item.transaction_type?.toLowerCase().includes(search) ||
         item.remarks?.toLowerCase().includes(search) ||
         item.reference_id?.toLowerCase().includes(search) ||
-        item.entity_type?.toLowerCase().includes(search)
-      );
+        item.entity_type?.toLowerCase().includes(search) ||
+        customerName.includes(search);
+      const matchesEntity = ledgerEntityFilter === "all" ||
+        String(item.entity_type || "").toLowerCase() === ledgerEntityFilter ||
+        (ledgerEntityFilter === "customer" && customerName !== "—");
+      const matchesEntry = ledgerEntryFilter === "all" ||
+        String(item.entry_type || "").toLowerCase() === ledgerEntryFilter;
+      const matchesTransaction = ledgerTransactionFilter === "all" ||
+        String(item.transaction_type || "").toLowerCase() === ledgerTransactionFilter;
+      const matchesDate = (!startDate && !endDate) || isWithinSelectedRange(item.created_at);
+      return matchesSearch && matchesEntity && matchesEntry && matchesTransaction && matchesDate;
     });
-  }, [ledger, globalSearch]);
+  }, [ledger, globalSearch, ledgerEntityFilter, ledgerEntryFilter, ledgerTransactionFilter, startDate, endDate, orderMap, customerMap]);
 
   const vendorRows = useMemo(() => {
     return vendorSettlements.filter((settlement) => {
       const vendor = vendorMap.get(settlement.vendor_id);
-
       const search = globalSearch.trim().toLowerCase();
-
-      if (!search) return true;
-
-      return (
+      const matchesSearch = !search ||
         vendor?.shop_name?.toLowerCase().includes(search) ||
         vendor?.owner_name?.toLowerCase().includes(search) ||
         vendor?.phone?.toLowerCase().includes(search) ||
         settlement.utr_number?.toLowerCase().includes(search) ||
-        settlement.id.toLowerCase().includes(search)
-      );
+        settlement.id.toLowerCase().includes(search);
+      const matchesDate = (!startDate && !endDate) ||
+        isWithinSelectedRange(settlement.paid_at || settlement.created_at);
+      return Boolean(matchesSearch && matchesDate);
     });
-  }, [vendorSettlements, vendorMap, globalSearch]);
+  }, [vendorSettlements, vendorMap, globalSearch, startDate, endDate]);
 
   const riderRows = useMemo(() => {
     return riderSettlements.filter((settlement) => {
       const rider = riderMap.get(settlement.rider_id);
-
       const search = globalSearch.trim().toLowerCase();
-
-      if (!search) return true;
-
-      return (
+      const matchesSearch = !search ||
         rider?.rider_name?.toLowerCase().includes(search) ||
         rider?.email?.toLowerCase().includes(search) ||
         rider?.phone?.toLowerCase().includes(search) ||
         settlement.utr_number?.toLowerCase().includes(search) ||
-        settlement.id.toLowerCase().includes(search)
-      );
+        settlement.id.toLowerCase().includes(search);
+      const matchesDate = (!startDate && !endDate) ||
+        isWithinSelectedRange(settlement.paid_at || settlement.created_at);
+      return Boolean(matchesSearch && matchesDate);
     });
-  }, [riderSettlements, riderMap, globalSearch]);
+  }, [riderSettlements, riderMap, globalSearch, startDate, endDate]);
 
   const historyRows = useMemo<HistoryRow[]>(() => {
     const rows: HistoryRow[] = [];
@@ -753,29 +838,12 @@ export function Settlements() {
           row.orderNumber.toLowerCase().includes(search) ||
           row.entityName.toLowerCase().includes(search) ||
           row.settlementId.toLowerCase().includes(search) ||
-          row.utr.toLowerCase().includes(search)
+          row.utr.toLowerCase().includes(search) ||
+          getCustomerName(orderMap.get(row.orderId)).toLowerCase().includes(search)
         );
       })
       .filter((row) => {
-        const time = new Date(row.orderDate).getTime();
-
-        if (startDate) {
-          const start = new Date(
-            `${startDate}T00:00:00`
-          ).getTime();
-
-          if (time < start) return false;
-        }
-
-        if (endDate) {
-          const end = new Date(
-            `${endDate}T23:59:59.999`
-          ).getTime();
-
-          if (time > end) return false;
-        }
-
-        return true;
+        return (!startDate && !endDate) || isWithinSelectedRange(row.orderDate);
       })
       .sort(
         (a, b) =>
@@ -788,6 +856,7 @@ export function Settlements() {
     vendorMap,
     riderMap,
     orderMap,
+    customerMap,
     globalSearch,
     startDate,
     endDate,
@@ -952,12 +1021,72 @@ export function Settlements() {
     setPayModalOpen(true);
   };
 
+  const startVendorPayout = async (vendorId: string) => {
+    const pendingOrders = orders.filter((order) =>
+      order.vendor_id === vendorId &&
+      String(order.order_status || "").toLowerCase() === "delivered" &&
+      !order.settled_vendor &&
+      (!(startDate || endDate) || isWithinSelectedRange(order.delivered_at || order.created_at))
+    );
+    const orderIds = pendingOrders.map((order) => order.id).sort();
+    const amount = pendingOrders.reduce((sum, order) => sum + getVendorEarning(order), 0);
+    if (!orderIds.length || amount <= 0) {
+      showToast("This vendor has no unpaid delivered-order earnings in the selected period.", "error");
+      return;
+    }
+
+    const openSettlement = vendorSettlements.find((settlement) => {
+      if (settlement.vendor_id !== vendorId ||
+        !["AVAILABLE", "PENDING", "REQUESTED", "PENDING_REQUEST"].includes(normalizeStatus(settlement.status))) return false;
+      const existingOrderIds = Array.isArray(settlement.order_ids)
+        ? settlement.order_ids.map(String).sort()
+        : [];
+      return existingOrderIds.length === orderIds.length &&
+        existingOrderIds.every((id, index) => id === orderIds[index]);
+    });
+
+    setActionLoading(true);
+    try {
+      let settlement: VendorSettlement;
+      if (openSettlement) {
+        settlement = openSettlement;
+      } else {
+        const { data, error } = await supabase
+          .from("vendor_settlements")
+          .insert({
+            vendor_id: vendorId,
+            amount,
+            order_ids: orderIds,
+            order_count: orderIds.length,
+            status: "AVAILABLE",
+          })
+          .select("*")
+          .single();
+        if (error) throw error;
+        settlement = data as VendorSettlement;
+      }
+      setSelectedType("vendor");
+      setSelectedSettlement(settlement);
+      setFormUtr("");
+      setFormRemarks("");
+      setFormPaymentMethod("Bank Transfer");
+      setPayModalOpen(true);
+      await loadData(false);
+    } catch (error: any) {
+      console.error("Unable to start vendor payout:", error);
+      showToast(error?.message || "Could not prepare vendor payout.", "error");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   const startRiderPayout = async (riderId: string) => {
     const pendingOrders = orders.filter(
       (order) =>
         order.rider_id === riderId &&
         riderPayoutEligibleOrderIds.has(order.id) &&
-        !order.settled_rider
+        !order.settled_rider &&
+        (!(startDate || endDate) || isWithinSelectedRange(order.delivered_at || order.created_at))
     );
     const orderIds = pendingOrders.map((order) => order.id).sort();
     const amount = pendingOrders.reduce(
@@ -1062,6 +1191,14 @@ export function Settlements() {
     try {
       const paidAt = new Date().toISOString();
 
+      const selectedRemarks = formRemarks.trim();
+      const vendorMessage = [
+        `Your payout of ₹${Number(selectedSettlement.amount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} has been processed by RivoCity.`,
+        selectedRemarks,
+        `Payment method: ${formPaymentMethod.trim()}.`,
+        formUtr.trim() ? `Transaction reference: ${formUtr.trim()}.` : "",
+      ].filter(Boolean).join("\\n");
+
       const { error: settlementError } = await supabase
         .from(targetTable)
         .update({
@@ -1155,6 +1292,28 @@ export function Settlements() {
         }
       }
 
+      if (selectedType === "vendor" && notifyVendorOnPayment) {
+        const notificationResult = await sendNotification({
+          userType: "vendor",
+          userId: entityId,
+          title: "Vendor Payout Processed",
+          message: vendorMessage,
+          type: "settlement",
+          referenceId: settlementId,
+          metadata: {
+            settlement_id: settlementId,
+            amount: Number(selectedSettlement.amount || 0),
+            payment_method: formPaymentMethod.trim(),
+            utr_number: formUtr.trim() || null,
+            order_ids: orderIds,
+          },
+        });
+        if (!notificationResult.success) {
+          console.error("Vendor payout notification failed:", notificationResult.error);
+          showToast("Payout recorded, but the vendor notification could not be sent.", "error");
+        }
+      }
+
       setPayModalOpen(false);
       setSelectedSettlement(null);
 
@@ -1183,6 +1342,9 @@ export function Settlements() {
     setStartDate("");
     setEndDate("");
     setGlobalSearch("");
+    setLedgerEntityFilter("all");
+    setLedgerEntryFilter("all");
+    setLedgerTransactionFilter("all");
   };
 
   const renderStatus = (status?: string | null) => {
@@ -1335,13 +1497,13 @@ export function Settlements() {
                       </td>
 
                       <td className="p-4 text-xs text-slate-500">
-                        {formatDate(
+                        {formatDateTime(
                           settlement.created_at
                         )}
                       </td>
 
                       <td className="p-4 text-xs text-slate-500">
-                        {formatDate(
+                        {formatDateTime(
                           settlement.paid_at
                         )}
                       </td>
@@ -1448,7 +1610,7 @@ export function Settlements() {
           </div>
 
           <p className="text-xs text-slate-400 mt-1">
-            Vendor payouts, rider payouts, order history and financial ledger
+            Track customer-linked order entries, Rivo credits/debits, and pending vendor and rider payouts.
           </p>
         </div>
 
@@ -1514,11 +1676,8 @@ export function Settlements() {
 
       <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 flex flex-wrap items-center gap-4">
         <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-wider text-slate-500">
-          <Calendar
-            size={14}
-            className="text-[#10B981]"
-          />
-          Date Range
+          <Calendar size={14} className="text-[#10B981]" />
+          Date & Time Range
         </div>
 
         <div className="flex items-center gap-2">
@@ -1527,7 +1686,7 @@ export function Settlements() {
           </span>
 
           <input
-            type="date"
+            type="datetime-local"
             value={startDate}
             onChange={(e) =>
               setStartDate(e.target.value)
@@ -1542,7 +1701,7 @@ export function Settlements() {
           </span>
 
           <input
-            type="date"
+            type="datetime-local"
             value={endDate}
             onChange={(e) =>
               setEndDate(e.target.value)
@@ -1551,9 +1710,7 @@ export function Settlements() {
           />
         </div>
 
-        {(startDate ||
-          endDate ||
-          globalSearch) && (
+        {(startDate || endDate || globalSearch || ledgerEntityFilter !== "all" || ledgerEntryFilter !== "all" || ledgerTransactionFilter !== "all") && (
           <button
             type="button"
             onClick={clearFilters}
@@ -1718,7 +1875,7 @@ export function Settlements() {
                 </thead>
 
                 <tbody className="divide-y divide-gray-100">
-                  {ledger.slice(0, 10).map(
+                  {filteredLedger.slice(0, 10).map(
                     (item) => (
                       <tr
                         key={item.id}
@@ -1730,8 +1887,9 @@ export function Settlements() {
                           )}
                         </td>
 
-                        <td className="p-3 text-xs font-bold capitalize">
-                          {item.entity_type}
+                        <td className="p-3">
+                          <div className="text-xs font-bold capitalize">{item.entity_type === "platform" ? "Rivo Platform" : item.entity_type}</div>
+                          <div className="text-[10px] text-slate-500 mt-0.5">{item.entity_type === "vendor" ? (vendorMap.get(item.entity_id || "")?.shop_name || "Vendor") : item.entity_type === "rider" ? (riderMap.get(item.entity_id || "")?.rider_name || "Rider") : (getLedgerCustomerName(item) !== "—" ? getLedgerCustomerName(item) : "—")}</div>
                         </td>
 
                         <td className="p-3 text-xs">
@@ -1786,6 +1944,33 @@ export function Settlements() {
             </span>
           </div>
 
+          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+            <div className="p-4 border-b border-gray-100">
+              <h3 className="text-xs font-black uppercase tracking-wider text-slate-700">Vendor Earnings & Pending Payouts</h3>
+              <p className="mt-1 text-[10px] text-slate-400">Calculated from delivered orders. Pay a vendor to create a settlement containing its unpaid orders.</p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead><tr className="bg-gray-50 text-[10px] font-black uppercase text-slate-400">
+                  <th className="p-3">Vendor</th><th className="p-3">Orders</th><th className="p-3 text-right">Total Earned</th><th className="p-3 text-right">To Pay</th><th className="p-3 text-right">Already Settled</th><th className="p-3 text-right">Action</th>
+                </tr></thead>
+                <tbody className="divide-y divide-gray-100">
+                  {vendorEarningsSummary.map((summary) => {
+                    const vendor = vendorMap.get(summary.vendorId);
+                    return <tr key={summary.vendorId} className="hover:bg-gray-50">
+                      <td className="p-3"><div className="text-xs font-bold">{vendor?.shop_name || vendor?.owner_name || "Unknown Vendor"}</div><div className="mt-1 text-[9px] font-mono text-slate-400">{summary.vendorId}</div></td>
+                      <td className="p-3 text-xs">{summary.orders}</td>
+                      <td className="p-3 text-right text-xs font-bold">{money(summary.totalEarnings)}</td>
+                      <td className="p-3 text-right text-xs font-black text-amber-600">{money(summary.pendingEarnings)}</td>
+                      <td className="p-3 text-right text-xs font-bold text-emerald-600">{money(summary.settledEarnings)}</td>
+                      <td className="p-3 text-right">{summary.pendingEarnings > 0 ? <button type="button" onClick={() => startVendorPayout(summary.vendorId)} disabled={actionLoading} className="rounded-lg bg-[#10B981] px-3 py-2 text-[10px] font-black text-white hover:bg-[#059669] disabled:opacity-50">Pay Vendor</button> : <span className="text-[10px] text-slate-400">Up to date</span>}</td>
+                    </tr>;
+                  })}
+                  {vendorEarningsSummary.length === 0 && <tr><td colSpan={6} className="p-6 text-center text-xs text-slate-400">No delivered vendor earnings in the selected period.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
           {renderSettlementTable(
             vendorRows,
             "vendor"
@@ -1863,16 +2048,36 @@ export function Settlements() {
             </div>
           </div>
 
+          <div className="px-5 py-4 border-b border-gray-100 grid grid-cols-1 md:grid-cols-3 gap-3">
+            <label className="text-[10px] font-bold text-slate-500">WHO
+              <select value={ledgerEntityFilter} onChange={(e) => setLedgerEntityFilter(e.target.value)} className="mt-1 block w-full h-9 rounded-lg border border-gray-200 bg-white px-2 text-xs">
+                <option value="all">All entities</option>
+                <option value="customer">Customer</option>
+                <option value="vendor">Vendor</option>
+                <option value="rider">Rider</option>
+                <option value="platform">Platform</option>
+              </select>
+            </label>
+            <label className="text-[10px] font-bold text-slate-500">CREDIT / DEBIT
+              <select value={ledgerEntryFilter} onChange={(e) => setLedgerEntryFilter(e.target.value)} className="mt-1 block w-full h-9 rounded-lg border border-gray-200 bg-white px-2 text-xs">
+                <option value="all">Credits and debits</option>
+                <option value="credit">Credited</option>
+                <option value="debit">Debited</option>
+              </select>
+            </label>
+            <label className="text-[10px] font-bold text-slate-500">TRANSACTION
+              <select value={ledgerTransactionFilter} onChange={(e) => setLedgerTransactionFilter(e.target.value)} className="mt-1 block w-full h-9 rounded-lg border border-gray-200 bg-white px-2 text-xs">
+                <option value="all">All transaction types</option>
+                {[...new Set(ledger.map((item) => item.transaction_type).filter(Boolean))].sort().map((type) => <option key={type} value={type}>{type.replace(/_/g, " ")}</option>)}
+              </select>
+            </label>
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-200 text-[10px] font-black uppercase tracking-wider text-slate-400">
                   <th className="p-3">
                     Date
-                  </th>
-
-                  <th className="p-3">
-                    Entity
                   </th>
 
                   <th className="p-3">
@@ -1908,14 +2113,18 @@ export function Settlements() {
 
                       <td className="p-3">
                         <div className="text-xs font-bold capitalize">
-                          {item.entity_type}
+                          {item.entity_type === "platform" ? "Rivo Platform" : item.entity_type}
                         </div>
-
-                        {item.entity_id && (
-                          <div className="font-mono text-[8px] text-slate-400 mt-1">
-                            {item.entity_id}
-                          </div>
-                        )}
+                        <div className="text-xs text-slate-600 mt-0.5">
+                          {item.entity_type === "customer"
+                            ? (getLedgerCustomerName(item) !== "—" ? getLedgerCustomerName(item) : "Customer")
+                            : item.entity_type === "vendor"
+                              ? (vendorMap.get(item.entity_id || "")?.shop_name || vendorMap.get(item.entity_id || "")?.owner_name || "Vendor")
+                              : item.entity_type === "rider"
+                                ? (riderMap.get(item.entity_id || "")?.rider_name || "Rider")
+                                : (getLedgerCustomerName(item) !== "—" ? `Order customer: ${getLedgerCustomerName(item)}` : "Platform")}
+                        </div>
+                        {item.entity_id && <div className="font-mono text-[8px] text-slate-400 mt-1">{item.entity_id}</div>}
                       </td>
 
                       <td className="p-3 text-xs font-semibold">
@@ -2471,15 +2680,21 @@ export function Settlements() {
                       </div>
                       <div className="border-t border-gray-200 pt-3">
                         <div className="text-[9px] font-black uppercase text-slate-400 mb-2">Bank / UPI Details</div>
-                        {hasBankDetails ? (
-                          <div className="grid grid-cols-2 gap-3 text-xs">
-                            <div><div className="text-[9px] uppercase text-slate-400">Account Holder</div><div className="font-semibold break-words">{accountHolder || "—"}</div></div>
-                            <div><div className="text-[9px] uppercase text-slate-400">Bank</div><div className="font-semibold break-words">{bankName || "—"}</div></div>
-                            <div><div className="text-[9px] uppercase text-slate-400">Account Number</div><div className="font-semibold break-all">{accountNumber || "—"}</div></div>
-                            <div><div className="text-[9px] uppercase text-slate-400">IFSC</div><div className="font-semibold break-words">{ifsc || "—"}</div></div>
-                            <div className="col-span-2"><div className="text-[9px] uppercase text-slate-400">UPI ID</div><div className="font-semibold break-words">{upi || "—"}</div></div>
-                          </div>
-                        ) : <p className="text-xs text-amber-700">No bank or UPI details are saved on this vendor record.</p>}
+                        <div className="grid grid-cols-2 gap-3 text-xs">
+                          {[
+                            ["Account Holder", accountHolder],
+                            ["Bank Name", bankName],
+                            ["Account Number", accountNumber],
+                            ["IFSC Code", ifsc],
+                            ["UPI ID", upi],
+                          ].map(([label, fieldValue]) => (
+                            <div key={String(label)}>
+                              <div className="text-[9px] uppercase text-slate-400">{label}</div>
+                              <div className={`font-semibold break-words ${fieldValue ? "text-slate-900" : "text-slate-300"}`}>{fieldValue || "—"}</div>
+                            </div>
+                          ))}
+                        </div>
+                        {!hasBankDetails && <p className="text-xs text-amber-700">Vendor has not saved any bank or UPI payment details yet.</p>}
                       </div>
                       <div className="border-t border-gray-200 pt-3">
                         <div className="text-[10px] font-black uppercase tracking-wider text-slate-500 mb-3">Vendor Payment QR</div>
@@ -2568,20 +2783,35 @@ export function Settlements() {
 
                 <div>
                   <label className="block text-[10px] font-black uppercase tracking-wider text-slate-500 mb-1.5">
-                    Remarks
+                    Message to Vendor
                   </label>
 
+                  <div className="flex flex-wrap gap-2 mb-2">
+                    {[
+                      "Thank you for partnering with RivoCity. Your vendor payout has been processed.",
+                      "Please complete your bank and UPI details in the Vendor Portal to avoid delays in future settlements.",
+                      "Your payout has been processed. Please verify the amount in your bank account.",
+                      "Please contact Rivo support if you notice any discrepancy.",
+                      "Your settlement has been processed successfully. Thank you.",
+                    ].map((message, index) => (
+                      <button key={index} type="button" onClick={() => setFormRemarks(message)} className="rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-[9px] font-semibold text-slate-600 hover:border-[#10B981] hover:text-emerald-700">
+                        {["Thank you", "Request bank details", "Verify payout", "Support follow-up", "Settlement complete"][index]}
+                      </button>
+                    ))}
+                  </div>
                   <textarea
                     value={formRemarks}
-                    onChange={(e) =>
-                      setFormRemarks(
-                        e.target.value
-                      )
-                    }
+                    onChange={(e) => setFormRemarks(e.target.value)}
                     rows={3}
-                    placeholder="Optional payment remarks"
+                    placeholder="Optional message to vendor. Select a quick message above or write your own."
                     className="w-full px-3 py-2 rounded-lg border border-gray-200 bg-white text-xs outline-none focus:border-[#10B981] resize-none"
                   />
+                  {selectedType === "vendor" && (
+                    <label className="mt-3 flex items-center gap-2 text-xs text-slate-600">
+                      <input type="checkbox" checked={notifyVendorOnPayment} onChange={(e) => setNotifyVendorOnPayment(e.target.checked)} className="accent-emerald-600" />
+                      Send this payout update to the Vendor Portal notifications
+                    </label>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-3 pt-2">
