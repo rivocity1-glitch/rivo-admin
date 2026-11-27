@@ -20,6 +20,7 @@ type QueueItem = {
   key: string;
   file: File;
   relativePath: string;
+  previewUrl: string;
   product: Product | null;
   matchReason: string;
   status: "matched" | "unmatched" | "uploaded" | "failed";
@@ -89,6 +90,8 @@ export function ProductImages() {
   const folderInput = useRef<HTMLInputElement>(null);
   const [manualProduct, setManualProduct] = useState<Record<string, string>>({});
   const [manualQuery, setManualQuery] = useState<Record<string, string>>({});
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 50;
 
   const loadProducts = useCallback(async () => {
     setLoading(true);
@@ -113,6 +116,10 @@ export function ProductImages() {
 
   useEffect(() => { void loadProducts(); }, [loadProducts]);
 
+  useEffect(() => () => {
+    queue.forEach(item => URL.revokeObjectURL(item.previewUrl));
+  }, [queue]);
+
   const stats = useMemo(() => ({
     total: products.length,
     approved: products.filter(p => !!p.image_url).length,
@@ -122,7 +129,7 @@ export function ProductImages() {
     uploaded: queue.filter(q => q.status === "uploaded").length,
   }), [products, queue]);
 
-  const visibleQueue = useMemo(() => queue.filter(item => {
+  const filteredQueue = useMemo(() => queue.filter(item => {
     const matchesFilter = filter === "all" || item.status === filter;
     const text = query.trim().toLowerCase();
     const matchesSearch = !text || [
@@ -130,6 +137,7 @@ export function ProductImages() {
     ].some(value => String(value || "").toLowerCase().includes(text));
     return matchesFilter && matchesSearch;
   }), [queue, filter, query]);
+  const visibleQueue = useMemo(() => filteredQueue.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [filteredQueue, page]);
 
   async function scanFolder(files: FileList | null) {
     if (!files?.length) return;
@@ -139,18 +147,21 @@ export function ProductImages() {
       const imageFiles = Array.from(files).filter(file =>
         file.type.startsWith("image/") || /\.(jpe?g|png|webp|bmp|gif|tiff?)$/i.test(file.name)
       );
+      queue.forEach(item => URL.revokeObjectURL(item.previewUrl));
       const next: QueueItem[] = imageFiles.map((file, index) => {
         const result = matchFile(file, products);
         return {
           key: `${file.name}-${file.size}-${file.lastModified}-${index}`,
           file,
           relativePath: (file as any).webkitRelativePath || file.name,
+          previewUrl: URL.createObjectURL(file),
           product: result.product,
           matchReason: result.reason,
           status: result.product ? "matched" : "unmatched",
         };
       });
       setQueue(next);
+      setPage(1);
       setNotice(`Scanned ${imageFiles.length.toLocaleString()} image files. ${next.filter(x => x.product).length.toLocaleString()} were safely matched. Unmatched files require manual assignment.`);
       setFilter("all");
     } catch (error) {
@@ -250,7 +261,7 @@ export function ProductImages() {
        visibleQueue.length === 0 ? <div className="p-10 text-center"><ImageIcon className="mx-auto text-slate-300" size={28}/><p className="mt-2 text-sm font-semibold text-slate-700">No files in this view</p><p className="mt-1 text-xs text-slate-500">Select your _REVIEW_REQUIRED folder to scan local images.</p></div> :
        <div className="divide-y">{visibleQueue.map(item => <div key={item.key} className="flex flex-col gap-3 p-3 lg:flex-row lg:items-center">
         <div className="flex items-center gap-3 min-w-0 flex-1">
-          <div className="h-16 w-16 shrink-0 overflow-hidden rounded-lg border bg-slate-50"><img src={URL.createObjectURL(item.file)} alt="" className="h-full w-full object-contain" /></div>
+          <div className="h-16 w-16 shrink-0 overflow-hidden rounded-lg border bg-slate-50"><img src={item.previewUrl} alt="" className="h-full w-full object-contain" /></div>
           <div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-900">{item.file.name}</p><p className="truncate text-xs text-slate-500">{item.relativePath}</p><p className="text-[11px] text-slate-400">{bytes(item.file.size)} · {item.matchReason}</p>{item.error && <p className="mt-1 text-xs text-red-600">{item.error}</p>}</div>
         </div>
         <div className="flex flex-wrap items-center gap-2 lg:w-[44%]">
@@ -269,7 +280,7 @@ export function ProductImages() {
               <div className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-lg border bg-white shadow-xl">
                 {products.filter(p => {
                   const q = (manualQuery[item.key] || "").toLowerCase();
-                  return (!p.image_url || p.id === item.product?.id) &&
+                  return true &&
                     [p.name, p.brand, p.barcode].some(v => String(v || "").toLowerCase().includes(q));
                 }).slice(0, 20).map(p => (
                   <button type="button" key={p.id} onClick={() => {
@@ -289,6 +300,13 @@ export function ProductImages() {
            <button onClick={() => void approveAndUpload(item)} disabled={!item.product || uploadingKey !== null} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-40">{uploadingKey === item.key ? <RefreshCw size={14} className="animate-spin"/> : <UploadCloud size={14}/>} Approve & upload</button>}
         </div>
        </div>)}</div>}
+      {filteredQueue.length > PAGE_SIZE && <div className="flex items-center justify-between border-t p-3 text-xs text-slate-500">
+        <span>Showing {((page - 1) * PAGE_SIZE) + 1}–{Math.min(page * PAGE_SIZE, filteredQueue.length)} of {filteredQueue.length.toLocaleString()} files</span>
+        <div className="flex gap-2">
+          <button type="button" disabled={page === 1} onClick={() => setPage(p => Math.max(1, p - 1))} className="rounded-lg border px-3 py-2 disabled:opacity-40">Previous</button>
+          <button type="button" disabled={page * PAGE_SIZE >= filteredQueue.length} onClick={() => setPage(p => p + 1)} className="rounded-lg border px-3 py-2 disabled:opacity-40">Next</button>
+        </div>
+      </div>}
     </div>
     <p className="text-xs text-slate-500">Automatic matching is deliberately conservative: barcode, catalogue UUID or exact normalized product name only. Uncertain files stay unmatched for manual assignment. Uploads replace the product's single canonical image at <code className="rounded bg-slate-100 px-1">product-images/&lt;product-id&gt;/main.webp</code>.</p>
   </section>;
