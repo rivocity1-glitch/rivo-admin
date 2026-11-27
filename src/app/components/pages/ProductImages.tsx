@@ -180,6 +180,7 @@ export function ProductImages() {
 
   async function approveAndUpload(item: QueueItem) {
     if (!item.product) return;
+    if (!window.confirm("Confirm that this image accurately depicts the selected product and that RivoCity has permission to use it commercially. Continue with approval and upload?")) return;
     if (item.product.image_url && !window.confirm("This product already has a canonical image. Replace it with this image?")) return;
     setUploadingKey(item.key);
     setNotice("");
